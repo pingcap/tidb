@@ -169,22 +169,23 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		return metaBytes, nil
 	case proto.BackfillStepWriteAndIngest:
 		if sch.GlobalSort {
-			failpoint.Inject("mockWriteIngest", func() {
-				m := &BackfillSubTaskMeta{
-					MetaGroups: []*globalsort.SortedKVMeta{},
-				}
-				metaBytes, _ := m.Marshal()
-				metaArr := make([][]byte, 0, 16)
-				metaArr = append(metaArr, metaBytes)
-				failpoint.Return(metaArr, nil)
-			})
-			return generateGlobalSortIngestPlan(
+			metas, totalKVSize, err := generateGlobalSortIngestPlan(
 				ctx,
 				store.(kv.StorageWithPD),
 				taskHandle,
 				task,
 				backfillMeta.CloudStorageURI,
 				logger)
+			if err != nil {
+				return nil, err
+			}
+			backfillMeta.Summary = &BackfillTaskSummary{IndexKVSize: totalKVSize}
+			newTaskMeta, err := json.Marshal(&backfillMeta)
+			if err != nil {
+				return nil, err
+			}
+			task.Meta = newTaskMeta
+			return metas, nil
 		}
 		return nil, nil
 	case proto.BackfillStepMergeTempIndex:
@@ -455,14 +456,14 @@ func generateGlobalSortIngestPlan(
 	task *proto.Task,
 	cloudStorageURI string,
 	logger *zap.Logger,
-) ([][]byte, error) {
+) ([][]byte, uint64, error) {
 	var (
 		kvMetaGroups []*globalsort.SortedKVMeta
 		eleIDs       []int64
 	)
 	objStore, err := handle.NewObjStore(ctx, cloudStorageURI)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer func() {
 		objStore.Close()
@@ -483,7 +484,7 @@ func generateGlobalSortIngestPlan(
 			}
 		})
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if hasSubtasks {
 			break
@@ -491,19 +492,35 @@ func generateGlobalSortIngestPlan(
 		// If there is no subtask for merge sort step,
 		// it means the merge sort step is skipped.
 	}
-
-	instanceIDs, err := scheduler.GetLiveExecIDs(ctx)
-	if err != nil {
-		return nil, err
-	}
-	iCnt := int64(len(instanceIDs))
-	metaArr := make([]*BackfillSubTaskMeta, 0, 16)
+	totalKVSize := uint64(0)
 	for i, g := range kvMetaGroups {
 		if g == nil {
 			logger.Error("meet empty kv group when getting subtask summary",
 				zap.Int64("taskID", task.ID))
-			return nil, errors.Errorf("subtask kv group %d is empty", i)
+			return nil, totalKVSize, errors.Errorf("subtask kv group %d is empty", i)
 		}
+		totalKVSize += g.TotalKVSize
+	}
+	failpoint.Inject("mockGlobalSortIngestPlanErr", func() {
+		failpoint.Return(nil, totalKVSize, errors.New("mock global-sort ingest planning error"))
+	})
+	failpoint.Inject("mockWriteIngest", func() {
+		m := &BackfillSubTaskMeta{
+			MetaGroups: []*globalsort.SortedKVMeta{},
+		}
+		metaBytes, _ := m.Marshal()
+		metaArr := make([][]byte, 0, 16)
+		metaArr = append(metaArr, metaBytes)
+		failpoint.Return(metaArr, totalKVSize, nil)
+	})
+
+	instanceIDs, err := scheduler.GetLiveExecIDs(ctx)
+	if err != nil {
+		return nil, totalKVSize, err
+	}
+	iCnt := int64(len(instanceIDs))
+	metaArr := make([]*BackfillSubTaskMeta, 0, 16)
+	for i, g := range kvMetaGroups {
 		eleID := int64(0)
 		// in case the subtask metadata is written by an old version of TiDB.
 		if i < len(eleIDs) {
@@ -511,7 +528,7 @@ func generateGlobalSortIngestPlan(
 		}
 		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, eleID, cloudStorageURI, iCnt, logger)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, totalKVSize, errors.Trace(err)
 		}
 		metaArr = append(metaArr, newMeta...)
 	}
@@ -522,18 +539,18 @@ func generateGlobalSortIngestPlan(
 			proto.Step2Str(proto.Backfill, proto.BackfillStepWriteAndIngest),
 			i+1,
 		)); err != nil {
-			return nil, err
+			return nil, totalKVSize, err
 		}
 	}
 	metas := make([][]byte, 0, len(metaArr))
 	for _, m := range metaArr {
 		metaBytes, err := m.Marshal()
 		if err != nil {
-			return nil, err
+			return nil, totalKVSize, err
 		}
 		metas = append(metas, metaBytes)
 	}
-	return metas, nil
+	return metas, totalKVSize, nil
 }
 
 func allocNewTS(ctx context.Context, store kv.StorageWithPD) (uint64, error) {

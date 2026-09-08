@@ -45,6 +45,11 @@ const (
 	BackfillTaskMetaVersion1
 )
 
+// BackfillTaskSummary is the execution summary of a backfill task.
+type BackfillTaskSummary struct {
+	IndexKVSize uint64 `json:"index_kv_size"`
+}
+
 // BackfillTaskMeta is the dist task meta for backfilling index.
 type BackfillTaskMeta struct {
 	Job model.Job `json:"job"`
@@ -57,6 +62,8 @@ type BackfillTaskMeta struct {
 	CloudStorageURI string `json:"cloud_storage_uri"`
 	EstimateRowSize int    `json:"estimate_row_size"`
 	MergeTempIndex  bool   `json:"merge_temp_index"`
+
+	Summary *BackfillTaskSummary `json:"summary,omitempty"`
 
 	Version int `json:"version,omitempty"`
 }
