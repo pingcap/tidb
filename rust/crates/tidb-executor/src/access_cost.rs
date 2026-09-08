@@ -1445,10 +1445,10 @@ fn collect_or<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
 /// Go's `if selectivity != 0` guard against covering the condition with a
 /// number that would zero the whole result.
 ///
-/// NOT MODELLED: Go's pre-guard at `selectivity.go:328-334`, which abandons
-/// the DNF branch when any column it names has no statistics. Direction: this
-/// port estimates such a disjunction from the columns it does have instead of
-/// charging the flat 0.8 default.
+/// Go declines recursive DNF estimation when a referenced column has no
+/// statistics object. Synthetic pseudo tables conceptually contain all public
+/// columns; real cached tables (including outdated pseudo copies) retain their
+/// actual column membership, independent of histogram load status.
 fn dnf_selectivity(
     conjunct: &tidb_ast::Expr,
     table: &KvTable,
@@ -1457,6 +1457,9 @@ fn dnf_selectivity(
     defaults: SelectivityDefaults,
     range_context: crate::index_range::RangeContext<'_>,
 ) -> Option<f64> {
+    if !dnf_columns_have_statistics(conjunct, table, resolver, stats) {
+        return None;
+    }
     let mut items = Vec::new();
     collect_or(conjunct, &mut items);
     if items.len() <= 1 {
@@ -1471,6 +1474,22 @@ fn dnf_selectivity(
         selectivity = selectivity + current - selectivity * current;
     }
     (selectivity != 0.0).then_some(selectivity)
+}
+
+fn dnf_columns_have_statistics(
+    conjunct: &tidb_ast::Expr,
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+) -> bool {
+    let Some(stats) = stats.filter(|stats| !stats.cache_pseudo && stats.row_count != 0) else {
+        return true;
+    };
+    physical_column_offsets(conjunct, table, resolver).is_some_and(|offsets| {
+        offsets
+            .iter()
+            .all(|offset| stats.columns.contains_key(&table.columns[*offset].id))
+    })
 }
 
 /// Go's row-valued `IN` rewrite as the DNF estimator sees it.
@@ -1508,6 +1527,10 @@ fn row_in_selectivity(
         return None;
     };
     if left.is_empty() || list.is_empty() {
+        return None;
+    }
+
+    if !dnf_columns_have_statistics(conjunct, table, resolver, stats) {
         return None;
     }
 
@@ -1907,6 +1930,95 @@ mod tests {
             origin_default: None,
             comment: String::new(),
             generated: None,
+        }
+    }
+
+    #[test]
+    fn dnf_missing_column_statistics_uses_remaining_condition_factor() {
+        let table = KvTable::with_storage(
+            91,
+            vec![long_column("a", 1), long_column("b", 2)],
+            Box::new(MemTableStorage::new()),
+        );
+        let column = ColumnStats {
+            histogram: tidb_stats::Histogram {
+                id: 1,
+                ndv: 10,
+                buckets: vec![tidb_stats::Bucket {
+                    count: 100,
+                    repeat: 10,
+                    ndv: 10,
+                    lower_bound: Datum::Int(1),
+                    upper_bound: Datum::Int(10),
+                }],
+                ..tidb_stats::Histogram::default()
+            },
+            topn: None,
+            cms: None,
+            stats_ver: 2,
+            unsigned: false,
+        };
+        let stats = TableStatistics::new(100, 0, BTreeMap::from([(1, column)]), BTreeMap::new());
+        for sql in [
+            "SELECT * FROM t WHERE a=1 OR b=2",
+            "SELECT * FROM t WHERE (a,b) IN ((1,2),(3,4))",
+        ] {
+            let statement = tidb_parser::parse(sql).unwrap();
+            let tidb_ast::Stmt::Query(query) = &statement else {
+                panic!("query")
+            };
+            let tidb_ast::QueryStmt::Select(select) = &**query else {
+                panic!("select")
+            };
+            let predicate = select.where_clause.as_ref().unwrap();
+            let resolver = NamedColumnResolver { table: &table };
+            for pseudo in [false, true] {
+                let mut missing = stats.clone();
+                missing.pseudo = pseudo;
+                for factor in [0.8, 0.25] {
+                    let actual = selectivity_with_range_context(
+                        predicate,
+                        &table,
+                        &resolver,
+                        Some(&missing),
+                        SelectivityDefaults {
+                            selectivity_factor: factor,
+                            ..Default::default()
+                        },
+                        crate::index_range::RangeContext::default(),
+                    );
+                    assert!(
+                        (actual - factor).abs() < 1e-12,
+                        "{sql}: {actual}, pseudo={pseudo}"
+                    );
+                }
+            }
+            // Presence is sufficient: Go does not require a loaded histogram
+            // for this guard. Pseudo table column objects also qualify.
+            let mut present = stats.clone();
+            let mut unloaded = present.columns[&1].clone();
+            unloaded.histogram = tidb_stats::Histogram {
+                id: 2,
+                ..Default::default()
+            };
+            present.columns.insert(2, unloaded);
+            assert!(dnf_columns_have_statistics(
+                predicate,
+                &table,
+                &resolver,
+                Some(&present)
+            ));
+            assert!(dnf_columns_have_statistics(
+                predicate, &table, &resolver, None
+            ));
+            let mut synthetic = stats.clone();
+            synthetic.cache_pseudo = true;
+            assert!(dnf_columns_have_statistics(
+                predicate,
+                &table,
+                &resolver,
+                Some(&synthetic)
+            ));
         }
     }
 
