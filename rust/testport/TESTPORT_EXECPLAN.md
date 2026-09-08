@@ -11369,3 +11369,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (day-number pin): TO_DAYS's Gregorian day number, FROM_DAYS
   inversion, and TO_SECONDS's whole-day boundary. Pinned in
   `crates/tidb-session/tests/day_number_source.rs`.
+- 2026-09-08 (week specifiers pin): %U/%u/%V/%v week modes and the %X/%x
+  year-of-week split across a year boundary, plus %d/%e/%a. Pinned in
+  `crates/tidb-session/tests/week_specifier_source.rs`.
