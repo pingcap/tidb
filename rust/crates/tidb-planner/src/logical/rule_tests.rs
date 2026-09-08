@@ -1066,6 +1066,38 @@ fn predicate_push_down_derives_an_inner_filter_for_a_left_outer_join() {
     out.dismantle();
 }
 
+/// Go `simplifyOuterJoin` (`logical_join.go:306`) runs at the top of
+/// `LogicalJoin.PredicatePushDown`: a WHERE predicate on the null-supplying
+/// side rejects the null-extended rows, so the outer join becomes inner and
+/// the predicate is attributed by the inner arm instead of staying above.
+#[test]
+fn predicate_push_down_turns_a_null_rejected_left_outer_join_into_an_inner_join() {
+    let allocator = PlanIdAllocator::new();
+    let ctx = test_context(&allocator);
+    let left = data_source(&allocator, &[1]);
+    let right = data_source(&allocator, &[2]);
+    let mut join = LogicalJoin::new(
+        base(&allocator, "Join", Some(schema_of(&[1, 2]))),
+        LogicalJoinType::LeftOuter,
+    );
+    join.other_conditions = vec![eq_cols(1, 2)];
+    let mut join = LogicalPlan::Join(join);
+    join.set_children(vec![left, right]);
+    // `gt(col2, 7)` reads only the inner (right) side, so it null-rejects it.
+    let root = selection_over(&allocator, vec![gt_const(2, 7)], join);
+
+    let out = push(&ctx, root);
+    let LogicalPlan::Join(join) = &out else {
+        panic!("the Selection should have collapsed into the Join, got {out:?}");
+    };
+    assert_eq!(
+        join.join_type,
+        LogicalJoinType::Inner,
+        "a null-rejecting predicate on the inner side makes the outer join inner"
+    );
+    out.dismantle();
+}
+
 #[test]
 fn constant_propagation_pulls_a_projected_child_predicate_above_an_inner_join() {
     let allocator = PlanIdAllocator::new();

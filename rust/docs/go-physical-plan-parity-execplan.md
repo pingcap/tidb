@@ -1016,6 +1016,17 @@ both `oltp_read_only` and `oltp_read_write`.
   and Sort relationships. Matching Go's allocator history remains an open gap.
   Three executor tests fixed. Receipt:
   `rust/testport/receipts/executor_tpcc_column_ids.md`.
+- [x] 2026-09-09: ported `LogicalJoin.simplifyOuterJoin`
+  (`pkg/planner/core/operator/logicalop/logical_join.go:306`), which
+  `PredicatePushDown` runs before attributing any condition. A WHERE
+  predicate that null-rejects the null-supplying side turns the outer join
+  inner, so the predicate is absorbed instead of left as a Selection above.
+  `predicate_push_down_local` now calls it with the shared
+  `is_null_rejected`/`push_down_not`/`expr_from_schema` receipts. The
+  `tpcc_condition_six` operator list now matches Go; that test still stops on
+  the analyzed MergeJoin-vs-IndexJoin choice, which is the separate
+  `skylinePruning` gap below. Receipt:
+  `rust/testport/receipts/planner_join_simplify_outer_join.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
@@ -1041,9 +1052,9 @@ both `oltp_read_only` and `oltp_read_write`.
   - `pkg/executor` Window executor (`exhaustPhysicalPlans over Window`):
     `tests_executor_suite_statements_source::{column_name_resolution,
     issue52984_named_window_self_frame_runs_repeatedly}`.
-  - `pkg/planner/core` predicate push-down into an outer join's conditions
-    (`LogicalJoin.PredicatePushDown` null-rejecting inner-side filters):
-    `aggregates::tpcc_condition_six_*`.
+  - `aggregates::tpcc_condition_six_*` now clears the predicate-placement
+    assertions (`simplifyOuterJoin` ported) and remains blocked only on the
+    same `skylinePruning` choice as the list above.
   - `pkg/expression` CASE branch casts to the merged control type
     (`newBaseBuiltinFuncWithFieldTypes`), `DATE_ADD` month folding, and the
     identity-projection elimination Go's q14 plan shows:

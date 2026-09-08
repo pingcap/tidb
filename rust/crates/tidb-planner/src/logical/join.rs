@@ -40,10 +40,12 @@ use std::rc::Rc;
 use tidb_datatype::{Datum, FieldName, FieldTypeFlags};
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::extract::is_col_op_col;
+use tidb_expr::expr_util::normal_form::expr_from_schema;
 use tidb_expr::expr_util::normal_form::{
     derive_relaxed_filters_from_dnf, extract_filters_from_dnfs,
 };
 use tidb_expr::expr_util::predicates::is_mutable_effects_expr;
+use tidb_expr::expr_util::push_not::push_down_not;
 use tidb_expr::expr_util::substitute::{build_not_null_expr, SubstituteOptions};
 use tidb_expr::expression::{is_null_rejected, CorrelatedColumn, Expression};
 use tidb_expr::scalar_function::ScalarFunction;
@@ -554,6 +556,55 @@ impl LogicalJoin {
         }
     }
 
+    /// Go `simplifyOuterJoin(p, predicates)` (`logical_join.go:306`): a
+    /// WHERE predicate that is null-rejecting on the INNER side of a left or
+    /// right outer join makes the null-extended rows impossible, so the join
+    /// becomes an inner join. Go runs this at the top of
+    /// `LogicalJoin.PredicatePushDown`, before the per-join-type attribution,
+    /// which is what lets the converted inner join absorb the predicate
+    /// instead of leaving a Selection above it.
+    ///
+    /// The predicate that references ONLY the outer side is skipped: it cannot
+    /// reject the null-extended inner rows.
+    fn simplify_outer_join(
+        join: &mut Self,
+        predicates: &[Expression],
+        left_schema: &Schema,
+        right_schema: &Schema,
+        builder: &dyn tidb_expr::expr_util::builder::FunctionBuilder,
+    ) {
+        if !matches!(
+            join.join_type,
+            LogicalJoinType::LeftOuter | LogicalJoinType::RightOuter | LogicalJoinType::Inner
+        ) {
+            return;
+        }
+        if join.join_type == LogicalJoinType::Inner {
+            return;
+        }
+        let (inner_schema, outer_schema) = match join.join_type {
+            LogicalJoinType::LeftOuter => (right_schema, left_schema),
+            LogicalJoinType::RightOuter => (left_schema, right_schema),
+            _ => return,
+        };
+        let inner_ids: Vec<i64> = inner_schema
+            .columns
+            .iter()
+            .map(|column| column.unique_id)
+            .collect();
+        for predicate in predicates {
+            if expr_from_schema(predicate, outer_schema) {
+                continue;
+            }
+            // Go `util.IsNullRejected` normalizes every NOT down first.
+            let normalized = push_down_not(predicate, builder);
+            if is_null_rejected(&inner_ids, &normalized) {
+                join.join_type = LogicalJoinType::Inner;
+                return;
+            }
+        }
+    }
+
     /// Go `LogicalJoin.PredicatePushDown(predicates)`'s LOCAL half
     /// (`logical_join.go:171`): the whole per-join-type attribution, without
     /// the recursion into the children.
@@ -578,11 +629,6 @@ impl LogicalJoin {
     ///
     /// # Narrowings, by exact blocking Go symbol
     ///
-    /// * `simplifyOuterJoin(p, predicates)` (`logical_join.go:300`), which
-    ///   turns a left/right outer join into an inner join when a predicate is
-    ///   null-rejecting on the inner side. Blocked on `util.IsNullRejected`'s
-    ///   session-dependent half; `tidb_expr::expression::is_null_rejected`
-    ///   exists but Go's caller needs `p.SCtx()` for the plan-cache guard.
     /// * `DeriveOtherConditions(p, leftSchema, rightSchema, deriveLeft,
     ///   deriveRight)` (`logical_join.go:1247`), which manufactures the
     ///   `IS NOT NULL` filters an OUTER join may push to its inner side.
@@ -630,6 +676,10 @@ impl LogicalJoin {
             }
         }
 
+        // Go runs `simplifyOuterJoin` before attributing any condition, so a
+        // WHERE predicate that null-rejects the inner side converts the join
+        // and is then attributed by the INNER arm below.
+        Self::simplify_outer_join(self, &predicates, left_schema, right_schema, opts.builder);
         let mut result = JoinPredicatePushDown::default();
         match self.join_type {
             LogicalJoinType::LeftOuter
