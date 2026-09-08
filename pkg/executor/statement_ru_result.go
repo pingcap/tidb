@@ -143,13 +143,14 @@ func statementRUFrontendCompileBytes(stmt *ExecStmt) float64 {
 		return 0
 	}
 	var originalSQL string
-	// use the normalized SQL length if available, otherwise fallback to the original SQL length.
+	// Use the normalized SQL length if available, otherwise fallback to the original SQL length.
 	if stmt.Ctx != nil {
 		if sessVars := stmt.Ctx.GetSessionVars(); sessVars != nil && sessVars.StmtCtx != nil {
 			stmtCtx := sessVars.StmtCtx
 			originalSQL = stmtCtx.OriginalSQL
 			if originalSQL != "" {
 				normalizedSQL, _ := stmtCtx.SQLDigest()
+				normalizedSQL = trimStatementRUExplainPrefix(normalizedSQL)
 				if normalizedSQL != "" {
 					return float64(len(normalizedSQL))
 				}
@@ -167,6 +168,18 @@ func statementRUFrontendCompileBytes(stmt *ExecStmt) float64 {
 		return 0
 	}
 	return float64(len(sql))
+}
+
+func trimStatementRUExplainPrefix(normalizedSQL string) string {
+	for _, normalizedPrefix := range [...]string{
+		"explain analyze format = ? ",
+		"explain analyze format = ru ",
+	} {
+		if len(normalizedSQL) > len(normalizedPrefix) && normalizedSQL[:len(normalizedPrefix)] == normalizedPrefix {
+			return normalizedSQL[len(normalizedPrefix):]
+		}
+	}
+	return normalizedSQL
 }
 
 // statementRUCalculator is terminal-local. It accumulates only typed scalar
