@@ -757,6 +757,51 @@ fn tpch_q14_matches_recorded_hash_join_plan() {
     );
 }
 
+/// Go `expression.NewFunction` folds each builtin as it is constructed in the
+/// live statement context (`foldConstant`), so a wholly-constant `DATE_ADD`
+/// is a literal before predicate push-down sees it. The planner's single
+/// deferred top-level fold could not reach it: the predicate's `AND` parent is
+/// a lazy short-circuit and its `LT` parent has a column argument, so neither
+/// descends. The recorded q14 plan carries
+/// `lt(l_shipdate, 1997-01-01 00:00:00.000000)` for exactly this reason.
+#[test]
+fn a_constant_date_add_in_a_predicate_folds_before_push_down() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE t (d DATE NOT NULL)", &mut catalog).unwrap();
+    let ctx = crate::StmtContext::for_query();
+    // The AND is load-bearing: it is a lazy short-circuit parent, which is
+    // what the deferred top-level fold refuses to descend through.
+    let sql = "SELECT * FROM t WHERE d >= '1996-01-01' \
+        AND d < DATE_ADD('1996-12-01', INTERVAL 1 MONTH)";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let info: Vec<String> = rows
+        .iter()
+        .map(|row| match &row[4] {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert!(
+        info.iter()
+            .any(|line| line.contains("lt(test.t.d, 1997-01-01 00:00:00.000000)")),
+        "the constant DATE_ADD must be a literal: {info:?}",
+    );
+    assert!(
+        !info.iter().any(|line| line.contains("date_add")),
+        "no DATE_ADD may survive planning: {info:?}",
+    );
+}
+
 /// Go `AggregationPushDownSolver` substitutes every aggregate argument and
 /// group item through a child Projection before `InjectProjBelowAgg` runs.
 /// The injected physical Projection must therefore evaluate the derived

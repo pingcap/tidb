@@ -1150,6 +1150,17 @@ both `oltp_read_only` and `oltp_read_write`.
   `DEC:0.0`; tidb-expr 1206 passed / 2 pre-existing failed, executor and
   planner suites unchanged. Receipt:
   `rust/testport/receipts/expression_case_extract_names.md`.
+- [x] 2026-09-09: folded each builtin as it is constructed in the live
+  statement context. The planner resolver deferred every value fold to the
+  single top-level fold in `rewrite_scalar_with_scope`, which descends only
+  through lazy short-circuit functions; a constant `DATE_ADD` under `LT`
+  under `AND` therefore survived to the plan as
+  `cast_datetime(date_add_month(...))`. Go's `NewFunction` folds each built
+  node in its `BuildContext`, so the resolver now does the same with
+  `self.warning_context`. q14's predicate is the literal
+  `1997-01-01 00:00:00.000000`; new regression
+  `a_constant_date_add_in_a_predicate_folds_before_push_down`. Receipt:
+  `rust/testport/receipts/planner_session_zone_constant_fold.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
@@ -1186,10 +1197,12 @@ both `oltp_read_only` and `oltp_read_write`.
     decimal takes the merged type and the CASE returns the promoted datum
     (`DEC:0.0`), and each wrapped branch folds through the resolver's live
     context, so a constant branch shows the cast's own type (`0.0000`).
-    What q14 still needs: the `DATE_ADD` literal fold (the planner's single
-    top-level fold skips lazy `and`/`case` parents, so a constant
-    `DATE_ADD` below a predicate never folds), the identity-projection
-    elimination, and the logical equal-condition operand order:
+    The `DATE_ADD` literal fold is DONE too: the planner resolver now folds
+    each builtin as it is constructed in the live statement context (Go's
+    `NewFunction`), instead of deferring to one top-level fold that cannot
+    descend through a lazy `and`. What q14 still needs: the
+    identity-projection elimination and the logical equal-condition operand
+    order:
     `aggregates::tpch_q14_matches_recorded_hash_join_plan`. Receipt:
     `rust/testport/receipts/expression_case_extract_names.md`.
   - `pkg/executor/aggregate` spill-file lifetime: DONE. Go's parallel

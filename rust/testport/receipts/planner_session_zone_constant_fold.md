@@ -68,3 +68,40 @@ the already-captured statement zone. Row-dependent expressions, runtime
 evaluation, fixed-offset sessions, and the deterministic no-column behavior
 outside a plan scope are unchanged. No Go source, generated output, fixture,
 platform variant, or build artifact was modified.
+
+## Follow-up: fold each builtin as it is constructed, with the live context
+
+`PlanScopeResolver::fold_constant` used to defer every value fold when a live
+statement context was present, relying on the single top-level
+`fold_constant_in_mode(Normal)` at the end of
+`PlanBuilder::rewrite_scalar_with_scope`. That single fold cannot reach a
+closed leaf under a non-constant parent: `fold_current_value_in` only
+descends through lazy short-circuit functions, so a constant `DATE_ADD` under
+`LT` under `AND` never folded. Go's `expression.NewFunction` instead folds
+each builtin as it is constructed (`foldConstant` in the live `BuildContext`),
+which is why the recorded q14 predicate carries
+`lt(l_shipdate, 1997-01-01 00:00:00.000000)`.
+
+The resolver now folds the freshly built node immediately with
+`self.warning_context` when that context exists, which is the same context
+the deferred fold used, so conversion diagnostics keep their owner. The
+`last_insert_id` replay special case is subsumed by the general fold.
+
+Regression: `a_constant_date_add_in_a_predicate_folds_before_push_down`
+(executor driver tests) plans
+`SELECT * FROM t WHERE d >= '1996-01-01' AND d < DATE_ADD('1996-12-01', INTERVAL 1 MONTH)`
+and asserts the predicate is the literal `1997-01-01 00:00:00.000000` with no
+`date_add` left. It failed before with
+`lt(test.t.d, cast_datetime(date_add_month("1996-12-01", 1)))` and passes
+after.
+
+```text
+cargo test -p tidb-expr
+# 1206 passed; 2 failed; 99 ignored -- the same two pre-existing failures
+
+cargo test -p tidb-planner
+# 1279 passed; 0 failed
+
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1242 passed; 14 failed; the same pre-existing set
+```

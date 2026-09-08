@@ -971,24 +971,14 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         // until `PlanBuilder::rewrite_scalar` can invoke the folder with that
         // concrete context; the zone-only fallback below intentionally drops
         // warnings and must not run first for session-backed plans.
-        if self.warning_context.is_some() {
+        if let Some(context) = self.warning_context {
             if mode != tidb_expr::ConstantFoldMode::Disabled {
                 tidb_expr::derive_constant_null_flag(expression);
-                // `LAST_INSERT_ID(expr)` is the one foldable session builtin
-                // whose construction has an observable side effect. Go's
-                // `NewFunction` evaluates it as soon as the node is built,
-                // so a later sibling-resolution error must not erase the
-                // publication. Keep the broad live fold deferred for warning
-                // ownership, but replay this narrow source seam immediately.
-                if let Expression::ScalarFunction(function) = expression {
-                    if function.func_name.lowercase() == "last_insert_id"
-                        && function.args.len() == 1
-                    {
-                        if let Some(context) = self.warning_context {
-                            tidb_expr::fold_constant_in_mode(expression, context, mode);
-                        }
-                    }
-                }
+                // Go's `NewFunction` folds each builtin as it is constructed,
+                // in the live statement context; the deferred top-level fold
+                // in `rewrite_scalar_with_scope` cannot reach a closed leaf
+                // under a non-constant parent.
+                tidb_expr::fold_constant_in_mode(expression, context, mode);
             }
             return;
         }
