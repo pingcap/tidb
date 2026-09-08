@@ -100,3 +100,50 @@ git diff --check
 - The parallel HashAgg order is a deliberate deterministic choice. Go's own
   parallel order is worker-scheduling dependent; this port pins the serial
   first-seen order, which is what the Go-derived test expectations encode.
+
+## Follow-up: the IN-rewrite join family is re-pinned to the ANALYZED fixture (2026-09-09)
+
+The test's last two blocks asserted a `HashJoin` for
+`SELECT k FROM outer_t WHERE k IN (SELECT k FROM inner_t)` and for the
+`inner_u` (unique-key) variant. A pinned Go probe on the test's OWN fixture
+(`outer_t` scaled to 10000 rows / `k` NDV 10000, `inner_t` scaled to 10000
+rows / `k` NDV 500 / `v` NDV 10000, empty `inner_u`; `ANALYZE`d, then
+`explain format='brief'`) records:
+
+```text
+SELECT k FROM outer_t WHERE k IN (SELECT k FROM inner_t)
+  IndexJoin 500.00 -> HashAgg(Build) -> TableReader -> HashAgg(cop) ->
+  TableFullScan(inner_t); TableReader(Probe) -> TableRangeScan(outer_t)
+
+SELECT k FROM outer_t WHERE k IN (SELECT k FROM inner_u)
+  MergeJoin 10000.00 -> TableReader(Build) -> TableFullScan(inner_u);
+  TableReader(Probe) -> TableFullScan(outer_t)
+```
+
+The `HashJoin` expectations came from the correlate suite's PSEUDO-statistics
+fixture, whose dedup aggregate is 7992 rows; at this fixture's 500-row
+aggregate Go's own cost model prefers the index join (and a merge join over
+the unique key's full scans). The assertions now pin `IndexJoin` /
+`MergeJoin` and keep the dedup intent: the non-unique rewrite still carries a
+`HashAgg`, the unique one still carries no `HashAgg`.
+
+Known residual divergence, not asserted by this test: the port's unique-key
+plan keeps a two-phase `StreamAgg` over `inner_u` where Go eliminates the
+`buildDistinct` first-row aggregation entirely (`AggregationEliminator` +
+the unique group key). The `!HashAgg` assertion holds either way.
+
+```text
+cargo test -p tidb-executor --lib -- --test-threads=1 explaining_a_correlated
+# ok after; FAILED on the stale HashJoin assertions before
+
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1260 passed; 2 failed; no additions
+
+cargo test -p tidb-planner
+# 1004 + 268 + 6 + 3 passed; 0 failed
+
+cargo check --locked --all-targets -p tidb-planner -p tidb-executor
+rustfmt --edition 2021 --config skip_children=true --check <changed files>
+git diff --check
+# clean
+```

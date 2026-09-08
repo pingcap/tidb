@@ -1099,10 +1099,18 @@ fn explaining_a_correlated_scalar_type_reads_no_storage() {
         &ctx,
     );
     let non_unique_operators = operators(&non_unique);
+    // Pinned Go probe on this ANALYZED fixture (`outer_t` 10000 rows / k NDV
+    // 10000, `inner_t` 10000 rows / k NDV 500, empty `inner_u`):
+    // `IndexJoin -> HashAgg(Build) -> ... -> TableFullScan` plus a
+    // `TableRangeScan(Probe)`. The correlate suite's recorded `HashJoin`
+    // came from a PSEUDO-statistics fixture whose dedup aggregate is 7992
+    // rows; at this fixture's 500-row aggregate Go's own cost model prefers
+    // the index join. The assertion pins the dedup rewrite, not the join
+    // family.
     assert!(
         non_unique_operators
             .iter()
-            .any(|operator| operator.contains("HashJoin")),
+            .any(|operator| operator.starts_with("IndexJoin")),
         "{non_unique:#?}"
     );
     assert!(
@@ -1118,10 +1126,12 @@ fn explaining_a_correlated_scalar_type_reads_no_storage() {
         &ctx,
     );
     let unique_operators = operators(&unique);
+    // The same Go probe picks a `MergeJoin` over the unique key's full scans;
+    // the IN rewrite still drops the deduplication aggregate.
     assert!(
         unique_operators
             .iter()
-            .any(|operator| operator.contains("HashJoin")),
+            .any(|operator| operator.starts_with("MergeJoin")),
         "{unique:#?}"
     );
     assert!(

@@ -1332,6 +1332,12 @@ both `oltp_read_only` and `oltp_read_write`.
   floors at one row, and falls back to Go's 0.1 string-match default.
   Executor 1259 passed / 3 failed. Receipt:
   `rust/testport/receipts/planner_cardinality.md`.
+- [x] 2026-09-09: re-pinned the IN-rewrite join family to a Go probe on the
+  test's own ANALYZED fixture. The `HashJoin` expectations came from the
+  correlate suite's pseudo-statistics fixture (7992-row dedup aggregate);
+  at the fixture's 500-row aggregate Go records `IndexJoin` (non-unique) and
+  `MergeJoin` (unique). Executor 1260 passed / 2 failed. Receipt:
+  `rust/testport/receipts/scalar_subquery_plan_time_evaluation.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
@@ -1340,7 +1346,7 @@ both `oltp_read_only` and `oltp_read_write`.
   region-cache orchestration, MPP/TiFlash tier, `/metrics` exporter, and
   live-store test matrix remain partial.
 - [ ] Remaining blocker classes after the 2026-09-09 rounds (`tidb-executor`
-  lib serialized: 1,259 passed / 3 failed; the 13 statistics-request transport
+  lib serialized: 1,260 passed / 2 failed; the 13 statistics-request transport
   tests still flake in a full run and pass 16/16 in isolation).
   Each needs a package-sized port, not a test tweak:
   - `subqueries::correlated_sum_predicate_pulls_above_unique_outer_join`:
@@ -1371,12 +1377,13 @@ both `oltp_read_only` and `oltp_read_write`.
     runtime profile) and the district source's derived
     `not(isnull(cast(d_ytd)))` selectivity, which the pre-push-down
     `InitStats` pass cannot see.
-  - `subqueries::explaining_a_correlated_scalar_type_reads_no_storage`: with
-    the fixture's analyzed stats (inner_t 10000 rows, `k` NDV 500 => the
-    dedup aggregate is 500 rows) Go's OWN cost model also prefers the index
-    join; the recorded `HashJoin` came from a pseudo-stats fixture whose
-    dedup aggregate is 7992 rows. Needs a Go probe at NDV 500 to decide
-    whether the fixture's NDV or the assertion is re-pinned.
+  - `subqueries::explaining_a_correlated_scalar_type_reads_no_storage`: DONE.
+    A pinned Go probe on the test's own fixture records `IndexJoin` for the
+    non-unique IN rewrite and `MergeJoin` for the unique one, so the stale
+    `HashJoin` assertions were re-pinned (receipt:
+    `rust/testport/receipts/scalar_subquery_plan_time_evaluation.md`).
+    Residual, not asserted: the port keeps a two-phase `StreamAgg` over the
+    unique key where Go eliminates `buildDistinct`'s first-row aggregation.
   - `joins::tpcc_check_seven_*`: DONE (group NDVs, see the 2026-09-09 entry).
   - `subqueries::subqueries`: DONE (index-join explain field order, see the
     2026-09-09 entry).
