@@ -35,7 +35,10 @@ answer the empty set:
   next to its existing `handle = NULL` and over-length-string arms;
 - the plain path (`try_fast_point_physical_plan_with_allocator_mode`) plans
   the wired `physical::PhysicalTableDual` when
-  `point_get_predicate_overflows` finds an overflowing equality.
+  `point_get_predicate_overflows` finds an overflowing equality. That helper
+  repeats `try_point_get`'s `HAVING`/`ORDER BY`/`GROUP BY`/removing-`LIMIT`
+  guards, so it fires only where Go's `tryPointGetPlan` reaches
+  `getNameValuePairs` at all.
 
 ## Fail-before / pass-after
 
@@ -44,6 +47,9 @@ answer the empty set:
 - `driver::tests::point_get::out_of_range_point_literal_plans_a_table_dual`
   failed with the `Projection/Selection/TableFullScan` plan before the fix
   and now sees `TableDual`.
+- `driver::tests::point_get::out_of_range_point_literal_with_order_by_stays_with_the_planner`
+  pins the reachability guard: the same predicate with `ORDER BY` keeps the
+  ordinary plan, as Go's earlier refusal does.
 - `point_get_key::tests::an_out_of_range_constant_overflows_its_column_domain`
   pins the event-level predicate, including that a too-long string is a
   TRUNCATION (Go's `ErrTruncatedWrongVal`) rather than an overflow.

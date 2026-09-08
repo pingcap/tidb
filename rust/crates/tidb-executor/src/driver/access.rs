@@ -2685,11 +2685,34 @@ impl<'a> PointPlanStmt<'a> {
 /// and Go plans a `TableDual` instead of reading. `name_value_pairs` only
 /// returns true for a pure conjunction of equalities, so every pair it yields
 /// is ANDed into the predicate.
+///
+/// The shape guards repeat `try_point_get`'s first three checks so this only
+/// fires where Go's `tryPointGetPlan` reaches `getNameValuePairs` at all: a
+/// statement with `HAVING`, `ORDER BY`, `GROUP BY`, or a removing `LIMIT` is
+/// left to the ordinary planner, exactly as Go leaves it.
 fn point_get_predicate_overflows(
     select: &PointPlanStmt<'_>,
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> bool {
+    if select.having.is_some() || !select.order_by.is_empty() || !select.group_by.is_empty() {
+        return false;
+    }
+    if let Some(limit) = select.limit {
+        let Ok(count) = eval_limit_bound(&limit.count) else {
+            return false;
+        };
+        let offset = match &limit.offset {
+            Some(expr) => match eval_limit_bound(expr) {
+                Ok(offset) => offset,
+                Err(_) => return false,
+            },
+            None => 0,
+        };
+        if count == 0 || offset > 0 {
+            return false;
+        }
+    }
     let Some(where_clause) = select.where_clause else {
         return false;
     };

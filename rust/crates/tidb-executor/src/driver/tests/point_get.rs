@@ -2334,3 +2334,56 @@ fn out_of_range_point_literal_plans_a_table_dual() {
         "expected a TableDual operator, got {operators:?}"
     );
 }
+
+/// The overflow arm is reached only where Go's `tryPointGetPlan` reaches
+/// `getNameValuePairs`. An `ORDER BY` is refused before that walk, so this
+/// statement stays with the ordinary planner rather than the fast
+/// `TableDual`.
+#[test]
+fn out_of_range_point_literal_with_order_by_stays_with_the_planner() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE plain_overflow_order (id BIGINT PRIMARY KEY, v BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO plain_overflow_order VALUES (1, 10)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let sql =
+        "SELECT v FROM plain_overflow_order WHERE id = '99999999999999999999999999' ORDER BY v";
+    let rows = crate::run_select_on(sql, &catalog, &ctx).unwrap();
+    assert!(rows.is_empty(), "an out-of-range handle names no rows");
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("expected a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("expected a select");
+    };
+    let (_, explain) = crate::explain::explain_select_stmt(
+        select,
+        &catalog,
+        DEFAULT_DATABASE,
+        &ctx,
+        crate::explain::ExplainFormat::Brief,
+    )
+    .unwrap();
+    let operators = explain
+        .iter()
+        .filter_map(|row| match &row[0] {
+            Datum::Bytes(bytes) => Some(String::from_utf8_lossy(bytes).into_owned()),
+            Datum::String(text) => Some(String::from_utf8_lossy(text.bytes()).into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !operators.iter().any(|name| name.contains("TableDual")),
+        "Go refuses ORDER BY before the fast point plan, got {operators:?}"
+    );
+}
