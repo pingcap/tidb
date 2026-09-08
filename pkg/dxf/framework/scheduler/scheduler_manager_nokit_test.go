@@ -77,6 +77,8 @@ func setCloudStorageURIForTest(t *testing.T, uri string) {
 	t.Cleanup(func() { vardef.CloudStorageURI.Store(originalURI) })
 }
 
+// waitManagerLoops bounds shutdown so a loop that fails to observe cancellation
+// fails the test instead of leaking a goroutine or hanging indefinitely.
 func waitManagerLoops(t *testing.T, mgr *Manager) {
 	t.Helper()
 	done := make(chan struct{})
