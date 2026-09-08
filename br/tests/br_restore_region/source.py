@@ -52,6 +52,9 @@ def main(root):
             "--client-urls=http://127.0.0.1:22379", "--advertise-client-urls=http://127.0.0.1:22379",
             "--peer-urls=http://127.0.0.1:22380", "--advertise-peer-urls=http://127.0.0.1:22380"])
         ready("http://127.0.0.1:22379/health")
+        # Health becomes available before PD has elected a leader. Configuration
+        # writes must wait for the leader endpoint, otherwise they can return 500.
+        ready("http://127.0.0.1:22379/pd/api/v1/leader")
         req = Request("http://127.0.0.1:22379/pd/api/v1/config/replicate", data=b'{"max-replicas":1}',
                       headers={"Content-Type": "application/json"})
         (root / "replication-request.json").write_text(json.dumps({"url": req.full_url, "method": "POST", "body": {"max-replicas": 1}, "time": now()}))
