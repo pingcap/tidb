@@ -11445,3 +11445,6 @@ risks without claiming repository-wide parity.
 - 2026-09-08 (fractional UNIX pin): UNIX_TIMESTAMP's DECIMAL scale tracks
  the input's fsp (.5/.4 extend to scale 1). Pinned in
  `crates/tidb-session/tests/fractional_unix_source.rs`.
+- 2026-09-08 (EXTRACT compound units pin): DAY_HOUR, YEAR_MONTH,
+ MINUTE_SECOND, and SECOND_MICROSECOND positional packing. Pinned in
+ `crates/tidb-session/tests/extract_compound_source.rs`.
