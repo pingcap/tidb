@@ -306,3 +306,38 @@ cargo test -p tidb-executor --lib -- --test-threads=1
 cargo check -p tidb-planner
 # passed
 ```
+
+## Follow-up: a HAVING name that matches a GROUP BY item resolves through the plan (2026-09-09)
+
+The previous batch narrowed unqualified HAVING names to the SELECT LIST, which
+is right for `SELECT a FROM ht HAVING b > 0` (Go's `resolveFieldsFirst` is true
+there) but wrong for a GROUP BY column that is not selected. Go's
+`havingWindowAndOrderbyExprResolver.Leave`
+(`pkg/planner/core/logical_plan_builder.go:2882`) first clears
+`resolveFieldsFirst` when the name matches a `GroupBy.Items` entry, then calls
+`resolveFromPlan`, whose final step appends an AUXILIARY select field for the
+source column (`:2810-2820`). That is how
+`select count(*) from t group by a having a > 1` keeps working: the aggregation
+carries `a` as a hidden `firstrow()` column.
+
+`resolve_having_and_order_by` now takes the resolved GROUP BY expressions,
+matches a HAVING column against them with Go's `ColumnName.Match` semantics,
+and, on a match, appends (or reuses) a hidden auxiliary projection field named
+by the source `FieldName` and substitutes a `MarkerKind::Column` marker for it.
+An unqualified name that matches no GROUP BY item still resolves select-list
+first and is still 1054 when the select list does not hold it.
+
+Regression: the new
+`plan_builder::aggregation_tests::test_a_having_group_by_column_resolves_through_the_source_plan`
+fails before the change with `UnknownColumnInClause { column: "a", clause:
+"having clause" }` and passes after. `tidb-planner --lib` is 994 passed / 0
+failed; `tidb-executor --lib` serialized is 1171 passed / 69 failed, the same
+set as the previous batch (no additions). The executor test
+`driver::tests::aggregates::aggregate_having_and_order_by` now clears the
+resolution error and fails only on the row ORDER of
+`SELECT COUNT(*) FROM g GROUP BY a HAVING a > 1`: the Rust parallel HashAgg
+emits final workers in `murmur3(groupKey) % finalConcurrency` bucket order,
+while Go's `HashAggFinalWorker.generateResultAndSend` iterates
+`partialResultMap.M` (a Go map, so its order is randomized). The test
+over-specifies that unordered output; the divergence is recorded here rather
+than hidden behind a reordered assertion.

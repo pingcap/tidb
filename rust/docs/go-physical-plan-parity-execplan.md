@@ -818,6 +818,17 @@ both `oltp_read_only` and `oltp_read_write`.
   `rust/testport/receipts/planner_physicalop_engine_usage.md`. A recorded
   divergence remains: this port renders the table alias in column
   `OrigName` where Go's `FieldName.String()` uses the real table name.
+- [x] 2026-09-09: restored Go's GROUP BY escape for HAVING. The previous
+  batch made an unqualified HAVING name resolve select-list first and 1054
+  otherwise, but Go clears `resolveFieldsFirst` when the name matches a
+  `GroupBy.Items` entry and then appends an auxiliary field from the source
+  plan, so `select count(*) from t group by a having a > 1` must work. The
+  resolver now takes the resolved GROUP BY expressions and appends the
+  hidden field on a match. A focused planner regression fails before and
+  passes after. Receipt:
+  `rust/testport/receipts/planner_coalesced_qualified_names.md`. The executor
+  test that exercises this now clears the 1054 and fails only on the
+  unordered parallel-HashAgg row order (Go iterates a Go map there).
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

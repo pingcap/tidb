@@ -506,8 +506,11 @@ fn test_a_having_column_reference_becomes_a_column_marker() {
         PlanBuilder::<TestCatalog, ZonedNoColumns>::expand_fields(&select.fields, &schema, &names);
 
     let mut having = select.having.clone().expect("a HAVING clause");
+    let gby_exprs = builder
+        .resolve_gby_exprs(&select.group_by, &fields, &names)
+        .expect("GROUP BY resolves");
     let aggregates = builder
-        .resolve_having_and_order_by(&mut having, &mut fields, &names)
+        .resolve_having_and_order_by(&mut having, &mut fields, &names, &gby_exprs)
         .expect("HAVING resolves");
     assert!(aggregates.is_empty());
     // `x` is the select list's field 0, so the marker is `#col#0`.
@@ -521,6 +524,51 @@ fn test_a_having_column_reference_becomes_a_column_marker() {
 }
 
 // ***** a correlated aggregate resolves to the right scope *****
+
+#[test]
+fn test_a_having_group_by_column_resolves_through_the_source_plan() {
+    // Go `havingWindowAndOrderbyExprResolver.Leave`: a HAVING name matching a
+    // GROUP BY item sets `resolveFieldsFirst = false`, so it resolves through
+    // the SOURCE plan and `resolveFromPlan` appends an auxiliary select field.
+    // Without that, `select count(*) from t group by a having a > 1` was 1054
+    // even though `a` is grouped, because `a` is not in the select list.
+    let harness = Harness::new();
+    let mut builder = harness.builder();
+    let select = parse_select("SELECT COUNT(*) FROM t GROUP BY a HAVING a > 1");
+    let plan = builder
+        .build_table_refs(select.from.as_ref())
+        .expect("FROM");
+    let (schema, names) = super::snapshot_schema_and_names(&plan);
+    let mut fields =
+        PlanBuilder::<TestCatalog, ZonedNoColumns>::expand_fields(&select.fields, &schema, &names);
+    let old_len = fields.len();
+
+    let mut having = select.having.clone().expect("a HAVING clause");
+    let gby_exprs = builder
+        .resolve_gby_exprs(&select.group_by, &fields, &names)
+        .expect("GROUP BY resolves");
+    let aggregates = builder
+        .resolve_having_and_order_by(&mut having, &mut fields, &names, &gby_exprs)
+        .expect("HAVING resolves a grouped column");
+    assert!(aggregates.is_empty(), "HAVING has no aggregate call");
+    assert_eq!(
+        fields.len(),
+        old_len + 1,
+        "the grouped column is appended as an auxiliary field"
+    );
+    let appended = &fields[old_len];
+    assert!(appended.hidden, "the auxiliary field is hidden");
+    assert!(
+        matches!(&appended.expr, Expr::Column(path) if path.last().is_some_and(|c| c.as_str() == "a"))
+    );
+    let Expr::Binary(_, left, _) = &having else {
+        panic!("expected a comparison, got {having:?}");
+    };
+    assert_eq!(
+        PlanMarker::from_expr(left),
+        Some(PlanMarker::new(MarkerKind::Column, old_len))
+    );
+}
 
 #[test]
 fn test_a_correlated_aggregate_is_lifted_into_the_outer_select_list() {

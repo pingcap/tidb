@@ -729,6 +729,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         having: &mut Expr,
         fields: &mut Vec<ProjectionField>,
         names: &[FieldName],
+        gby_exprs: &[Expr],
     ) -> Result<Vec<Expr>, PlanError> {
         self.cur_clause = ClauseCode::Having;
         let mut aggregates = Vec::new();
@@ -783,6 +784,49 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 return true;
             };
             let path = path.clone();
+            // Go `havingWindowAndOrderbyExprResolver.Leave`'s GROUP BY check
+            // (`logical_plan_builder.go:2882`): when the name matches a GROUP
+            // BY item, `resolveFieldsFirst` becomes false, so the name is
+            // resolved through the SOURCE plan and `resolveFromPlan` appends
+            // an auxiliary select field for it. That is what keeps
+            // `select count(*) from t group by a having a > 1` working even
+            // though `a` is not selected: the aggregation carries it as a
+            // hidden `firstrow()` column.
+            let matches_group_by = gby_exprs.iter().any(
+                |item| matches!(item, Expr::Column(grouped) if column_paths_match(grouped, &path)),
+            );
+            if matches_group_by {
+                if let Some(source) = find_field_name(names, &path) {
+                    let name = &names[source];
+                    let mut canonical = Vec::with_capacity(3);
+                    if !name.names.database.original.is_empty() {
+                        canonical.push(name.names.database.original.clone());
+                    }
+                    if !name.names.table.original.is_empty() {
+                        canonical.push(name.names.table.original.clone());
+                    }
+                    canonical.push(name.names.column.original.clone());
+                    let canonical = Expr::Column(canonical);
+                    let index = match fields
+                        .iter()
+                        .position(|field| field.hidden && field.expr == canonical)
+                    {
+                        Some(position) => position,
+                        None => {
+                            fields.push(ProjectionField {
+                                expr: canonical,
+                                column_reference: true,
+                                alias: None,
+                                text: None,
+                                hidden: true,
+                            });
+                            fields.len() - 1
+                        }
+                    };
+                    marker::substitute(node, PlanMarker::new(MarkerKind::Column, index));
+                    return true;
+                }
+            }
             // `resolveFieldsFirst`: HAVING resolves the select list first.
             if let Some(index) = resolve_from_select_fields(&path, &fields[..old_len], false) {
                 marker::substitute(node, PlanMarker::new(MarkerKind::Column, index));

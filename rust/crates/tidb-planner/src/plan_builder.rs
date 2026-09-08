@@ -3404,7 +3404,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // `:4414` resolveCorrelatedAggregates.
         let mut having = select.having.as_ref().map(Self::clause_scratch);
         let having_aggs = match having.as_mut() {
-            Some(having) => self.resolve_having_and_order_by(having, &mut fields, &source_names)?,
+            Some(having) => {
+                self.resolve_having_and_order_by(having, &mut fields, &source_names, &gby_exprs)?
+            }
             None => Vec::new(),
         };
         let mut order_items: Vec<tidb_ast::OrderItem> = select.order_by.clone();
