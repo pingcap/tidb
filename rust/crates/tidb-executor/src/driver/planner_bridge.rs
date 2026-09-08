@@ -1490,6 +1490,7 @@ fn optimize_built_logical(
         partition_pruning: Some(&partition_pruning),
         opt_index_prune_threshold: ctx.opt_index_prune_threshold(),
         range_max_size: ctx.range_max_size(),
+        selectivity_factor: ctx.selectivity_factor(),
         range_fallback_handler: Some(ctx.range_fallback_handler()),
         always_keep_join_key: ctx.always_keep_join_key(),
         enable_unsafe_substitute: ctx.enable_unsafe_substitute(),

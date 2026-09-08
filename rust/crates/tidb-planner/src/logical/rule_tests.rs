@@ -76,6 +76,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         partition_pruning: None,
         opt_index_prune_threshold: 20,
         range_max_size: 0,
+        selectivity_factor: crate::cost_factors::SELECTION_FACTOR,
         range_fallback_handler: None,
         always_keep_join_key: true,
         enable_unsafe_substitute: false,

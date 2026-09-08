@@ -177,15 +177,6 @@ fn analyzed_filter_selectivity(table_stats: &StatsInfo, conditions: &[Expression
     }
 }
 
-#[derive(Clone, Copy)]
-struct PseudoRangeSelectivityNode {
-    mask: u64,
-    selectivity: f64,
-    preferred_path: bool,
-    num_columns: usize,
-    id: i64,
-}
-
 fn covered_condition_mask(conditions: &[Expression], access: &[Expression]) -> u64 {
     conditions
         .iter()
@@ -465,6 +456,7 @@ fn pseudo_range_filter_selectivity(
     conditions: &[Expression],
     schema: &Schema,
     range_max_size: i64,
+    selectivity_factor: f64,
     range_fallback_handler: Option<&tidb_util::context::RangeFallbackHandler>,
 ) -> Option<f64> {
     if conditions.is_empty() || table_stats.row_count() == 0.0 {
@@ -474,6 +466,7 @@ fn pseudo_range_filter_selectivity(
         return None;
     }
 
+    use crate::selectivity_greedy::{get_usable_sets_by_greedy, StatsNode, StatsNodeType};
     let rows = table_stats.row_count();
     let mut nodes = Vec::new();
     for column in &schema.columns {
@@ -501,15 +494,14 @@ fn pseudo_range_filter_selectivity(
         }
         let count =
             crate::ranger::stats_bridge::pseudo_count_by_column_ranges(&range_result.ranges, rows);
-        nodes.push(PseudoRangeSelectivityNode {
-            mask,
+        let kind = if source.handle_cols.iter().any(|handle| handle.unique_id == column.unique_id) {
+            StatsNodeType::PrimaryKey
+        } else {
+            StatsNodeType::Column
+        };
+        nodes.push(StatsNode {
             selectivity: count / rows,
-            preferred_path: source
-                .handle_cols
-                .iter()
-                .any(|handle| handle.unique_id == column.unique_id),
-            num_columns: 1,
-            id: column.unique_id,
+            ..StatsNode::new(kind, column.unique_id, mask as i64, 1)
         });
     }
 
@@ -547,7 +539,11 @@ fn pseudo_range_filter_selectivity(
                 conditions, &index_columns, &lengths, range_max_size,
             ),
         }.ok()?;
-        let mask = covered_condition_mask(conditions, &detached.access_conds);
+        let mask = if detached.is_dnf_cond && !detached.access_conds.is_empty() {
+            1
+        } else {
+            covered_condition_mask(conditions, &detached.access_conds)
+        };
         if mask == 0 {
             continue;
         }
@@ -558,49 +554,29 @@ fn pseudo_range_filter_selectivity(
             rows,
             unique_columns,
         );
-        nodes.push(PseudoRangeSelectivityNode {
-            mask,
+        nodes.push(StatsNode {
             selectivity: count / rows,
-            preferred_path: true,
-            num_columns: index.columns.len(),
-            id: index.id,
+            partial_cover: detached.is_dnf_cond && !detached.remained_conds.is_empty(),
+            min_access_conditions_for_dnf: i32::try_from(detached.min_access_conds_for_dnf_cond).unwrap_or(i32::MAX),
+            ..StatsNode::new(StatsNodeType::Index, index.id, mask as i64, index.columns.len())
         });
     }
 
-    // Go `GetUsableSetsByGreedy`: primary/index paths outrank plain-column
-    // nodes, then coverage, fewer columns, lower selectivity, and stable id.
-    nodes.sort_by_key(|node| (node.preferred_path, node.id));
+    // Share Go's full/partial DNF and minimum-access tie breaks with the
+    // executor's statistics path.
     let mut remaining = (1_u64 << conditions.len()) - 1;
     let mut selectivity = 1.0_f64;
-    loop {
-        let mut best: Option<PseudoRangeSelectivityNode> = None;
-        for node in &nodes {
-            if node.mask == 0 || node.mask & remaining != node.mask {
-                continue;
-            }
-            let better = best.is_none_or(|incumbent| {
-                node.preferred_path > incumbent.preferred_path
-                    || (node.preferred_path == incumbent.preferred_path
-                        && (node.mask.count_ones() > incumbent.mask.count_ones()
-                            || (node.mask.count_ones() == incumbent.mask.count_ones()
-                                && (node.num_columns < incumbent.num_columns
-                                    || (node.num_columns == incumbent.num_columns
-                                        && node.selectivity < incumbent.selectivity)))))
-            });
-            if better {
-                best = Some(*node);
-            }
+    for node in get_usable_sets_by_greedy(&mut nodes) {
+        remaining &= !(node.mask as u64);
+        selectivity *= node.selectivity;
+        if node.partial_cover {
+            selectivity *= selectivity_factor;
         }
-        let Some(best) = best else {
-            break;
-        };
-        remaining &= !best.mask;
-        selectivity *= best.selectivity;
     }
     if remaining != 0 {
         // Go applies the minimum default ONCE to all still-uncovered CNF
         // items, rather than multiplying 0.8 once per item.
-        selectivity *= crate::cost_factors::SELECTION_FACTOR;
+        selectivity *= selectivity_factor;
     }
     Some(selectivity.max(1.0 / rows.max(1.0)))
 }
@@ -1893,6 +1869,7 @@ struct DeriveStatsFold<'a> {
     /// `cardinality.EstimateFullJoinRowCount`.
     join_reorder_threshold: i32,
     range_max_size: i64,
+    selectivity_factor: f64,
     range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
 }
 
@@ -2035,6 +2012,7 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                                 &op.pushed_down_conds,
                                 &self_schema,
                                 self.range_max_size,
+                                self.selectivity_factor,
                                 self.range_fallback_handler,
                             )
                         } else {
@@ -2317,6 +2295,7 @@ pub fn recursive_derive_stats(
         col_groups,
         join_reorder_threshold,
         64 * 1024 * 1024,
+        crate::cost_factors::SELECTION_FACTOR,
         None,
     )
 }
@@ -2332,6 +2311,7 @@ pub fn recursive_derive_stats_with_context(
         col_groups,
         context.join_reorder_threshold,
         context.range_max_size,
+        context.selectivity_factor,
         context.range_fallback_handler,
     )
 }
@@ -2341,12 +2321,14 @@ fn recursive_derive_stats_with_range_quota(
     col_groups: Vec<Vec<tidb_expr::column::Column>>,
     join_reorder_threshold: i32,
     range_max_size: i64,
+    selectivity_factor: f64,
     range_fallback_handler: Option<&tidb_util::context::RangeFallbackHandler>,
 ) -> (LogicalPlan, Result<(StatsInfo, bool), PlanError>) {
     let mut fold = DeriveStatsFold {
         failure: RewriteFailure::default(),
         join_reorder_threshold,
         range_max_size,
+        selectivity_factor,
         range_fallback_handler,
     };
     let (plan, (stats, reload, _schema)) = fold_owned(&mut fold, plan, col_groups);

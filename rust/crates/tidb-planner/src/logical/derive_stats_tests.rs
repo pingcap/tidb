@@ -437,3 +437,63 @@ fn pseudo_column_range_quota_changes_statistics_cover() {
         assert_eq!(stats.row_count(), expected, "quota={quota}");
     }
 }
+
+#[test]
+fn partial_dnf_index_range_preserves_logical_statistics_cover() {
+    let allocator = PlanIdAllocator::new();
+    let mut source = stated_source(&allocator, &[1, 2], 10_000.0, &[(1, 8000.0), (2, 8000.0)]);
+    let LogicalPlan::DataSource(op) = &mut source else {
+        unreachable!()
+    };
+    op.table_scan_penalty.pseudo_stats = true;
+    op.columns = ["a", "b"]
+        .iter()
+        .enumerate()
+        .map(|(i, name)| super::data_source::DataSourceColumn {
+            id: i as i64 + 1,
+            name: (*name).to_owned(),
+            is_primary_key: false,
+            is_not_null: false,
+        })
+        .collect();
+    op.indexes = vec![crate::plan_builder::catalog::SourceIndex {
+        id: 8,
+        name: "ia".to_owned(),
+        is_public: true,
+        is_visible: true,
+        columns: vec![crate::plan_builder::catalog::SourceIndexColumn {
+            name: "a".to_owned(),
+            offset: 0,
+            length: -1,
+        }],
+        ..Default::default()
+    }];
+    let branch = |value| {
+        Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("and"),
+            FieldType::new(FieldTypeCode::Long),
+            vec![
+                Expression::ScalarFunction(eq_condition_to_constant(1, value)),
+                Expression::ScalarFunction(eq_condition(2, 1)),
+            ],
+        ))
+    };
+    op.pushed_down_conds = vec![Expression::ScalarFunction(ScalarFunction::new(
+        CiString::new("or"),
+        FieldType::new(FieldTypeCode::Long),
+        vec![branch(1), branch(3)],
+    ))];
+    for (factor, expected) in [(0.8, 16.0), (0.25, 5.0)] {
+        let mut plan = source.clone();
+        let mut context = super::rule_tests::test_context(&allocator);
+        context.selectivity_factor = factor;
+        let (stats, _) = plan
+            .recursive_derive_stats_with_context(&[], &context)
+            .unwrap();
+        assert!(
+            (stats.row_count() - expected).abs() < 1e-12,
+            "factor={factor}, rows={}",
+            stats.row_count()
+        );
+    }
+}

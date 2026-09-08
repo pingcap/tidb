@@ -2547,7 +2547,8 @@ pub(crate) fn detach_conjuncts_and_build_range_for_index_with_context<'a>(
     conjuncts: &[&'a Expr],
     zone: &tidb_datatype::SessionTimeZone,
     context: RangeContext<'_>,
-) -> Option<IndexRanges<'a>> {
+    schema_columns: &[RangeColumn],
+) -> Option<(IndexRanges<'a>, bool, i32)> {
     struct Resolver<'a> {
         columns: &'a [RangeColumn],
         zone: &'a tidb_datatype::SessionTimeZone,
@@ -2570,7 +2571,7 @@ pub(crate) fn detach_conjuncts_and_build_range_for_index_with_context<'a>(
         }
     }
     let resolver = Resolver {
-        columns: index_columns,
+        columns: schema_columns,
         zone,
     };
     let rewritten = conjuncts
@@ -2580,15 +2581,15 @@ pub(crate) fn detach_conjuncts_and_build_range_for_index_with_context<'a>(
     let conditions = rewritten.iter().flatten().cloned().collect::<Vec<_>>();
     let columns = index_columns
         .iter()
-        .enumerate()
-        .map(|(position, column)| {
+        .map(|column| {
+            let position = schema_columns.iter().position(|candidate| candidate.name.eq_ignore_ascii_case(&column.name))?;
             let mut result = tidb_expr::column::Column::default();
             result.unique_id = position as i64 + 1;
             result.index = position as i64;
             result.ret_type = Some(column.field_type.clone());
-            result
+            Some(result)
         })
-        .collect::<Vec<_>>();
+        .collect::<Option<Vec<_>>>()?;
     let lengths = index_columns
         .iter()
         .map(|column| column.prefix_len)
@@ -2635,7 +2636,7 @@ pub(crate) fn detach_conjuncts_and_build_range_for_index_with_context<'a>(
         .access_conds
         .iter()
         .flat_map(tidb_expr::simple_expr::extract_columns)
-        .filter_map(|column| usize::try_from(column.unique_id - 1).ok())
+        .filter_map(|column| columns.iter().position(|index_column| index_column.unique_id == column.unique_id))
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect();
@@ -2645,7 +2646,7 @@ pub(crate) fn detach_conjuncts_and_build_range_for_index_with_context<'a>(
         .map(|range| range.low_val.len())
         .max()
         .unwrap_or(0);
-    Some(IndexRanges {
+    Some((IndexRanges {
         ranges: detached
             .ranges
             .into_iter()
@@ -2661,7 +2662,7 @@ pub(crate) fn detach_conjuncts_and_build_range_for_index_with_context<'a>(
         access_columns,
         eq_or_in_count: detached.eq_or_in_count,
         residual,
-    })
+    }, detached.is_dnf_cond, i32::try_from(detached.min_access_conds_for_dnf_cond).unwrap_or(i32::MAX)))
 }
 
 fn detach_conjuncts_and_build_range_for_index_with_like_default_escape<'a>(
@@ -2746,7 +2747,8 @@ mod tests {
                         max_size: quota,
                         fallback_handler: None,
                     },
-                );
+                    &index,
+                ).map(|(built, _, _)| built);
                 if quota == 0 {
                     let built = built.unwrap();
                     assert_eq!(built.ranges.len(), 2);
@@ -2783,7 +2785,8 @@ mod tests {
                     max_size: quota,
                     fallback_handler: None,
                 },
-            )
+                &index,
+            ).map(|(built, _, _)| built)
             .unwrap();
             assert_eq!(built.column_count, columns_used, "quota={quota}");
             assert_eq!(built.residual.len(), residuals, "quota={quota}");

@@ -620,6 +620,8 @@ pub struct RuleContext<'a> {
     pub opt_index_prune_threshold: i32,
     /// Go `SessionVars.RangeMaxSize`; zero means unlimited.
     pub range_max_size: i64,
+    /// Go SessionVars.SelectivityFactor for uncovered or partially covered predicates.
+    pub selectivity_factor: f64,
     /// The statement's shared construction-time ranger fallback handler.
     pub range_fallback_handler: Option<&'a tidb_util::context::RangeFallbackHandler>,
     /// Go `SessionVars.AlwaysKeepJoinKey`.

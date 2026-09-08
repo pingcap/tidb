@@ -1251,11 +1251,15 @@ fn selectivity_of_conjuncts_with_path_context(
         let Some(index_columns) = index_columns else {
             continue;
         };
-        let Some(built) = crate::index_range::detach_conjuncts_and_build_range_for_index_with_context(
+        let schema_columns = table.columns.iter().map(|column|
+            crate::index_range::RangeColumn::whole(column.name.clone(), column.field_type.clone())
+        ).collect::<Vec<_>>();
+        let Some((built, is_dnf, min_access_conditions_for_dnf)) = crate::index_range::detach_conjuncts_and_build_range_for_index_with_context(
             &index_columns,
             &conjuncts,
             &resolver.time_zone(),
             range_context,
+            &schema_columns,
         ) else {
             continue;
         };
@@ -1270,10 +1274,12 @@ fn selectivity_of_conjuncts_with_path_context(
         .est;
         nodes.push(StatsNode {
             selectivity: (row_count / realtime).clamp(0.0, 1.0),
+            partial_cover: is_dnf && !built.residual.is_empty(),
+            min_access_conditions_for_dnf,
             ..StatsNode::new(
                 StatsNodeType::Index,
                 index.id,
-                covered_mask(&conjuncts, &built.residual),
+                if is_dnf { 1 } else { covered_mask(&conjuncts, &built.residual) },
                 index.column_offsets.len(),
             )
         });
@@ -1902,6 +1908,47 @@ mod tests {
             comment: String::new(),
             generated: None,
         }
+    }
+
+    #[test]
+    fn partial_dnf_index_statistics_keep_the_access_mask() {
+        let mut table = KvTable::with_storage(
+            90,
+            vec![long_column("a", 1), long_column("b", 2)],
+            Box::new(MemTableStorage::new()),
+        );
+        table.add_index(
+            KvIndex {
+                id: 8,
+                name: "ia".to_owned(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: vec![0],
+                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                visible: true,
+                global: false,
+                global_index_version: 0,
+                clustered_primary: false,
+            },
+            false,
+        );
+        let statement =
+            tidb_parser::parse("SELECT * FROM t WHERE (a=1 AND b+1=2) OR (a=3 AND b+1=4)").unwrap();
+        let tidb_ast::Stmt::Query(query) = &statement else {
+            panic!("query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &**query else {
+            panic!("select")
+        };
+        let actual = selectivity(
+            select.where_clause.as_ref().unwrap(),
+            &table,
+            &NamedColumnResolver { table: &table },
+            None,
+        );
+        // Go getMaskAndRanges covers the whole DNF bit using two index
+        // points, then applies SelectionFactor once for residual b predicates.
+        assert!((actual - 0.0016).abs() < 1e-12, "selectivity={actual}");
     }
 
     fn histogram_with_count(id: i64, ndv: i64, count: i64, version: u64) -> tidb_stats::Histogram {

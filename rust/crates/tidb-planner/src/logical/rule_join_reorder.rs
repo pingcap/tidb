@@ -200,6 +200,7 @@ fn without_projection_inline<'a>(context: &RuleContext<'a>) -> RuleContext<'a> {
         partition_pruning: context.partition_pruning,
         opt_index_prune_threshold: context.opt_index_prune_threshold,
         range_max_size: context.range_max_size,
+        selectivity_factor: context.selectivity_factor,
         range_fallback_handler: context.range_fallback_handler,
         always_keep_join_key: context.always_keep_join_key,
         enable_unsafe_substitute: context.enable_unsafe_substitute,
