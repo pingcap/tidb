@@ -178,6 +178,18 @@ complete against that pin:
 - `metrics/metrics.go` → `tidb-distsql/src/copr_cache_metrics.rs`: counters
   only, because `tidb-server`'s `/metrics` handler is still unported.
 
+`coprocessor.go`'s `pagingResponseReadBytes` read-byte basis was hardcoded to
+the classic `ProcessedVersionsSize`. Go selects `max(TotalVersionsSize,
+ProcessedVersionsSize)` from the compile-time `clientgoconfig.NextGen` const
+(`config/nextgen_on.go` / `nextgen_off.go`). `ReadEngineGeneration::
+from_kernel_type()` now reads `tidb_config::kerneltype::is_next_gen()`, the
+`nextgen` cargo feature, and `DirectUnaryRuntimeConfig::default()` uses it, so
+production no longer pins the classic basis. The focused test passes in the
+default build and, with `--features tidb-config/nextgen`, the arm was proven
+live: an inverted `Classic` assertion fails with `left: NextGeneration`.
+
 Validation: `cargo test --offline --locked -j12 -p tidb-distsql --test all
-copr_cache` (13 passed), `… read_bytes_ema` (7 passed), `cargo test --offline
---locked -j12 -p tidb-txnkv --test all key_ranges` (5 passed).
+copr_cache` (13 passed), `… read_bytes_ema` (7 passed), `… cop_paging` (10
+passed), `cargo test --offline --locked -j12 -p tidb-distsql --test all` (259
+passed, 2 ignored), `cargo test --offline --locked -j12 -p tidb-txnkv --test
+all key_ranges` (5 passed).

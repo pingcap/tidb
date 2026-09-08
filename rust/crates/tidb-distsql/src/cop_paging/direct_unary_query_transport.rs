@@ -122,7 +122,7 @@ impl Default for DirectUnaryRuntimeConfig {
     fn default() -> Self {
         Self {
             default_timeout: Duration::from_secs(60),
-            read_engine_generation: ReadEngineGeneration::Classic,
+            read_engine_generation: ReadEngineGeneration::from_kernel_type(),
             seed_read_bytes: 0,
             cache: None,
             shared_cache: None,

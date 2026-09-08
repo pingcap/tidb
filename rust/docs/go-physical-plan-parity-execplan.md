@@ -626,6 +626,14 @@ both `oltp_read_only` and `oltp_read_write`.
   have focused Rust regressions. Receipt pins that are not objects in this
   repository were re-derived (20 root artifacts, 11,288 lines, 52 test
   declarations).
+- [x] 2026-09-08: wired Go's compile-time paging read-byte basis.
+  `pagingResponseReadBytes` selects `max(total, processed)` from
+  `clientgoconfig.NextGen`; Rust pinned `Classic`.
+  `ReadEngineGeneration::from_kernel_type()` now reads
+  `tidb_config::kerneltype::is_next_gen()` and
+  `DirectUnaryRuntimeConfig::default()` uses it. The focused test passes in
+  the default build, and under `--features tidb-config/nextgen` an inverted
+  assertion fails with `left: NextGeneration`, proving both arms.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range

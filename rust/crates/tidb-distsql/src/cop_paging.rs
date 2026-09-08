@@ -57,6 +57,24 @@ pub enum ReadEngineGeneration {
     NextGeneration,
 }
 
+impl ReadEngineGeneration {
+    /// Selects the generation from the source's compile-time kernel type.
+    ///
+    /// Go `pagingResponseReadBytes` reads `clientgoconfig.NextGen`, a const
+    /// chosen by the `nextgen` build tag (`config/nextgen_on.go` /
+    /// `nextgen_off.go`). `tidb-config`'s `nextgen` feature is that tag, so the
+    /// production transport default follows the kernel instead of hardcoding
+    /// the classic basis.
+    #[must_use]
+    pub fn from_kernel_type() -> Self {
+        if tidb_config::kerneltype::is_next_gen() {
+            Self::NextGeneration
+        } else {
+            Self::Classic
+        }
+    }
+}
+
 /// Extracts the MVCC byte count observed by adaptive paging.
 #[must_use]
 pub fn paging_response_read_bytes(

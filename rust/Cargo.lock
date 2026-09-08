@@ -3438,6 +3438,7 @@ dependencies = [
  "prost 0.14.4",
  "tidb-chunk",
  "tidb-codec",
+ "tidb-config",
  "tidb-datatype",
  "tidb-proto",
  "tidb-txnkv",
