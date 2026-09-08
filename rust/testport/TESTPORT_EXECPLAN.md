@@ -11455,3 +11455,6 @@ risks without claiming repository-wide parity.
  another generated column resolves in dependency order and re-resolves on
  base updates. Pinned in
  `crates/tidb-session/tests/chained_generated_source.rs`.
+- 2026-09-08 (self-CHECK pin): `check (a < a * 0)` blocks every non-NULL
+ value while NULL passes (UNKNOWN = pass). Pinned in
+ `crates/tidb-session/tests/self_check_source.rs`.
