@@ -701,7 +701,7 @@ fn single_table_predicate(
 
     let mut conjuncts = Vec::new();
     split_ast_conjuncts(expr, &mut conjuncts);
-    let kept = conjuncts.into_iter().filter(|conjunct| {
+    let resolves = |conjunct: &tidb_ast::Expr| {
         let mut paths = Paths(Vec::new());
         let mut owned = conjunct.clone();
         tidb_ast::Visitable::accept(&mut owned, &mut paths);
@@ -710,8 +710,64 @@ fn single_table_predicate(
                 .0
                 .iter()
                 .all(|path| resolver.resolve_expression(path).is_some())
-    });
-    let mut iter = kept;
+    };
+    let mut kept: Vec<tidb_ast::Expr> = conjuncts
+        .iter()
+        .filter(|conjunct| resolves(conjunct))
+        .cloned()
+        .collect();
+    // Go `PropagateConstantForJoin`: `src.col = other.col AND other.col = 1`
+    // also filters `src.col = 1`. The pre-push-down split needs the same
+    // constant so the source's point estimate sees the complete key.
+    for conjunct in &conjuncts {
+        let Some((left, right)) = equality_sides(conjunct) else {
+            continue;
+        };
+        let (local, foreign) = match (resolves(left), resolves(right)) {
+            (true, false) => (left, right),
+            (false, true) => (right, left),
+            _ => continue,
+        };
+        let tidb_ast::Expr::Column(local_path) = local else {
+            continue;
+        };
+        let tidb_ast::Expr::Column(foreign_path) = foreign else {
+            continue;
+        };
+        let Some(constant) = conjuncts.iter().find_map(|candidate| {
+            let (candidate_left, candidate_right) = equality_sides(candidate)?;
+            let same = |side: &tidb_ast::Expr| {
+                matches!(
+                    side,
+                    tidb_ast::Expr::Column(path)
+                        if path.len() == foreign_path.len()
+                            && path
+                                .iter()
+                                .zip(foreign_path.iter())
+                                .all(|(a, b)| a.eq_ignore_ascii_case(b))
+                )
+            };
+            if same(candidate_left) && !matches!(candidate_right, tidb_ast::Expr::Column(_)) {
+                Some(candidate_right.clone())
+            } else if same(candidate_right) && !matches!(candidate_left, tidb_ast::Expr::Column(_))
+            {
+                Some(candidate_left.clone())
+            } else {
+                None
+            }
+        }) else {
+            continue;
+        };
+        let synthesized = tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::Eq,
+            Box::new(tidb_ast::Expr::Column(local_path.clone())),
+            Box::new(constant),
+        );
+        if !kept.iter().any(|existing| existing == &synthesized) {
+            kept.push(synthesized);
+        }
+    }
+    let mut iter = kept.into_iter();
     let mut combined = iter.next()?;
     for conjunct in iter {
         combined = tidb_ast::Expr::Binary(
@@ -721,6 +777,14 @@ fn single_table_predicate(
         );
     }
     Some(combined)
+}
+
+/// The two operands of a top-level `=` conjunct.
+fn equality_sides(expr: &tidb_ast::Expr) -> Option<(&tidb_ast::Expr, &tidb_ast::Expr)> {
+    let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::Eq, left, right) = expr else {
+        return None;
+    };
+    Some((left, right))
 }
 
 struct InitStats<'a> {

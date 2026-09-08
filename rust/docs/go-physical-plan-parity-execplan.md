@@ -1194,6 +1194,14 @@ both `oltp_read_only` and `oltp_read_write`.
   `pseudo_range_filter_selectivity`/`analyzed_filter_selectivity`; the stock
   level test passes. Executor 1247 passed / 12 failed. Receipt:
   `rust/testport/receipts/planner_index_join_probe_residual_selectivity.md`.
+- [x] 2026-09-09: propagated a join equality's constant into the data-source
+  split. Go's `PropagateConstantForJoin` adds `a.x = 7` for
+  `a.x = b.x AND b.x = 7` before `DeriveStats`; the pre-push-down `InitStats`
+  split runs first, so the TPC-C NewOrder customer lookup estimated 10 rows
+  instead of Go's 1.17. `single_table_predicate` now synthesizes the one-level
+  constant equality. `tpcc_customer_warehouse_join_uses_two_point_gets`
+  passes; executor 1248 passed / 11 failed. Receipt:
+  `rust/testport/receipts/planner_data_source_stats_per_source.md`.
 - [ ] Complete the `pkg/store/copr` package inventory in Rust. The four
   dependency-closed leaf owners (coprocessor cache, paging EMA, key ranges,
   cache counters) are verified complete, and the MPP probe and range
@@ -1202,7 +1210,7 @@ both `oltp_read_only` and `oltp_read_write`.
   region-cache orchestration, MPP/TiFlash tier, `/metrics` exporter, and
   live-store test matrix remain partial.
 - [ ] Remaining blocker classes after the 2026-09-09 rounds (`tidb-executor`
-  lib serialized: 1,247 passed / 12 failed; the 13 statistics-request transport
+  lib serialized: 1,248 passed / 11 failed; the 13 statistics-request transport
   tests still flake in a full run and pass 16/16 in isolation).
   Each needs a package-sized port, not a test tweak:
   - `pkg/planner/core` `DecorrelateSolver` (`rule_decorrelate.go`, 636 lines):
@@ -1216,8 +1224,7 @@ both `oltp_read_only` and `oltp_read_write`.
     decides the MergeJoin-vs-IndexHashJoin and IndexJoin-vs-IndexLookUp
     choices is not. Remaining after the 2026-09-09 rounds:
     `joins::tpcc_check_seven_*`, `aggregates::tpcc_condition_nine_rebuilds_*`,
-    `aggregates::tpcc_condition_eleven_*` (analyzed arm),
-    `joins::tpcc_customer_warehouse_*`.
+    `aggregates::tpcc_condition_eleven_*` (analyzed arm).
   - `pkg/executor` Window executor (`exhaustPhysicalPlans over Window`):
     `tests_executor_suite_statements_source::{column_name_resolution,
     issue52984_named_window_self_frame_runs_repeatedly}`.

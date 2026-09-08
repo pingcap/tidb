@@ -731,6 +731,78 @@ fn a_join_filter_is_charged_only_to_the_filtered_side() {
     );
 }
 
+/// Go `PropagateConstantForJoin`: `a.x = b.x AND b.x = 7` also filters
+/// `a.x = 7`, so `a`'s point estimate must see the complete key. The
+/// pre-push-down `InitStats` split runs before that rule, so it derives the
+/// same constant from the statement predicate.
+#[test]
+fn a_join_equality_propagates_its_constant_to_the_other_side() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE a (x INT NOT NULL, y INT)", &mut catalog).unwrap();
+    crate::run_create_table_on("CREATE TABLE b (x INT NOT NULL)", &mut catalog).unwrap();
+    let ctx = crate::StmtContext::for_query();
+    let a_rows: Vec<String> = (1..=100).map(|v| format!("({v}, {v})")).collect();
+    run_insert_on(
+        &format!("INSERT INTO a VALUES {}", a_rows.join(",")),
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let b_rows: Vec<String> = (1..=100).map(|v| format!("({v})")).collect();
+    run_insert_on(
+        &format!("INSERT INTO b VALUES {}", b_rows.join(",")),
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    scale_analyzed_tpcc_table(&mut catalog, "a", 100, &[("x", 100), ("y", 100)], &ctx);
+    scale_analyzed_tpcc_table(&mut catalog, "b", 100, &[("x", 100)], &ctx);
+    catalog.clear_dirty_content();
+    let sql = "SELECT * FROM a, b WHERE a.x = b.x AND b.x = 7 AND a.y > 50";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let text = |row: &[Datum], column: usize| match &row[column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let estimate = |table: &str| {
+        let scan = rows
+            .iter()
+            .position(|row| text(row, 3) == format!("table:{table}"))
+            .unwrap_or_else(|| panic!("no scan for {table}: {rows:#?}"));
+        let reader = (0..scan)
+            .rev()
+            .find(|&index| text(&rows[index], 0).contains("TableReader"))
+            .unwrap_or_else(|| panic!("no reader above {table}: {rows:#?}"));
+        text(&rows[reader], 1)
+    };
+    // Go's `testkit` plan for the same fixture (`analyze table a, b`) shows
+    // `Selection(eq(test.a.x, 7), gt(test.a.y, 50))` with a 1.00 estimate, so
+    // both the displayed condition and the row count are pinned.
+    let a_selection = rows
+        .iter()
+        .find(|row| text(row, 0).contains("Selection") && text(row, 4).contains("test.a.y"))
+        .unwrap_or_else(|| panic!("no a-side Selection: {rows:#?}"));
+    assert!(
+        text(a_selection, 4).contains("eq(test.a.x, 7)"),
+        "the join equality's constant must propagate to a: {rows:#?}",
+    );
+    assert_eq!(
+        estimate("a"),
+        "1.00",
+        "Go estimates the propagated point range at one row: {rows:#?}",
+    );
+}
+
 /// Every leaf of a join is costed, and a leaf whose parents read only the
 /// columns an index covers reads that index instead of the table -- Go's
 /// `findBestTask` recursing into each `DataSource` below a `LogicalJoin`.

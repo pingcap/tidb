@@ -93,3 +93,39 @@ rustfmt --edition 2021 --config skip_children=true --check \
 git diff --check
 # passed
 ```
+
+## Follow-up: a join equality propagates its constant into the split
+
+Go's `PropagateConstantForJoin` (`ruleutil.ApplyPredicateSimplification`) adds
+`a.x = 7` to `a`'s conditions for `a.x = b.x AND b.x = 7` before the data
+source's statistics are derived. The pre-push-down split runs before that
+rule, so a source whose point key is completed by a join-propagated constant
+estimated with only its own conjuncts: the TPC-C NewOrder customer lookup
+(c_w_id = w_id AND w_id = 1 AND c_d_id = 6 AND c_id = 629) estimated
+`300,000 / (10 * 3,000) = 10` rows instead of Go's histogram point estimate
+`1.17`.
+
+`single_table_predicate` now also synthesizes, for every conjunct
+`src.col = other.col`, the constant equality `src.col = <const>` when the
+statement also carries `other.col = <const>` (the same one-level closure the
+customer lookup needs; deeper equivalence classes remain a boundary).
+
+Regression:
+`driver::tests::joins::a_join_equality_propagates_its_constant_to_the_other_side`
+plans `SELECT * FROM a, b WHERE a.x = b.x AND b.x = 7 AND a.y > 50` and pins
+the a-side `Selection` to `eq(test.a.x, 7), gt(test.a.y, 50)` with a `1.00`
+estimate (Go `testkit` oracle for the same 100-row analyzed fixture). It
+failed before with `51.00`. `tpcc_customer_warehouse_join_uses_two_point_gets`
+also passes now.
+
+```text
+cargo test -p tidb-executor --lib -- --test-threads=1
+# 1248 passed; 11 failed; the customer/warehouse test left the failure set,
+# no additions
+
+cargo test -p tidb-planner
+# 1278 passed; 0 failed
+
+cargo test -p tidb-expr
+# 1206 passed; 2 failed; the same two pre-existing failures
+```
