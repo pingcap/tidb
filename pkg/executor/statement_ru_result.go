@@ -48,8 +48,7 @@ type statementRURawUnits struct {
 	// the TiKV coprocessor response-body byte count finalized in statement-local
 	// RUv2 metrics.
 	NetBytes float64
-	// FrontendCompileBytes is the UTF-8 byte length of the source SQL text seen
-	// by the compiler.
+	// FrontendCompileBytes is the UTF-8 byte length of the normalized SQL text.
 	FrontendCompileBytes float64
 	// HashStateRows counts entries admitted to completed, operator-owned hash
 	// lookup or group-state structures.
@@ -143,17 +142,38 @@ func statementRUFrontendCompileBytes(stmt *ExecStmt) float64 {
 	if stmt == nil || stmt.StmtNode == nil {
 		return 0
 	}
+
 	sql := stmt.StmtNode.OriginalText()
-	if sql == "" && stmt.Ctx != nil && stmt.Ctx.GetSessionVars() != nil && stmt.Ctx.GetSessionVars().StmtCtx != nil {
-		sql = stmt.Ctx.GetSessionVars().StmtCtx.OriginalSQL
+	if stmt.Ctx != nil {
+		if sessVars := stmt.Ctx.GetSessionVars(); sessVars != nil &&
+			sessVars.StmtCtx != nil && sessVars.StmtCtx.OriginalSQL != "" {
+			stmtCtx := sessVars.StmtCtx
+			normalizedSQL, _ := stmtCtx.SQLDigest()
+			normalizedSQL = trimStatementRUExplainPrefix(normalizedSQL)
+			if normalizedSQL != "" {
+				return float64(len(normalizedSQL))
+			}
+			if sql == "" {
+				sql = stmtCtx.OriginalSQL
+			}
+		}
 	}
 	if sql == "" {
 		sql = stmt.StmtNode.Text()
 	}
-	if sql == "" {
-		return 0
-	}
 	return float64(len(sql))
+}
+
+func trimStatementRUExplainPrefix(normalizedSQL string) string {
+	for _, normalizedPrefix := range [...]string{
+		"explain analyze format = ? ",
+		"explain analyze format = ru ",
+	} {
+		if len(normalizedSQL) > len(normalizedPrefix) && normalizedSQL[:len(normalizedPrefix)] == normalizedPrefix {
+			return normalizedSQL[len(normalizedPrefix):]
+		}
+	}
+	return normalizedSQL
 }
 
 // statementRUCalculator is terminal-local. It accumulates only typed scalar

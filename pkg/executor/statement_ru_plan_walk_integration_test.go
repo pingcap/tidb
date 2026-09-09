@@ -370,7 +370,9 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 				}
 				require.Equal(t, 1, published.count, "flat plan: %v", planSummary)
 				require.Equal(t, "incomplete", published.state)
-				require.Equal(t, float64(len(tc.query)), published.frontendBytes)
+				normalizedSQL, _ := observation.stmt.Ctx.GetSessionVars().StmtCtx.SQLDigest()
+				require.NotEmpty(t, normalizedSQL)
+				require.Equal(t, float64(len(normalizedSQL)), published.frontendBytes)
 				require.GreaterOrEqual(t, published.scanBytes, float64(0))
 				require.GreaterOrEqual(t, published.netBytes, float64(0))
 				if tc.wantCPUWork {
@@ -503,6 +505,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 
 		require.Error(t, drainStatementRURecordSet(t, rs))
 		require.NoError(t, rs.Close())
+		require.NotNil(t, observation)
 		require.True(t, observation.owner.ConsumedForTest())
 	})
 
