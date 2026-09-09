@@ -5964,7 +5964,8 @@ func pruneAndBuildColPositionInfoForDelete(
 		// Use a very relax check for foreign key cascades and checks.
 		// If there's one table containing foreign keys, all of the tables would not do pruning.
 		// It should be strict in the future or just support pruning column when there is foreign key.
-		skipPruning := tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil
+		hasMLog := tblInfo.MaterializedViewBase != nil && tblInfo.MaterializedViewBase.MLogID != 0
+		skipPruning := tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil || hasMLog
 		for _, idx := range tblInfo.Indices {
 			if len(idx.ConditionExprString) > 0 {
 				// If the index has a partial index condition, we can't prune the columns.
