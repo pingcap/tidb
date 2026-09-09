@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Shared scheduling, with connection-owned task lifetimes.
+//! Native scheduling, with transport-owned I/O and connection task lifetimes.
 
 use std::future::Future;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -21,8 +21,8 @@ use std::task::{Context, Poll, Wake, Waker};
 use tokio::runtime::{Handle, Runtime};
 use tokio::task::{AbortHandle, JoinSet};
 
-/// Native scheduler shared by command owners and coprocessor workers.
-/// Connection-local I/O has its own driver and an independently joined lifetime.
+/// Native scheduler shared by independent coprocessor workers.
+/// Transport command and I/O tasks have an independently joined lifetime.
 pub fn execution_runtime() -> Result<&'static Runtime, String> {
     static RUNTIME: OnceLock<Result<Runtime, String>> = OnceLock::new();
     RUNTIME
@@ -37,21 +37,22 @@ pub fn execution_runtime() -> Result<&'static Runtime, String> {
         .map_err(Clone::clone)
 }
 
-/// One configured connection slot's native I/O driver. Hyper's connection and
-/// stream tasks share h2 state; polling them on one thread avoids moving that
-/// state between workers. No SQL, recovery or blocking work runs on this driver.
-pub(in crate::rpc) struct ConnectionRuntime {
+/// The transport owner's command loop and connection I/O share one driver.
+/// Publication and stream wakeups stay local instead of crossing a runtime for
+/// every packet. Connection count controls sockets, not native driver threads.
+/// SQL, cop workers and blocking recovery remain outside this event loop.
+pub(in crate::rpc) struct TransportIo {
     pub(in crate::rpc) handle: Handle,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
-impl ConnectionRuntime {
+impl TransportIo {
     pub(in crate::rpc) fn new() -> Result<Self, String> {
         let (ready, receiver) = std::sync::mpsc::sync_channel(1);
         let (stop, stopped) = tokio::sync::oneshot::channel();
         let thread = std::thread::Builder::new()
-            .name("tikv-connection-io".to_owned())
+            .name("tikv-transport".to_owned())
             .spawn(move || {
                 match tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -93,7 +94,7 @@ impl ConnectionRuntime {
     }
 }
 
-impl Drop for ConnectionRuntime {
+impl Drop for TransportIo {
     fn drop(&mut self) {
         // The transport joins all connection task scopes before stopping I/O.
         // Dropping the runtime on its own thread also works for async callers.

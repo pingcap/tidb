@@ -1,41 +1,46 @@
 {
   "date": "2026-09-10",
-  "status": "WIP checkpoint. Connection-local current-thread I/O removes named h2 lock waits but regresses throughput. The experiment remains in source for continued diagnosis; it is not an accepted optimization or whole-package completion.",
+  "status": "WIP. Co-located transport command and I/O ownership removes the named send-to-driver wake path and reduces SQL CPU 8.07 percent versus the previous experiment. Throughput remains -0.39 percent and p95 unchanged versus that predecessor; still slower than the faster control. No throughput/latency acceptance or whole-package completion.",
   "branch": "hparser-integration",
-  "pre_checkpoint_head": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
-  "delivery": "User requested commit and push of accumulated Rust work to hparser-integration only. Unrelated root tools and review artifacts excluded.",
-  "artifact_root": "/private/tmp/tidb-connection-io.kkpvKx",
+  "git_head": "431d637dec5a894f7eb435caa767dab03aefaba8",
+  "git_mutations": true,
+  "artifact_root": "/private/tmp/tidb-transport-owner.gHQJhr",
   "performance_accepted": false,
+  "cpu_reduction_verified": true,
+  "files_changed_in_increment": [
+    "rust/crates/tidb-txnkv/src/rpc/execution.rs",
+    "rust/crates/tidb-txnkv/src/rpc/transport_runtime.rs",
+    "rust/docs/cop-scan-worker-execplan.md",
+    "rust/benchmarks/cop-progress-baseline.json"
+  ],
   "implementation": {
-    "io_ownership": "TransportRuntime owns one current-thread Tokio driver per configured connection slot; ConnectionTasks scopes connection tasks to its Handle. Shared async command owner and independent cop workers remain. Shutdown closes task scopes and joins I/O threads, reporting panics.",
-    "preserved": "Connection count, batch admission, cancellation, deadlines, physical identity, in-flight retirement, native replies and explicit Go callback mode.",
-    "experiment_files": [
-      "rpc/execution.rs",
-      "rpc/transport_runtime.rs",
-      "rpc/channel_pool.rs",
-      "rpc/batch/transport.rs",
-      "rpc/unary.rs",
-      "rpc/liveness.rs"
-    ],
-    "scope": "Paths are relative to rust/crates/tidb-txnkv/src. No dependencies or Go/Bazel files changed in this I/O increment; the larger checkpoint includes earlier dependency changes."
+    "ownership": "TransportIo owns one current-thread native event loop for the existing command task and all its connection tasks. Connection count controls sockets, not driver threads. ConnectionTasks retains per-generation task scopes. Shared multi-thread execution remains for independent cop workers.",
+    "removed": "Per-connection runtime allocation and the shared-command-runtime to connection-runtime packet-publication handoff. No second implementation, runtime-size knob or workload-specific branch remains.",
+    "preserved": "Batch policy, configured connection count, independent receive tasks, physical channel/generation identity, cancellation, original deadlines, scoped close/join, panic reporting and normal versus explicit callback replies.",
+    "scope": "Native execution placement, not a complete transcreated Go package or Go runtime. No dependency, Go or Bazel changes.",
+    "go_sources": [
+      "Pinned client-go/v2 v2.0.8-0.20260708122311-01bd8f99f4da internal/client/conn_batch.go:193-339 collects, selects a connection and sends from the batch owner.",
+      "grpc-go v1.79.3 internal/transport/http2_client.go reader and loopy-writer goroutines are connection-owned, not pinned to separate OS runtimes.",
+      "pkg/store/copr/coprocessor.go:270-272,1169-1306,1450-1460 preserves unbuffered unordered results, independent workers and lite-worker fallback."
+    ]
   },
   "binaries": {
     "candidate": {
-      "path": "/private/tmp/tidb-connection-io.kkpvKx/candidate/candidate-server",
-      "sha256": "76f6f08fa55c6f03ca4559fc6c97fe55d8c6e3e956f0f8f86b8efeeee2f6446e"
+      "path": "/private/tmp/tidb-transport-owner.gHQJhr/candidate/candidate-server",
+      "sha256": "e61d432de6c71681b9868d7df9a0e81786c56551093742ed95f1793c5c130c8c"
     },
     "immediate_prior": {
-      "path": "/private/tmp/tidb-connection-io.kkpvKx/immediate/candidate-server",
-      "sha256": "dee4e9927bef64b15800c33fcdfc64a4162fc87a8caef94244057e3f9f3fa7d6"
+      "path": "/private/tmp/tidb-transport-owner.gHQJhr/immediate/candidate-server",
+      "sha256": "76f6f08fa55c6f03ca4559fc6c97fe55d8c6e3e956f0f8f86b8efeeee2f6446e"
     },
     "faster_control": {
-      "path": "/private/tmp/tidb-connection-io.kkpvKx/control/candidate-server",
+      "path": "/private/tmp/tidb-transport-owner.gHQJhr/control/candidate-server",
       "sha256": "84c39b216dcd53d3007615ba84f0f49423587625b114515f9d4fcd9e859567b8"
     },
     "go": {
       "path": "/Users/qiliu/.tiup/components/tidb/v9.0.0-beta.2.pre-nightly/tidb-server",
       "sha256": "e734c80768b5cd44852b01b573bd36f30d19bb47510e0883e6017f18563cbde2",
-      "scope": "Live binary differs from checkout; selected SQL equality is not full Go parity."
+      "scope": "Live binary differs from checkout; selected SQL and task-count equality are not full Go parity."
     },
     "sysbench": {
       "path": "/private/tmp/tidb-latency-path.Z5pxYT/sysbench/src/sysbench",
@@ -43,43 +48,38 @@
     }
   },
   "validation": {
-    "profile": "Ready checks for checkpoint delivery; optimization remains WIP",
+    "profile": "Ready",
     "passed": 2056,
     "failed": 0,
     "ignored": 16,
     "suites": 15,
+    "tests_exit": 0,
+    "build_exit": 0,
+    "ready_lint": true,
     "commands_rust_cwd": [
       "cargo test --offline --locked --release -j12 --no-fail-fast -p tidb-distsql -p tidb-txnkv -p tidb-unistore -p tidb-exec --lib --tests",
-      "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
-      "rustfmt --check --edition 2021 --config skip_children=true crates/tidb-txnkv/src/rpc/execution.rs crates/tidb-txnkv/src/rpc/transport_runtime.rs crates/tidb-txnkv/src/rpc/channel_pool.rs crates/tidb-txnkv/src/rpc/batch/transport.rs crates/tidb-txnkv/src/rpc/unary.rs crates/tidb-txnkv/src/rpc/liveness.rs"
+      "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server"
     ],
     "commands_root_cwd": [
+      "rustfmt --check --edition 2021 --config skip_children=true rust/crates/tidb-txnkv/src/rpc/execution.rs rust/crates/tidb-txnkv/src/rpc/transport_runtime.rs",
       "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
       "git diff --check -- rust"
     ],
-    "ready_lint": {
-      "exit": 0,
-      "log": "ready-lint-retry.log",
-      "initial_attempt": "Sandbox DNS blocked resolving revive; authorized network retry passed."
-    },
     "logs": [
-      "tests-verified.log",
-      "server-verified.log",
-      "prepush-tests-verified.log",
-      "prepush-build.log"
+      "tests.log",
+      "server-build.log",
+      "/private/tmp/tidb-push-checkpoint.rAQYpO/tests.log",
+      "/private/tmp/tidb-push-checkpoint.rAQYpO/build.log",
+      "/private/tmp/tidb-push-checkpoint.rAQYpO/lint.log"
     ],
-    "prepush_tests_exit": 0,
-    "prepush_build_exit": 0,
-    "prepush_initial_attempt": "Existing loopback fixture binds were denied by the sandbox; the identical command passed with authorized loopback access.",
-    "source_snapshot": "All 32 archived source/configuration files match current bytes; rebuilt binary SHA256 matches the measured candidate.",
-    "staged_diff_check": "git diff --cached --check -- rust ':!rust/benchmarks/tpcc-input-seed.patch' passed. The preserved external benchmark patch contains required unified-diff context spaces before Go tabs and on blank context lines; it is excluded from the source whitespace check.",
+    "build_seconds": 45.38,
     "not_verified": [
-      "Full Rust workspace suite, including seven known executor failures outside the consolidated scope",
+      "Full Rust workspace tests including seven known executor failures outside the consolidated scope",
       "TPC-C and mixed-write performance for this increment",
       "Live transaction differential suite",
-      "Complete Go package and platform parity",
-      "Full semantic review of all accumulated checkpoint changes"
-    ]
+      "Complete Go package and platform parity"
+    ],
+    "source_snapshot": "All 32 RPC source/configuration files in candidate-source.tar.gz match current bytes at the requested checkpoint. The rebuilt server matches the measured candidate SHA256. Ready checks passed for publication; performance acceptance and package completion remain open."
   },
   "workload": {
     "trials": 40,
@@ -87,8 +87,13 @@
     "warmup_transactions": 40000,
     "sql_errors": 0,
     "reconnects": 0,
-    "design": "6000 measured plus 1000 warmup transactions per trial. Against faster control: one ABBA block at 1 client, three each at 8 and 32 (28 trials). Against immediate prior: three ABBA blocks at 8 clients (12 trials). No build or profiling overlapped timing. Shared desktop, not isolated host.",
+    "design": "6000 measured plus 1000 warmup transactions per trial. First 12 trials: three ABBA blocks at eight clients against immediate prior. Then 28 trials against faster control: one ABBA at one client, three each at eight and 32. No builds or profiles overlap timing. Shared desktop, not isolated host.",
     "before_after_hash": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "commands": [
+      "ruby /private/tmp/tidb-transport-owner.gHQJhr/candidate/read_parity.rb",
+      "ruby /private/tmp/tidb-transport-owner.gHQJhr/prior-comparison/measure.rb",
+      "ruby /private/tmp/tidb-transport-owner.gHQJhr/candidate/measure.rb"
+    ],
     "records": [
       "candidate/measure.json",
       "prior-comparison/measure.json",
@@ -151,109 +156,109 @@
       "threads": 1,
       "means": {
         "before": {
-          "tps": 461.77473486808174,
-          "sql_cpu_seconds": 6.665,
-          "tikv_cpu_seconds": 8.259999999999998,
-          "latency_mean_ms": 2.165,
-          "latency_p95_ms": 2.43,
-          "batch_mean": 1.5212961593012215,
-          "singleton_fraction": 0.7877997700561921
+          "tps": 450.4790707968675,
+          "sql_cpu_seconds": 6.880000000000001,
+          "tikv_cpu_seconds": 8.394999999999996,
+          "latency_mean_ms": 2.2199999999999998,
+          "latency_p95_ms": 2.52,
+          "batch_mean": 1.5133546431923124,
+          "singleton_fraction": 0.7875851524664726
         },
         "after": {
-          "tps": 418.6706463979033,
-          "sql_cpu_seconds": 9.989999999999998,
-          "tikv_cpu_seconds": 10.29,
-          "latency_mean_ms": 2.385,
-          "latency_p95_ms": 2.685,
-          "batch_mean": 1.0540418589429188,
-          "singleton_fraction": 0.9509675601174633
+          "tps": 438.6219168510714,
+          "sql_cpu_seconds": 8.260000000000005,
+          "tikv_cpu_seconds": 8.640000000000015,
+          "latency_mean_ms": 2.275,
+          "latency_p95_ms": 2.545,
+          "batch_mean": 1.4641424957470788,
+          "singleton_fraction": 0.7949613991772166
         }
       },
       "delta_percent": {
-        "tps": -9.334440629908492,
-        "sql_cpu_seconds": 49.88747186796696,
-        "tikv_cpu_seconds": 24.5762711864407,
-        "latency_mean_ms": 10.161662817551953,
-        "latency_p95_ms": 10.49382716049383,
-        "batch_mean": -30.71422336153975,
-        "singleton_fraction": 20.71183519762043
+        "tps": -2.6321209384537303,
+        "sql_cpu_seconds": 20.05813953488378,
+        "tikv_cpu_seconds": 2.918403811792958,
+        "latency_mean_ms": 2.4774774774774855,
+        "latency_p95_ms": 0.9920634920634885,
+        "batch_mean": -3.2518582254734474,
+        "singleton_fraction": 0.9365649781035046
       },
       "tps_abba_blocks_percent": [
-        -9.334440629908492
+        -2.6321209384537303
       ]
     },
     {
       "threads": 8,
       "means": {
         "before": {
-          "tps": 1970.3693589649922,
-          "sql_cpu_seconds": 8.591666666666667,
-          "tikv_cpu_seconds": 12.213333333333331,
-          "latency_mean_ms": 4.051666666666667,
+          "tps": 1967.2957978908464,
+          "sql_cpu_seconds": 8.615,
+          "tikv_cpu_seconds": 12.241666666666655,
+          "latency_mean_ms": 4.0616666666666665,
           "latency_p95_ms": 4.423333333333333,
-          "batch_mean": 4.064076501916836,
-          "singleton_fraction": 0.030840169268092188
+          "batch_mean": 4.042264963910782,
+          "singleton_fraction": 0.029792448417299142
         },
         "after": {
-          "tps": 1784.1756101622689,
-          "sql_cpu_seconds": 12.091666666666667,
-          "tikv_cpu_seconds": 12.774999999999993,
-          "latency_mean_ms": 4.4783333333333335,
-          "latency_p95_ms": 4.865,
-          "batch_mean": 4.305195240139603,
-          "singleton_fraction": 0.048692524475910555
+          "tps": 1770.0675696938524,
+          "sql_cpu_seconds": 11.18333333333333,
+          "tikv_cpu_seconds": 12.26,
+          "latency_mean_ms": 4.513333333333333,
+          "latency_p95_ms": 4.91,
+          "batch_mean": 4.68590831196482,
+          "singleton_fraction": 0.073047615596988
         }
       },
       "delta_percent": {
-        "tps": -9.449687590580902,
-        "sql_cpu_seconds": 40.737148399612025,
-        "tikv_cpu_seconds": 4.5987991266375206,
-        "latency_mean_ms": 10.530645824763463,
-        "latency_p95_ms": 9.984928409947269,
-        "batch_mean": 5.9329281353105,
-        "singleton_fraction": 57.886696576236844
+        "tps": -10.025346895390308,
+        "sql_cpu_seconds": 29.812342812923156,
+        "tikv_cpu_seconds": 0.14976174268219733,
+        "latency_mean_ms": 11.120229790726288,
+        "latency_p95_ms": 11.002260738507918,
+        "batch_mean": 15.922839145886435,
+        "singleton_fraction": 145.1883597273345
       },
       "tps_abba_blocks_percent": [
-        -9.266234644284,
-        -9.582731614662698,
-        -9.499307382707201
+        -10.525081185891894,
+        -9.705291895221169,
+        -9.844007121563136
       ]
     },
     {
       "threads": 32,
       "means": {
         "before": {
-          "tps": 2893.702006027111,
-          "sql_cpu_seconds": 10.075000000000001,
-          "tikv_cpu_seconds": 12.674999999999997,
-          "latency_mean_ms": 10.75,
-          "latency_p95_ms": 12.01,
-          "batch_mean": 7.534423895522154,
-          "singleton_fraction": 0.007081890717962492
+          "tps": 2935.1528452373254,
+          "sql_cpu_seconds": 9.979999999999999,
+          "tikv_cpu_seconds": 12.553333333333313,
+          "latency_mean_ms": 10.63,
+          "latency_p95_ms": 11.795,
+          "batch_mean": 7.6000915376006875,
+          "singleton_fraction": 0.0070294307335358125
         },
         "after": {
-          "tps": 2701.144237314917,
-          "sql_cpu_seconds": 13.076666666666663,
-          "tikv_cpu_seconds": 13.028333333333327,
-          "latency_mean_ms": 11.541666666666666,
-          "latency_p95_ms": 13.061666666666667,
-          "batch_mean": 7.747925840269872,
-          "singleton_fraction": 0.010290210998141598
+          "tps": 2755.7486171789837,
+          "sql_cpu_seconds": 11.571666666666673,
+          "tikv_cpu_seconds": 12.76999999999999,
+          "latency_mean_ms": 11.33,
+          "latency_p95_ms": 12.673333333333332,
+          "batch_mean": 10.801525585916073,
+          "singleton_fraction": 0.012634462981046543
         }
       },
       "delta_percent": {
-        "tps": -6.654374510959582,
-        "sql_cpu_seconds": 29.793217535152962,
-        "tikv_cpu_seconds": 2.787639710716605,
-        "latency_mean_ms": 7.364341085271309,
-        "latency_p95_ms": 8.756591729114627,
-        "batch_mean": 2.833686393389767,
-        "singleton_fraction": 45.30315996039771
+        "tps": -6.11226186566225,
+        "sql_cpu_seconds": 15.948563794255243,
+        "tikv_cpu_seconds": 1.7259691980882508,
+        "latency_mean_ms": 6.585136406396974,
+        "latency_p95_ms": 7.4466581884979455,
+        "batch_mean": 42.12362485999823,
+        "singleton_fraction": 79.73664525592945
       },
       "tps_abba_blocks_percent": [
-        -7.057119275636648,
-        -6.666872949627988,
-        -6.2298655355393695
+        -6.809709761528914,
+        -5.470184249228005,
+        -6.048113857288695
       ]
     }
   ],
@@ -262,90 +267,154 @@
       "threads": 8,
       "means": {
         "before": {
-          "tps": 1793.5863912843488,
-          "sql_cpu_seconds": 11.511666666666665,
-          "tikv_cpu_seconds": 12.558333333333318,
-          "latency_mean_ms": 4.455,
-          "latency_p95_ms": 4.835,
-          "batch_mean": 4.470978072938098,
-          "singleton_fraction": 0.061926769204011946
+          "tps": 1780.714735215369,
+          "sql_cpu_seconds": 12.116666666666667,
+          "tikv_cpu_seconds": 12.851666666666667,
+          "latency_mean_ms": 4.485,
+          "latency_p95_ms": 4.8950000000000005,
+          "batch_mean": 4.275047437832688,
+          "singleton_fraction": 0.05175587679571697
         },
         "after": {
-          "tps": 1760.5391232434429,
-          "sql_cpu_seconds": 12.313333333333338,
-          "tikv_cpu_seconds": 12.908333333333323,
-          "latency_mean_ms": 4.54,
-          "latency_p95_ms": 4.97,
-          "batch_mean": 4.24845455954044,
-          "singleton_fraction": 0.053848517640605754
+          "tps": 1773.7438587242323,
+          "sql_cpu_seconds": 11.138333333333334,
+          "tikv_cpu_seconds": 12.285000000000002,
+          "latency_mean_ms": 4.501666666666666,
+          "latency_p95_ms": 4.8950000000000005,
+          "batch_mean": 4.697168053499632,
+          "singleton_fraction": 0.07055248709866377
         }
       },
       "delta_percent": {
-        "tps": -1.8425244639173166,
-        "sql_cpu_seconds": 6.963949616331311,
-        "tikv_cpu_seconds": 2.7869940278699934,
-        "latency_mean_ms": 1.9079685746352437,
-        "latency_p95_ms": 2.792140641158225,
-        "batch_mean": -4.977065639049904,
-        "singleton_fraction": -13.044845819088591
+        "tps": -0.39146508720800943,
+        "sql_cpu_seconds": -8.074277854195323,
+        "tikv_cpu_seconds": -4.409285436389554,
+        "latency_mean_ms": 0.3716090672612138,
+        "latency_p95_ms": 0,
+        "batch_mean": 9.874056880195582,
+        "singleton_fraction": 36.3178279775608
       },
       "tps_abba_blocks_percent": [
-        -3.344928365470956,
-        -0.839771292313285,
-        -1.349710229165313
+        -0.28233355000928384,
+        -0.309224601225333,
+        -0.5828493289726677
       ]
     }
   ],
   "root_cause": {
-    "result": "Connection ownership is appropriate, but separate current-thread runtimes add a mandatory remote wake boundary. Removing the named h2 lock stage does not make this topology faster.",
-    "native_all_thread": "Immediate-prior to candidate named h2 mutex-wait leaves: 85 to 0; mutex-drop leaves: 20 to 0. These counts include waiting, are not CPU percentages and do not prove zero h2 contention.",
-    "cpu_running_samples": {
-      "prior": 27404,
-      "candidate": 27777
-    },
-    "cpu_leaf_percent": {
-      "cvwait": {
-        "prior": 7.64,
-        "candidate": 8.88
+    "verified": "Packet publication previously crossed from the shared command runtime into a connection current-thread runtime. Tokio's external scheduling enqueues remotely and unparks the I/O driver; co-location uses its local task queue.",
+    "source": "Tokio 1.53.0 runtime/scheduler/current_thread/mod.rs:709-742 distinguishes local scheduling from remote queue plus driver.unpark. Its I/O driver calls mio 1.2.2 kqueue wake, issuing kevent on macOS.",
+    "observed_chain": "run_worker -> publish_batch -> BatchTransportState.submit/flush/send_group -> wake_by_val -> I/O driver Handle.unpark -> kevent",
+    "profile_result": "Across separately captured eight-client Time Profiler traces, the named send_group-kevent chain is 193ms sampled CPU in the predecessor and absent from the candidate's top-65 synchronization chains. Source confirms local publication. This is not proof that every remote wake or kevent disappeared.",
+    "cpu": [
+      {
+        "path": "/private/tmp/tidb-transport-owner.gHQJhr/candidate/prior-cpu.trace",
+        "states": {
+          "Running": 28727
+        },
+        "samples": 28727,
+        "weight_ns": 28727000000,
+        "leaf_weight_ns": {
+          "__psynch_cvwait": 2631000000,
+          "__recvfrom": 2310000000,
+          "semaphore_timedwait_trap": 1667000000,
+          "kevent": 1649000000,
+          "__psynch_cvsignal": 1451000000,
+          "semaphore_signal_trap": 1260000000,
+          "_platform_memmove": 1235000000,
+          "writev": 1207000000,
+          "mach_absolute_time": 1048000000,
+          "_rjem_malloc": 569000000,
+          "__psynch_mutexwait": 522000000,
+          "_rjem_sdallocx.cold.1": 458000000,
+          "__psynch_mutexdrop": 368000000,
+          "pthread_mutex_lock": 292000000,
+          "pthread_mutex_unlock": 267000000,
+          "semaphore_wait_trap": 249000000
+        },
+        "send_group_kevent_top65_ms": 193
       },
-      "cvsignal": {
-        "prior": 4.43,
-        "candidate": 5.47
-      },
-      "kevent": {
-        "prior": 5.35,
-        "candidate": 5.85
+      {
+        "path": "/private/tmp/tidb-transport-owner.gHQJhr/candidate/candidate-cpu.trace",
+        "states": {
+          "Running": 25593
+        },
+        "samples": 25593,
+        "weight_ns": 25593000000,
+        "leaf_weight_ns": {
+          "__recvfrom": 2081000000,
+          "__psynch_cvwait": 2065000000,
+          "kevent": 1417000000,
+          "semaphore_timedwait_trap": 1334000000,
+          "_platform_memmove": 1177000000,
+          "__psynch_cvsignal": 1151000000,
+          "semaphore_signal_trap": 1113000000,
+          "writev": 1109000000,
+          "mach_absolute_time": 1006000000,
+          "_rjem_malloc": 577000000,
+          "_rjem_sdallocx.cold.1": 416000000,
+          "__psynch_mutexwait": 338000000,
+          "pthread_mutex_unlock": 247000000,
+          "pthread_mutex_lock": 233000000,
+          "__psynch_mutexdrop": 217000000,
+          "semaphore_wait_trap": 212000000
+        },
+        "send_group_kevent_top65_ms": 0
       }
+    ],
+    "remaining": "Shared cop-worker scheduler condition-variable waits/signals, SQL-to-worker rendezvous, direct reply parking and the asynchronous collector timer remain. They are not all explained by the removed publication hop. Complete critical-path attribution is still open.",
+    "rejected_hypotheses": [
+      "Do not buffer unordered results to bypass Go's rendezvous: Go constructs that channel unbuffered.",
+      "Do not bypass real workers: Go EXPLAIN ANALYZE confirms four cop tasks for the tested range and the region inventory shows the actual four boundaries.",
+      "Do not treat active_attempts as stale terminal work: DirectUnaryQueryResponse removes a terminal attempt when accepting its response, before deciding on lite-worker fallback."
+    ],
+    "diagnostics": {
+      "query": "SELECT c FROM sbtest1 WHERE id BETWEEN 50000 AND 50099",
+      "go_plan": "TableReader -> Projection -> TableRangeScan [50000,50099]",
+      "rust_plan": "TableReader -> Projection -> TableRangeScan [50000,50099]",
+      "go_actual_cop_tasks": 4,
+      "rust_traced_cop_tasks": 4,
+      "files": [
+        "diagnostic/explain-go.log",
+        "diagnostic/explain-rust.log",
+        "diagnostic/go-runtime-regions.log",
+        "diagnostic/candidate-console.log",
+        "diagnostic/results.log"
+      ],
+      "mutation": "Read-only diagnostic queries on the existing fixture; no schema, region or data reset."
     },
-    "observed_chain": "run_worker -> publish_batch -> BatchTransportState.submit/flush/send_group -> Tokio wake_by_val -> I/O driver Handle.unpark -> kevent. One exact captured chain accounts for 221ms sampled CPU; not a complete category total.",
-    "source_cause": "Tokio 1.53.0 current_thread::Handle.schedule pushes externally scheduled tasks into its remote queue and unconditionally unparks the driver. Driver.unpark calls mio 1.2.2 Waker; macOS kqueue wake issues kevent. Shared-runtime local scheduling can avoid that cross-runtime syscall.",
-    "go_comparison": "grpc-go v1.79.3 http2_client.go starts connection-owned reader and loopy-writer goroutines. Go does not dedicate a separate runtime or pinned OS thread to each connection. Connection ownership alone does not justify this Rust runtime split.",
-    "limits": "Controlled measurements isolate the topology regression versus immediate prior. Profiles and source establish an added wake stage, not a complete numerical attribution of the 6.96 percent SQL CPU increase or the entire faster-control gap.",
     "artifacts": [
       "candidate/profile-boundaries.json",
       "candidate/cpu-boundaries.json",
       "candidate/prior-cpu.trace",
       "candidate/candidate-cpu.trace",
-      "candidate/go-cpu.pb.gz",
-      "candidate/go-cpu-top.txt"
+      "candidate/sample-go.txt"
+    ],
+    "commands": [
+      "ruby /private/tmp/tidb-transport-owner.gHQJhr/candidate/profile.rb",
+      "ruby /private/tmp/tidb-transport-owner.gHQJhr/candidate/cpu-profile.rb prior",
+      "ruby /private/tmp/tidb-transport-owner.gHQJhr/candidate/cpu-profile.rb candidate",
+      "python3 /private/tmp/tidb-transport-owner.gHQJhr/cpu-boundaries.py /private/tmp/tidb-transport-owner.gHQJhr/candidate/prior-cpu.trace /private/tmp/tidb-transport-owner.gHQJhr/candidate/candidate-cpu.trace"
     ]
   },
-  "next_action": "Keep connection lifecycle ownership while removing unnecessary cross-runtime wake handoffs. Compare pinned Go and both Rust topologies before the next connected edit. Retest once per coherent change and accept only matched SQL with higher throughput/lower latency; do not infer a win from fewer named locks.",
+  "next_action": "Attribute the remaining latency on the real four-region request chain: batch collection, I/O completion, independent cop worker, SQL consumer and join. Compare existing timestamps and pinned Go before the next connected change. Preserve the source-required worker/rendezvous semantics and exact deadlines. Do not restore a shortcut or accept CPU-only improvement as throughput success; TPC-C and mixed writes remain required.",
   "cleanup": {
     "statuses": {
       "/private/tmp/tidb-live-workload.nIrZBe/manifest.json": "stopped",
-      "/private/tmp/tidb-connection-io.kkpvKx/control/candidate-manifest.json": "stopped",
-      "/private/tmp/tidb-connection-io.kkpvKx/immediate/candidate-manifest.json": "stopped",
-      "/private/tmp/tidb-connection-io.kkpvKx/candidate/candidate-manifest.json": "stopped"
+      "/private/tmp/tidb-transport-owner.gHQJhr/control/candidate-manifest.json": "stopped",
+      "/private/tmp/tidb-transport-owner.gHQJhr/immediate/candidate-manifest.json": "stopped",
+      "/private/tmp/tidb-transport-owner.gHQJhr/candidate/candidate-manifest.json": "stopped",
+      "/private/tmp/tidb-transport-owner.gHQJhr/diagnostic/candidate-manifest.json": "stopped"
     },
     "owned_pids": [
-      1964,
-      1965,
-      1966,
-      2073,
-      2737,
-      3371,
-      4457
+      21241,
+      21242,
+      21243,
+      21306,
+      21535,
+      21659,
+      22074,
+      26452
     ],
     "owned_ports": [
       57106,
@@ -356,23 +425,25 @@
       57111,
       57112,
       57113,
-      61118,
-      61119,
-      61267,
-      61268,
-      61880,
-      61881
+      52251,
+      52252,
+      52274,
+      52275,
+      52400,
+      52401,
+      54704,
+      54705
     ],
     "remaining_pids": [],
     "listening_ports": [],
-    "verification_command": "ruby /private/tmp/tidb-connection-io.kkpvKx/verify-cleanup.rb",
+    "verification_command": "ruby /private/tmp/tidb-transport-owner.gHQJhr/verify-cleanup.rb",
     "exit": 0
   },
   "recovery": {
     "before_source": "before-source.tar.gz",
     "candidate_source": "candidate-source.tar.gz",
-    "prior_evidence": "/private/tmp/tidb-native-notification.pAovT2",
+    "prior_evidence": "/private/tmp/tidb-connection-io.kkpvKx",
     "fixture": "/private/tmp/tidb-live-workload.nIrZBe",
-    "note": "Archives preserve earlier source and baseline. Do not restore over the shared worktree. Raw traces and binaries are local, not committed."
+    "note": "Prior source and baseline preserved in before-source.tar.gz. All owned services stopped; fixture data preserved. Do not restore source archives over the shared worktree."
   }
 }

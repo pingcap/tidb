@@ -24,7 +24,7 @@ use tidb_pd_client::ClusterSecurity;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
-use super::execution::{wait, ConnectionRuntime};
+use super::execution::{wait, TransportIo};
 
 use crate::region::StoreLiveness;
 
@@ -197,7 +197,7 @@ pub(super) struct TransportRuntime {
     commands: Option<mpsc::UnboundedSender<WorkerCommand>>,
     worker: Option<JoinHandle<()>>,
     cancellation: TransportShutdownCancellation,
-    io: Vec<ConnectionRuntime>,
+    io: Option<TransportIo>,
 }
 
 /// Cloneable request capability for the retained transport worker.
@@ -233,15 +233,12 @@ impl TransportRuntime {
         security: Arc<ClusterSecurity>,
         connection_count: NonZeroUsize,
     ) -> Result<Self, DirectUnaryClientError> {
-        let runtime = super::execution_runtime().map_err(DirectUnaryClientError::Runtime)?;
-        let io = (0..connection_count.get())
-            .map(|_| ConnectionRuntime::new())
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(DirectUnaryClientError::Runtime)?;
+        let io = TransportIo::new().map_err(DirectUnaryClientError::Runtime)?;
         let (commands, receiver) = mpsc::unbounded_channel();
         let (shutdown, shutdown_rx) = watch::channel(false);
-        let worker = runtime.spawn(run_worker(
-            io.iter().map(|driver| driver.handle.clone()).collect(),
+        let worker = io.handle.spawn(run_worker(
+            io.handle.clone(),
+            connection_count,
             receiver,
             commands.clone(),
             shutdown_rx,
@@ -251,7 +248,7 @@ impl TransportRuntime {
             commands: Some(commands),
             worker: Some(worker),
             cancellation: TransportShutdownCancellation { shutdown },
-            io,
+            io: Some(io),
         })
     }
 
@@ -299,10 +296,10 @@ impl TransportRuntime {
             }
             shutdown_errors
         });
-        for mut driver in self.io.drain(..) {
+        if let Some(mut driver) = self.io.take() {
             if let Err(panic) = driver.shutdown() {
                 shutdown_errors.push(TransportShutdownError::WorkerPanicked {
-                    message: format!("connection I/O: {}", panic_message(&panic)),
+                    message: format!("transport I/O: {}", panic_message(&panic)),
                 });
             }
         }
@@ -540,7 +537,8 @@ fn publish_batch(
 }
 
 async fn run_worker(
-    runtimes: Vec<tokio::runtime::Handle>,
+    runtime: tokio::runtime::Handle,
+    connection_count: NonZeroUsize,
     mut receiver: mpsc::UnboundedReceiver<WorkerCommand>,
     commands: mpsc::UnboundedSender<WorkerCommand>,
     shutdown: watch::Receiver<bool>,
@@ -548,11 +546,9 @@ async fn run_worker(
 ) {
     let versions = Arc::new(std::sync::Mutex::new(HashMap::new()));
     let request_ids = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let connection_count = NonZeroUsize::new(runtimes.len()).expect("nonempty connection fleet");
-    let mut connections: Vec<_> = runtimes
-        .into_iter()
-        .map(|runtime| TransportConnection {
-            runtime,
+    let mut connections: Vec<_> = (0..connection_count.get())
+        .map(|_| TransportConnection {
+            runtime: runtime.clone(),
             channels: ChannelPool::with_security(Arc::clone(&security), Arc::clone(&versions)),
             batch: BatchTransportState::new(shutdown.clone(), Arc::clone(&request_ids)),
         })
@@ -872,7 +868,8 @@ mod tests {
         commands.send(WorkerCommand::Close { reply }).unwrap();
         let (_, shutdown) = watch::channel(false);
         wait(super::super::execution_runtime().unwrap().spawn(run_worker(
-            vec![super::super::execution_runtime().unwrap().handle().clone()],
+            super::super::execution_runtime().unwrap().handle().clone(),
+            NonZeroUsize::new(1).unwrap(),
             receiver,
             commands,
             shutdown,
@@ -952,7 +949,8 @@ mod tests {
         // Publication is synchronous; inspect admission and orderly retirement.
         let (_shutdown, shutdown_rx) = watch::channel(false);
         wait(super::super::execution_runtime().unwrap().spawn(run_worker(
-            vec![super::super::execution_runtime().unwrap().handle().clone()],
+            super::super::execution_runtime().unwrap().handle().clone(),
+            NonZeroUsize::new(1).unwrap(),
             receiver,
             commands,
             shutdown_rx,
@@ -1013,7 +1011,7 @@ mod tests {
             commands: Some(commands),
             worker: Some(worker),
             cancellation: cancellation(),
-            io: Vec::new(),
+            io: None,
         };
 
         assert_eq!(
@@ -1038,7 +1036,7 @@ mod tests {
             commands: Some(commands),
             worker: Some(worker),
             cancellation: cancellation(),
-            io: Vec::new(),
+            io: None,
         };
 
         assert_eq!(
@@ -1064,7 +1062,7 @@ mod tests {
             commands: Some(commands),
             worker: Some(worker),
             cancellation: cancellation(),
-            io: Vec::new(),
+            io: None,
         };
 
         assert_eq!(
@@ -1092,7 +1090,7 @@ mod tests {
             commands: Some(commands),
             worker: Some(worker),
             cancellation: cancellation(),
-            io: Vec::new(),
+            io: None,
         };
 
         assert_eq!(
