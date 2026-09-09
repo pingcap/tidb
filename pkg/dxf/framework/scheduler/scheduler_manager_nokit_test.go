@@ -22,28 +22,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
-	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
-	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
->>>>>>> f0c97b54802 (importinto, dxf: clean up expired conflict row files (#70463))
 	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	mockScheduler "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-=======
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	dto "github.com/prometheus/client_model/go"
->>>>>>> f0c97b54802 (importinto, dxf: clean up expired conflict row files (#70463))
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )

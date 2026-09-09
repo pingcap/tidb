@@ -65,11 +65,7 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "off",
-<<<<<<< HEAD
-    shard_count = 44,
-=======
-    shard_count = 49,
->>>>>>> f0c97b54802 (importinto, dxf: clean up expired conflict row files (#70463))
+    shard_count = 47,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",

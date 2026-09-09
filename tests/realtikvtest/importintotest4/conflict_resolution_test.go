@@ -35,12 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-=======
-	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
->>>>>>> f0c97b54802 (importinto, dxf: clean up expired conflict row files (#70463))
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
