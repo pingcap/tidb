@@ -4278,8 +4278,13 @@ def go_deps():
         build_tags = ["intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sum = "h1:gm9qSMyqRRKgY2XbBqa8KGu8dYwxtsOO7zJUbD25HJo=",
         version = "v2.0.8-0.20260922223731-c8fb9040765e",
+=======
+        sum = "h1:PQatw9XW6G0pOFONmjv4NaKauXQDImXSQjrndoGjPZ4=",
+        version = "v2.0.8-0.20260908025646-0f91f124d321",
+>>>>>>> e152661cf10 (server: detect client disconnects in explicit transactions (#70343) (#70777))
     )
     go_repository(
         name = "com_github_tikv_pd_client",
