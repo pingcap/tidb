@@ -24,6 +24,15 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
+// LocalFTSAlternativeError marks native FTS validation failures for which the
+// optimizer may attempt an index-backed local alternative. Other errors remain fatal.
+type LocalFTSAlternativeError struct {
+	Cause error
+}
+
+func (e *LocalFTSAlternativeError) Error() string { return e.Cause.Error() }
+func (e *LocalFTSAlternativeError) Unwrap() error { return e.Cause }
+
 type ftsFuncValidation struct {
 }
 
@@ -37,7 +46,13 @@ func (ftsFuncValidation) Name() string {
 // 2. it's really checked whether can be used to build a fts index request.
 // So final check is performed here.
 func (f *ftsFuncValidation) Optimize(ctx context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
-	return p, false, f.doQuickValidation(ctx, p)
+	err := f.doQuickValidation(ctx, p)
+	sv := p.SCtx().GetSessionVars()
+	if err != nil && sv.EnableAlternativeLogicalPlans && sv.EnableLocalMatchAgainst &&
+		sv.StmtCtx.AlternativeLogicalPlanHasLocalFTS && !sv.StmtCtx.AlternativeLogicalPlanLocalFTS {
+		err = &LocalFTSAlternativeError{Cause: err}
+	}
+	return p, false, err
 }
 
 func (f *ftsFuncValidation) doQuickValidation(ctx context.Context, p base.LogicalPlan) error {

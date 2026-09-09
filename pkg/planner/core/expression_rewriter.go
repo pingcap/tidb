@@ -1729,6 +1729,15 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			expression.FTSModifierSupportedByLocalNoScore(v.Modifier) {
 			localIndex = er.resolveLocalFullTextIndex(numCols, stackLen)
 		}
+		if localIndex != nil {
+			sv := er.planCtx.builder.ctx.GetSessionVars()
+			if sv.EnableAlternativeLogicalPlans {
+				sv.StmtCtx.AlternativeLogicalPlanHasLocalFTS = true
+				if !sv.StmtCtx.AlternativeLogicalPlanLocalFTS {
+					localIndex = nil
+				}
+			}
+		}
 		against := er.ctxStack[stackLen-1]
 		cols := er.ctxStack[stackLen-numCols-1 : stackLen-1]
 

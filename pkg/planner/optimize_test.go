@@ -71,3 +71,36 @@ func TestAlternativeRoundRestoreOnPanic(t *testing.T) {
 		require.Equal(t, enabled, sv.EnableCorrelateSubquery)
 	}
 }
+
+func TestLocalFTSAlternativeRoundState(t *testing.T) {
+	var round alternativeRound
+	for _, candidate := range alternativeRounds {
+		if candidate.name == "local-fts" {
+			round = candidate
+		}
+	}
+	require.NotNil(t, round.setup)
+	sv := variable.NewSessionVars(nil)
+	sv.EnableAlternativeLogicalPlans = true
+	sv.EnableLocalMatchAgainst = true
+	require.False(t, round.enabled(sv))
+	sv.StmtCtx.AlternativeLogicalPlanHasLocalFTS = true
+	require.True(t, round.enabled(sv))
+	for _, before := range []bool{false, true} {
+		sv.StmtCtx.AlternativeLogicalPlanLocalFTS = before
+		require.Panics(t, func() {
+			defer round.setup(sv)()
+			require.True(t, sv.StmtCtx.AlternativeLogicalPlanLocalFTS)
+			panic("failed round")
+		})
+		require.Equal(t, before, sv.StmtCtx.AlternativeLogicalPlanLocalFTS)
+	}
+	sv.EnableLocalMatchAgainst = false
+	require.False(t, round.enabled(sv))
+	sv.EnableLocalMatchAgainst = true
+	sv.EnableAlternativeLogicalPlans = false
+	require.False(t, round.enabled(sv))
+	sv.StmtCtx.ResetAlternativeLogicalPlanSignals()
+	require.False(t, sv.StmtCtx.AlternativeLogicalPlanHasLocalFTS)
+	require.False(t, sv.StmtCtx.AlternativeLogicalPlanLocalFTS)
+}

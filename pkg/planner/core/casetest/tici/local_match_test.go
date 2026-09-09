@@ -104,7 +104,60 @@ func TestLocalMatchIndexConfig(t *testing.T) {
 	require.Contains(t, localPlan, "match_against(")
 	require.NotContains(t, strings.ToLower(localPlan), "search func:")
 	require.Contains(t, localPlan, "cop[tikv]")
+	// Restricting reads to TiKV makes the native TiCI round unavailable.
+	// Local evaluation still uses tokenization from the index snapshot.
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = on")
+	tk.MustExec("set tidb_isolation_read_engines = 'tikv'")
+	tk.MustQuery("select id from local_fts where match(body) against('+an' in boolean mode)").Check(testkit.Rows("1"))
+	tk.MustQuery("select id from local_fts where id=3 or match(body) against('+cat' in boolean mode) order by id").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("select a.id from local_fts a join local_fts b on a.id=b.id and match(a.body) against('+cat' in boolean mode)").Check(testkit.Rows("1"))
+	for _, value := range []string{"+an", "+elephant", "+an"} {
+		tk.MustExec("set @search = '" + value + "'")
+		want := "1"
+		if value == "+elephant" {
+			want = "2"
+		}
+		tk.MustQuery("execute local_stmt using @search").Check(testkit.Rows(want))
+	}
+	tk.MustExec("begin")
+	tk.MustExec("insert into local_fts values (5, 'cat')")
+	tk.MustQuery("select id from local_fts where match(body) against('+cat' in boolean mode) order by id").Check(testkit.Rows("1", "5"))
+	tk.MustExec("rollback")
+	// If both rounds reject a mixed score/predicate query, preserve the native
+	// error instead of reporting a generic no-plan error.
+	require.ErrorContains(t, tk.ExecToErr("select match(body) against('+cat' in boolean mode) from local_fts where match(body) against('+cat' in boolean mode)"), "SELECT")
+	tk.MustExec("create table no_local_index(body text)")
+	require.Error(t, tk.ExecToErr("select * from no_local_index where match(body) against('+cat' in boolean mode)"))
+	require.Error(t, tk.ExecToErr("select match(body) against('+cat' in boolean mode) from local_fts"))
+	require.False(t, tk.Session().GetSessionVars().StmtCtx.AlternativeLogicalPlanLocalFTS)
+	tk.MustExec("set tidb_isolation_read_engines = 'tikv,tiflash'")
 	testkit.SetTiFlashReplica(t, domain.GetDomain(tk.Session()), "test", "local_fts")
+	// Both viable plans must compete, rather than selecting a fixed engine.
+	costPoint := "github.com/pingcap/tidb/pkg/planner/forceLocalFTSAlternativeCost"
+	t.Cleanup(func() { require.NoError(t, failpoint.Disable(costPoint)) })
+	for _, winner := range []string{"native", "local", "tie"} {
+		require.NoError(t, failpoint.Enable(costPoint, fmt.Sprintf("return(%q)", winner)))
+		plan := fmt.Sprint(tk.MustQuery("explain select id from local_fts where match(body) against('+cat' in boolean mode)").Rows())
+		if winner == "local" {
+			require.Contains(t, plan, "match_against(")
+			require.NotContains(t, plan, "search func:")
+		} else {
+			require.Contains(t, plan, "search func:fts_match_word")
+		}
+		require.False(t, tk.Session().GetSessionVars().StmtCtx.AlternativeLogicalPlanLocalFTS)
+	}
+	require.NoError(t, failpoint.Disable(costPoint))
+	// Switching alternative planning must not reuse a direct-local cache entry.
+	altKey, _, cacheable, _, err := core.NewPlanCacheKey(tk.Session(), prepared.(*core.PlanCacheStmt))
+	require.NoError(t, err)
+	require.True(t, cacheable)
+	tk.Session().GetSessionVars().EnableAlternativeLogicalPlans = false
+	directKey, _, cacheable, _, err := core.NewPlanCacheKey(tk.Session(), prepared.(*core.PlanCacheStmt))
+	require.NoError(t, err)
+	require.True(t, cacheable)
+	require.NotEqual(t, altKey, directKey)
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = on")
+
 	indexInfo := external.GetTableByName(t, tk, "test", "local_fts").Meta().FindIndexByName("ft").FullTextInfo
 	config := indexInfo.ParserConfig
 	indexInfo.ParserConfig = nil
@@ -178,8 +231,10 @@ func TestLocalMatchSemantics(t *testing.T) {
 	require.ErrorContains(t, tk.ExecToErr(`select id, match(title) against('+MySQL' in boolean mode) as score from articles`), "cannot be used in SELECT")
 	require.ErrorContains(t, tk.ExecToErr(`select id, title from articles order by match(title) against('+MySQL' in boolean mode) desc`), "ORDER BY")
 	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = on")
+	tk.MustExec("set tidb_isolation_read_engines = 'tikv'")
 	tk.MustQuery(`select id from articles where match(title) against('+MySQL -tutorial' in boolean mode) order by id`).Check(testkit.Rows("2", "3", "4", "5"))
 	// On this branch, disabling local evaluation restores native TiCI routing.
+	tk.MustExec("set tidb_isolation_read_engines = 'tikv,tiflash'")
 	testkit.SetTiFlashReplica(t, domain.GetDomain(tk.Session()), "test", "articles")
 	tk.MustExec("set tidb_enable_local_match_against = off")
 	nativePlan := fmt.Sprint(tk.MustQuery(`explain select id from articles where match(title) against('+MySQL -tutorial' in boolean mode)`).Rows())

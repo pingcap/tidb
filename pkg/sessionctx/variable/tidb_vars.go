@@ -342,6 +342,7 @@ const (
 	TiDBOptEnableAlternativeLogicalPlans = "tidb_opt_enable_alternative_logical_plans"
 
 	// TiDBEnableLocalMatchAgainst enables local no-score MATCH ... AGAINST evaluation.
+	// With alternative logical plans enabled, it competes with native TiCI on cost.
 	TiDBEnableLocalMatchAgainst = "tidb_enable_local_match_against"
 
 	// TiDBOptLimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.

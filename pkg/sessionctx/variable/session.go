@@ -1138,6 +1138,7 @@ type SessionVars struct {
 	EnableAlternativeLogicalPlans bool
 
 	// EnableLocalMatchAgainst enables local no-score MATCH ... AGAINST evaluation.
+	// With alternative logical plans enabled, it competes with native TiCI on cost.
 	EnableLocalMatchAgainst bool
 
 	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.

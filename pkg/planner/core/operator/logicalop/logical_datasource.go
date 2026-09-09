@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -854,6 +855,22 @@ func (ds *DataSource) AnalyzeTiCIIndex(_ bool) error {
 		return errors.New("Full text search can only be used with a matching fulltext index or you write it in a wrong way")
 	}
 
+	// Selection scans AllPossibleAccessPaths, so recheck isolation before
+	// rewriting predicates or replacing the filtered access paths with TiCI.
+	if matchedIdx != nil {
+		sv := ds.SCtx().GetSessionVars()
+		if _, allowed := sv.GetIsolationReadEngines()[kv.TiFlash]; !allowed {
+			if hasFTSFuncLocal {
+				engines, _ := sv.GetSystemVar(variable.TiDBIsolationReadEngines)
+				tableName := ds.TableInfo.Name
+				if ds.TableAsName != nil && ds.TableAsName.L != "" {
+					tableName = *ds.TableAsName
+				}
+				return plannererrors.ErrInternal.GenWithStackByArgs(fmt.Sprintf("No access path for table '%s' is found with '%s' = '%s', valid values can be 'tiflash'.", tableName.String(), variable.TiDBIsolationReadEngines, engines))
+			}
+			matchedIdx = nil
+		}
+	}
 	if matchedIdx == nil {
 		ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
 			return path.Index != nil && path.Index.IsTiCIIndex()
