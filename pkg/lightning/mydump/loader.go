@@ -228,7 +228,8 @@ type LoaderConfig struct {
 	SourceID string
 	// SourceURL is the URL of the data source.
 	SourceURL string
-	// Routes is the routing rules for the tables, exclusive with FileRouters.
+	// Routes is the routing rules for the tables. Supplementary FileRouters
+	// can be combined with Routes when DefaultFileRules is enabled.
 	// it's deprecated in lightning, but still used in DM.
 	// when used this, DefaultFileRules must be true.
 	Routes config.Routes
@@ -238,13 +239,10 @@ type LoaderConfig struct {
 	// must be specified, else all tables are filtered out, see config.GetDefaultFilter.
 	Filter      []string
 	FileRouters []*config.FileRouteRule
-	// FileRouter overrides file rule routing when supplied by a caller.
-	FileRouter FileRouter
 	// CaseSensitive indicates whether Routes and Filter are case-sensitive.
 	CaseSensitive bool
 	// DefaultFileRules indicates whether to use the default file routing rules.
 	// If it's true, the default file routing rules will be appended to the FileRouters.
-	// a little confusing, but it's true only when FileRouters is empty.
 	DefaultFileRules bool
 }
 
@@ -330,7 +328,7 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 		}
 	}
 
-	if len(cfg.Routes) > 0 && len(cfg.FileRouters) > 0 {
+	if len(cfg.Routes) > 0 && len(cfg.FileRouters) > 0 && !cfg.DefaultFileRules {
 		return nil, common.ErrInvalidConfig.GenWithStack("table route is deprecated, can't config both [routes] and [mydumper.files]")
 	}
 
@@ -354,12 +352,9 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 		fileRouteRules = append(fileRouteRules, defaultFileRouteRules...)
 	}
 
-	fileRouter := cfg.FileRouter
-	if fileRouter == nil {
-		fileRouter, err = NewFileRouter(fileRouteRules, log.Wrap(logutil.Logger(ctx)))
-		if err != nil {
-			return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("parse file routing rule failed")
-		}
+	fileRouter, err := NewFileRouter(fileRouteRules, log.Wrap(logutil.Logger(ctx)))
+	if err != nil {
+		return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("parse file routing rule failed")
 	}
 
 	mdl := &MDLoader{

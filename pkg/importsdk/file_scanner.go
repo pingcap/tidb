@@ -18,12 +18,15 @@ import (
 	"context"
 	"database/sql"
 	"net/url"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
 	execimporter "github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
@@ -97,16 +100,14 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 	if !cfg.estimateRealSize {
 		loaderOptions = append(loaderOptions, mydump.WithSkipRealSizeEstimation(true))
 	}
-	var source *auroraSource
 	if len(cfg.fileRouteRules) == 0 {
-		fallback, err := mydump.NewDefaultFileRouter(cfg.logger)
+		files, rules, err := scanSourceFiles(ctx, store, cfg)
 		if err != nil {
 			store.Close()
-			return nil, err
+			return nil, errors.Annotatef(ErrCreateLoader, "source=%s, err=%v", redactedSourcePath, err)
 		}
-		source = &auroraSource{store: store, fallback: fallback, limit: cfg.maxScanFiles}
-		ldrCfg.FileRouter = source
-		loaderOptions = append(loaderOptions, mydump.WithFileIterator(source), mydump.ReturnPartialResultOnError(false))
+		ldrCfg.FileRouters = rules
+		loaderOptions = append(loaderOptions, mydump.WithFileIterator(files), mydump.ReturnPartialResultOnError(false))
 	}
 
 	loader, err := mydump.NewLoaderWithStore(ctx, ldrCfg, store, loaderOptions...)
@@ -124,8 +125,97 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 		loader:             loader,
 		logger:             cfg.logger,
 		config:             cfg,
-		auroraSource:       source != nil && source.found,
+		auroraSource:       len(cfg.fileRouteRules) == 0 && len(ldrCfg.FileRouters) > 0,
 	}, nil
+}
+
+var (
+	auroraDataPattern = regexp.MustCompile(`^(?:(.*)/)?([^/]+)/([^/]+\.[^/]+)/(?:[0-9]+/)?(?i:part-[^/]+\.parquet)$`)
+	dataFileSuffix    = regexp.MustCompile(`(?i)\.(sql|csv|parquet)(\.[^./]+)?$`)
+)
+
+type sourceFiles []mydump.RawFile
+
+func (files sourceFiles) IterateFiles(ctx context.Context, handle mydump.FileHandler) error {
+	for _, file := range files {
+		if err := handle(ctx, file.Path, file.Size); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Validate the raw listing before the loader can discard unmatched/filtered files.
+// Replay this inventory and use existing Lightning rules, not a second storage scan.
+func scanSourceFiles(ctx context.Context, store storeapi.Storage, cfg *SDKConfig) (sourceFiles, []*config.FileRouteRule, error) {
+	fallback, err := mydump.NewDefaultFileRouter(cfg.logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	var files sourceFiles
+	var rules []*config.FileRouteRule
+	var root, unexpected string
+	schemas := make(map[string]bool)
+	err = store.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
+		if cfg.maxScanFiles != nil && *cfg.maxScanFiles > 0 && len(files) >= *cfg.maxScanFiles {
+			return common.ErrTooManySourceFiles
+		}
+		files = append(files, mydump.RawFile{Path: path, Size: size})
+		path = filepath.ToSlash(path)
+		parts := auroraDataPattern.FindStringSubmatch(path)
+		if parts == nil {
+			dir, leaf := filepath.Split(path)
+			if strings.HasPrefix(strings.ToLower(leaf), "part-") && dataFileSuffix.MatchString(leaf) && strings.Contains(dir, ".") {
+				return errors.Errorf("unsupported or inconsistent Aurora directory: %s", path)
+			}
+			if dataFileSuffix.MatchString(path) {
+				res, err := fallback.Route(path)
+				if err != nil {
+					return err
+				}
+				if res == nil || res.Type == mydump.SourceTypeSQL || res.Type == mydump.SourceTypeCSV || res.Type == mydump.SourceTypeParquet {
+					unexpected = path
+				}
+			}
+			return nil
+		}
+		// Native keys are raw. Strip the exact schema prefix, not the last dot.
+		schema := parts[2]
+		table, ok := strings.CutPrefix(parts[3], schema+".")
+		if !ok || table == "" {
+			return errors.Errorf("inconsistent Aurora database/table directory: %s", path)
+		}
+		// AWS's underscore conversion is lossy; import wildcards also cannot
+		// safely represent glob metacharacters. Require explicit routes instead.
+		if strings.ContainsAny(schema+table, "_\\`\" *?[]") {
+			return errors.Errorf("ambiguous Aurora identifier in %s; provide an explicit file route with the original name", path)
+		}
+		if len(rules) > 0 && root != parts[1] {
+			return errors.New("multiple Aurora export roots; scope the source URL to one export")
+		}
+		root = parts[1]
+		if !schemas[schema] {
+			prefix := root
+			if prefix != "" {
+				prefix += "/"
+			}
+			// One source-scoped rule per schema handles dotted names without
+			// another router implementation or URL-decoding native identifiers.
+			rules = append(rules, &config.FileRouteRule{
+				Pattern: "^" + regexp.QuoteMeta(prefix) + "(" + regexp.QuoteMeta(schema) + ")/" + regexp.QuoteMeta(schema+".") + `([^/]+)/(?:[0-9]+/)?(?i:part-[^/]+\.parquet)$`,
+				Schema:  "$1", Table: "$2", Type: mydump.TypeParquet,
+			})
+			schemas[schema] = true
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, errors.Annotate(err, "incomplete automatic source scan")
+	}
+	if len(rules) > 0 && unexpected != "" {
+		return nil, nil, errors.Errorf("mixed or unmatched data in Aurora source: %s", unexpected)
+	}
+	return files, rules, nil
 }
 
 func (s *fileScanner) CreateSchemasAndTables(ctx context.Context) error {
