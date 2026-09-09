@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "importsdk",
     srcs = [
+        "aurora.go",
         "config.go",
         "error.go",
         "file_scanner.go",
@@ -30,6 +31,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/planner/core",
         "//pkg/table/tables",
+        "//pkg/util/table-filter",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
@@ -39,6 +41,7 @@ go_test(
     name = "importsdk_test",
     timeout = "short",
     srcs = [
+        "aurora_test.go",
         "config_test.go",
         "file_scanner_test.go",
         "job_manager_test.go",
@@ -49,11 +52,12 @@ go_test(
     ],
     embed = [":importsdk"],
     flaky = True,
-    shard_count = 21,
+    shard_count = 23,
     deps = [
         "//pkg/lightning/config",
         "//pkg/lightning/log",
         "//pkg/lightning/mydump",
+        "//pkg/objstore/storeapi",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/util/table-filter",

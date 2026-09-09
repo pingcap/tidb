@@ -165,6 +165,9 @@ type MDLoaderSetupConfig struct {
 	ReturnPartialResultOnError bool
 	// FileIter controls the file iteration policy when constructing a MDLoader.
 	FileIter FileIterator
+	// FileRouterFactory selects routing from a complete raw listing, before
+	// table filtering and grouping. A nil result retains the configured router.
+	FileRouterFactory func([]RawFile) (FileRouter, error)
 }
 
 // DefaultMDLoaderSetupConfig generates a default MDLoaderSetupConfig.
@@ -218,6 +221,14 @@ func ReturnPartialResultOnError(supportPartialResult bool) MDLoaderSetupOption {
 func WithFileIterator(fileIter FileIterator) MDLoaderSetupOption {
 	return func(cfg *MDLoaderSetupConfig) {
 		cfg.FileIter = fileIter
+	}
+}
+
+// WithFileRouterFactory selects a file router after a complete source listing.
+// Sources using this option cannot return partial results on a listing error.
+func WithFileRouterFactory(factory func([]RawFile) (FileRouter, error)) MDLoaderSetupOption {
+	return func(cfg *MDLoaderSetupConfig) {
+		cfg.FileRouterFactory = factory
 	}
 }
 
@@ -375,7 +386,7 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 	}
 
 	if err := setup.setup(ctx); err != nil {
-		if mdLoaderSetupCfg.ReturnPartialResultOnError {
+		if mdLoaderSetupCfg.ReturnPartialResultOnError && mdLoaderSetupCfg.FileRouterFactory == nil {
 			return mdl, errors.Trace(err)
 		}
 		return nil, errors.Trace(err)
@@ -472,6 +483,19 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 			return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
 		}
 		gerr = err
+	}
+
+	if factory := s.setupCfg.FileRouterFactory; factory != nil {
+		if gerr != nil {
+			return errors.Annotate(gerr, "cannot choose automatic routing from an incomplete source listing")
+		}
+		router, err := factory(allFiles)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if router != nil {
+			s.loader.fileRouter = router
+		}
 	}
 
 	// Parallel process all files

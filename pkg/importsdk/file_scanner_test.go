@@ -113,6 +113,7 @@ func TestFileScanner(t *testing.T) {
 	t.Run("GetAuroraSnapshotTableMetas", func(t *testing.T) {
 		auroraDir := t.TempDir()
 		for _, path := range []string{
+			"export-1/export_info_export-1.json",
 			"export-1/db1/db1.users/1/part-a.parquet",
 			"export-1/db1/db1.users/2/part-b.parquet",
 			"export-1/db1/db1.orders/part-a.parquet",

@@ -71,12 +71,6 @@ func TestDefaultRouter(t *testing.T) {
 		"my_schema.my_table.0001.sql.snappy":     {"my_schema", "my_table", "0001", "snappy", "sql"},
 		"my_schema.my_table.0001.gz.parquet":     {"my_schema", "my_table", "0001", "", "parquet"},
 		"my_schema.my_table.0001.snappy.parquet": {"my_schema", "my_table", "0001", "", "parquet"},
-		"prefix/export.v1/export-123/db/db.users/1/part-00000-a.gz.parquet": {
-			"db", "users", "", "", "parquet",
-		},
-		"export-123/db/db.orders/part-00000-b.gz.parquet": {"db", "orders", "", "", "parquet"},
-		"my%20db/my%20db.order%2Eitems/1/part-a.parquet":  {"my db", "order.items", "", "", "parquet"},
-		"export-123/db/db.users/00042/part-A.PARQUET":     {"db", "users", "", "", "parquet"},
 	}
 	for path, fields := range inputOutputMap {
 		res, err := r.Route(path)
@@ -96,43 +90,18 @@ func TestDefaultRouter(t *testing.T) {
 	}
 }
 
-func TestAuroraSnapshotRouteRule(t *testing.T) {
-	var auroraRule *config.FileRouteRule
-	for _, rule := range defaultFileRouteRules {
-		if strings.Contains(rule.Pattern, "part-") {
-			auroraRule = rule
-			break
-		}
-	}
-	require.NotNil(t, auroraRule)
-	r, err := NewFileRouter([]*config.FileRouteRule{auroraRule}, log.L())
+func TestDefaultRouterDoesNotAutoDetectAurora(t *testing.T) {
+	actual, err := NewDefaultFileRouter(log.L())
 	require.NoError(t, err)
-
-	positiveCases := map[string]filter.Table{
-		"export-123/db/db.users/1/part-a.gz.parquet":                   {Schema: "db", Name: "users"},
-		"export-123/db/db.orders/part-b.parquet":                       {Schema: "db", Name: "orders"},
-		"prefix.with.dots/export-123/db/db.users/00042/part-A.PARQUET": {Schema: "db", Name: "users"},
-		"my%20db/my%20db.order%2Eitems/1/part-a.parquet":               {Schema: "my db", Name: "order.items"},
-	}
-	for path, table := range positiveCases {
-		res, err := r.Route(path)
-		require.NoError(t, err)
-		require.NotNil(t, res, path)
-		require.Equal(t, table, res.Table, path)
-		require.Equal(t, SourceTypeParquet, res.Type, path)
-	}
-
-	for _, path := range []string{
-		"export-123/db/db.users/not-a-batch/part-a.parquet",
-		"export-123/db/db.users/1/extra/part-a.parquet",
-		"export-123/db/db.users/1/chunk-a.parquet",
-		"export-123/db/db.users/1/part-a.csv",
-		"export-123/db/users/1/part-a.parquet",
-		"export-123/db/db.users/1/part-a.parquet.gz",
+	for path, want := range map[string]filter.Table{
+		"archive/customer/staging.users/1/part-0.parquet": {Schema: "staging", Name: "users/1/part-0"},
+		"export-a/db/db.users/1/part-a.parquet":           {Schema: "db", Name: "users/1/part-a"},
+		"backup/v1.0/db.users.0000.parquet":               {Schema: "db", Name: "users"},
 	} {
-		res, err := r.Route(path)
+		got, err := actual.Route(path)
 		require.NoError(t, err)
-		require.Nil(t, res, path)
+		require.NotNil(t, got, path)
+		require.Equal(t, want, got.Table, path)
 	}
 }
 
