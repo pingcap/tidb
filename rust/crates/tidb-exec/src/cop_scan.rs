@@ -265,9 +265,11 @@ where
                 Some(offsets.iter().map(|offset| *offset as u32).collect())
             }
             Some(_) => {
-                return Err(refuse(
-                    "this coprocessor lowering does not narrow output columns",
-                ))
+                // Residual predicates still need every source column. Keep
+                // the full scan row when pushdown is partial so the local
+                // evaluator cannot index a narrowed chunk with an original
+                // column offset.
+                None
             }
         };
 
