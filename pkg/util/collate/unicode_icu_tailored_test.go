@@ -84,4 +84,18 @@ func TestUnicodeICUCollator(t *testing.T) {
 
 	// Equal strings produce identical keys.
 	require.Equal(t, c.Key("aab"), c.Key("aab"))
+
+	// LIKE matches runes at the collator's strength, so it agrees with Compare's equality.
+	like := func(c Collator, str, pattern string) bool {
+		p := c.Pattern()
+		p.Compile(pattern, '\\')
+		return p.DoMatch(str)
+	}
+	require.False(t, like(c, "A", "a"))   // full strength: case-sensitive
+	require.False(t, like(c, "é", "e"))   // full strength: accent-sensitive
+	require.True(t, like(l2, "A", "a"))   // level 2: case-insensitive
+	require.True(t, like(l2, "Ab", "a_")) // level 2 with a wildcard
+	require.False(t, like(l2, "é", "e"))  // level 2: accent-sensitive
+	require.True(t, like(l1, "é", "e"))   // level 1: accent-insensitive
+	require.True(t, like(l1, "A", "a%"))  // level 1: case-insensitive
 }

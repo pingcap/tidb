@@ -110,6 +110,10 @@ func cesOf(locale, s string) []uint64 {
 	if n < 0 {
 		panic("ICU ce_of failed for locale " + locale)
 	}
+	// ce_of keeps counting past cap without writing, so n > cap means the buffer was too small.
+	if n > cap {
+		panic(fmt.Sprintf("ICU ce_of returned %d collation elements for %q (locale %q), exceeding buffer capacity %d", n, s, locale, cap))
+	}
 	out := make([]uint64, 0, n)
 	for i := 0; i < n; i++ {
 		o := uint32(buf[i])

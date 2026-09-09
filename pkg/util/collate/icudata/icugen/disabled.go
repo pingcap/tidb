@@ -20,4 +20,13 @@
 //	go run -tags icugen ./pkg/util/collate/icudata/icugen
 package main
 
-func main() {}
+import (
+	"fmt"
+	"os"
+)
+
+func main() {
+	fmt.Fprintln(os.Stderr, "icugen: built without the `icugen` build tag, nothing was generated; "+
+		"run: go run -tags icugen ./pkg/util/collate/icudata/icugen")
+	os.Exit(2)
+}

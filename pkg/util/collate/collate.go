@@ -353,9 +353,20 @@ func IsBinCollation(collate string) bool {
 		collate == charset.CollationBin || collate == charset.CollationUTF8MB40900Bin
 }
 
+// noPadCollations lists the NO PAD collations TiDB implements: trailing spaces are significant in
+// comparisons and are kept in index keys (Key does not trim). Every other supported collation is
+// PAD SPACE. Collations registered at init time (registerICULocaleCollations) add themselves here.
+var noPadCollations = map[string]struct{}{
+	charset.CollationBin: {},
+	"utf8mb4_0900_ai_ci": {},
+	"utf8mb4_0900_bin":   {},
+	"utf8mb4_0900_as_cs": {},
+}
+
 // IsPadSpaceCollation returns whether the collation is a PAD SPACE collation.
 func IsPadSpaceCollation(collation string) bool {
-	return collation != charset.CollationBin && collation != "utf8mb4_0900_ai_ci" && collation != "utf8mb4_0900_bin"
+	_, noPad := noPadCollations[collation]
+	return !noPad
 }
 
 // CollationToProto converts collation from string to int32(used by protocol).

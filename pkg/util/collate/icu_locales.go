@@ -69,5 +69,6 @@ func registerICULocaleCollations() {
 		newCollatorMap[name] = c
 		newCollatorIDMap[id] = c
 		tidbOnlyCollationIDs[id] = struct{}{}
+		noPadCollations[name] = struct{}{}
 	}
 }

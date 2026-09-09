@@ -18,6 +18,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/stretchr/testify/require"
 )
 
@@ -71,6 +72,39 @@ func TestICULocaleCollations(t *testing.T) {
 		require.Equal(t, -1, sign(c.Compare("v9", "v10")))
 		require.Equal(t, 0, c.Compare("CAFE", "cafe"))
 	})
+
+	t.Run("LIKE agrees with Compare", func(t *testing.T) {
+		c := GetCollator("utf8mb4_de_0900_as_ci_kn")
+		p := c.Pattern()
+		p.Compile("müller%", '\\')
+		require.True(t, p.DoMatch("MÜLLER-thurgau")) // case-insensitive, like Compare
+		require.False(t, p.DoMatch("Muller"))        // accent-sensitive, like Compare
+	})
+}
+
+func TestIsPadSpaceCollation(t *testing.T) {
+	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
+
+	// The ICU locale collations and utf8mb4_0900_as_cs are NO PAD: their Key keeps trailing spaces,
+	// so the ranger must not trim them or treat 'x' and 'x ' as one index key.
+	for _, name := range []string{
+		"utf8mb4_da_0900_as_ci_kn", "utf8mb4_de_0900_as_ci_kn", "utf8mb4_es_0900_as_ci_kn",
+		"utf8mb4_fr_0900_as_ci_kn", "utf8mb4_sv_0900_as_ci_kn", "utf8mb4_0900_as_cs",
+		"utf8mb4_0900_ai_ci", "utf8mb4_0900_bin", "binary",
+	} {
+		require.False(t, IsPadSpaceCollation(name), name)
+		require.NotEqual(t, GetCollator(name).Key("a"), GetCollator(name).Key("a "), name)
+	}
+	require.True(t, IsPadSpaceCollation("utf8mb4_bin"))
+	require.True(t, IsPadSpaceCollation("utf8mb4_general_ci"))
+	require.True(t, IsPadSpaceCollation("utf8mb4_unicode_ci"))
+
+	// The charset metadata (SHOW COLLATION's PAD_ATTRIBUTE) must agree with the ranger predicate for
+	// every supported collation.
+	for _, coll := range GetSupportedCollations() {
+		require.Equal(t, coll.PadAttribute == charset.PadSpace, IsPadSpaceCollation(coll.Name), coll.Name)
+	}
 }
 
 func TestIsTiDBOnlyCollation(t *testing.T) {

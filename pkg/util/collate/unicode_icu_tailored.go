@@ -158,15 +158,16 @@ func (*unicodeICUCollator) MaxKeyLen(s string) int {
 	return utf8.RuneCountInString(s)*8*7 + 6
 }
 
-// Pattern implements Collator interface. Matching is per-rune on full collation elements, so it is
-// accent- and case-sensitive; contractions are not folded in LIKE (matching the simple approach of
-// the other UCA collators).
+// Pattern implements Collator interface. Matching is per-rune on collation elements compared at
+// the collator's strength, so LIKE agrees with Compare on case and accent sensitivity. Contractions
+// and numeric runs are not folded in LIKE (matching the simple approach of the other UCA collators).
 func (uc *unicodeICUCollator) Pattern() WildcardPattern {
-	return &icuPattern{t: uc.t}
+	return &icuPattern{t: uc.t, strength: uc.strength}
 }
 
 type icuPattern struct {
 	t        *icuTailoring
+	strength strengthLevel
 	patChars []rune
 	patTypes []byte
 }
@@ -176,21 +177,17 @@ func (p *icuPattern) Compile(patternStr string, escape byte) {
 	p.patChars, p.patTypes = stringutil.CompilePatternInner(patternStr, escape)
 }
 
-// DoMatch implements WildcardPattern interface.
+// DoMatch implements WildcardPattern interface. Two runes match when their sort keys at the
+// collator's strength are equal, which is exactly Compare's equality. Case-first only permutes the
+// order of otherwise-equal keys, never their equality, so it is not needed here.
 func (p *icuPattern) DoMatch(str string) bool {
 	return stringutil.DoMatchCustomized(str, p.patChars, p.patTypes, func(a, b rune) bool {
 		if a == b {
 			return true
 		}
-		wa, wb := p.t.runeCEs(a), p.t.runeCEs(b)
-		if len(wa) != len(wb) {
-			return false
-		}
-		for i := range wa {
-			if wa[i] != wb[i] {
-				return false
-			}
-		}
-		return true
+		return bytes.Equal(
+			buildMultiLevelKey(p.t.runeCEs(a), caseFirstOff, p.strength),
+			buildMultiLevelKey(p.t.runeCEs(b), caseFirstOff, p.strength),
+		)
 	})
 }
