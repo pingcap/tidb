@@ -107,7 +107,7 @@ fi
 TIDB_SERVER_WRAPPER="${TMPDIR:-/tmp}/lock-recovery-tidb-server-${$}"
 cat >"${TIDB_SERVER_WRAPPER}" <<EOF
 #!/bin/sh
-exec "${TIDB_SERVER}" "\$@" --read-table test lock_recovery 1 1 id:1:clustered-pk 0
+exec "${TIDB_SERVER}" "\$@" --cluster-session --read-table test lock_recovery 1 1 id:1:clustered-pk 0
 EOF
 chmod +x "${TIDB_SERVER_WRAPPER}"
 TIDB_SERVER="${TIDB_SERVER_WRAPPER}"
