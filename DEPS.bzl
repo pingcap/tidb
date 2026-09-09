@@ -3777,8 +3777,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:Z1gFEBIzhT7Cuc0IBAsKgUxMapL2kwqe3QQq7g9XiJw=",
-        version = "v0.0.0-20260820070758-623e58e60fa9",
+        sum = "h1:6yUryXKVbKpCNdZWL58/OcZj8NPLUA/xsJYXSbsD59w=",
+        version = "v0.0.0-20260903054228-107095f1d250",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -4527,16 +4527,17 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:OFhRCzHqFeARZMIum85M3PTLLmEIDeLXVG+jrRNI76w=",
-        version = "v2.0.8-0.20260903102657-08cbf831121a",
+        replace = "github.com/JmPotato/client-go/v2",
+        sum = "h1:pw2mvupJ4v55Rtsn9U5CXbnF3/5HWBJnql1Z0s15aKQ=",
+        version = "v2.0.0-20260908070927-5ec8cbd82875",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sum = "h1:q5NgKsvuOdEHspG/pZEpKhWlPLrIfmO8P/lDFjTEdok=",
-        version = "v0.0.0-20260805103528-afa43111d149",
+        sum = "h1:7C3yQBiR06tgp9QBHXNigCx9w6qje7bdijEWmQpbopE=",
+        version = "v0.0.0-20260908055558-001881051f7e",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",

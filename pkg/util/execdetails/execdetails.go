@@ -111,6 +111,7 @@ var StmtExecDetailKey = stmtExecDetailKeyType{}
 type StmtExecDetails struct {
 	WriteSQLRespDuration time.Duration
 
+	ruVersion          atomic.Int32
 	ruv2Metrics        *RUV2Metrics
 	ruv2MetricsStorage RUV2Metrics
 }

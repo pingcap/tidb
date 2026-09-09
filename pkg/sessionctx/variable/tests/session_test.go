@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 func TestSetSystemVariable(t *testing.T) {
@@ -339,6 +340,7 @@ func TestSlowLogFormat(t *testing.T) {
 		UsedStats:         &stmtctx.UsedStatsInfo{},
 		ResourceGroupName: "rg1",
 		RUDetails:         ruDetails,
+		RUVersion:         rmclient.RUVersionV1,
 		StorageKV:         true,
 		StorageMPP:        false,
 		MemArbitration:    time.Duration(54321).Seconds(),
@@ -455,7 +457,12 @@ func TestSlowLogFormat(t *testing.T) {
 	execStmt.GoCtx = childCtx
 	require.NoError(t, err)
 
+	// The statement snapshot must win over the current domain version. This
+	// keeps EXPLAIN ANALYZE and the slow log on the same RU model even if the
+	// cluster setting changes while the statement is running.
+	execdetails.SetStatementRUVersion(childCtx, rmclient.RUVersionV2)
 	executor.SetSlowLogItems(execStmt, txnTS, logItems.HasMoreResults, actual)
+	logItems.RUVersion = rmclient.RUVersionV2
 	logItems.RUV2Metrics = seVar.RUV2Metrics.Clone()
 	compareSlowLogItems(t, logItems, actual)
 }
@@ -471,6 +478,7 @@ func TestSlowLogFormatIncludesTiFlashRUInRUV2Metrics(t *testing.T) {
 		UsedStats:   &stmtctx.UsedStatsInfo{},
 		RUDetails:   util.NewRUDetailsWith(0, 0, 0),
 		RUV2Metrics: execdetails.NewRUV2Metrics(),
+		RUVersion:   rmclient.RUVersionV2,
 	}
 	logItems.RUDetails.AddTiKVRUV2(100)
 	logItems.RUDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 20, WRU: 30})
@@ -478,6 +486,31 @@ func TestSlowLogFormatIncludesTiFlashRUInRUV2Metrics(t *testing.T) {
 	logString := seVar.SlowLogFormat(logItems)
 	require.Contains(t, logString, "# Request_unit_v2: 150.00")
 	require.Contains(t, logString, "# Request_unit_v2_detail: total_ru:150.00, tidb_ru:0.00, tikv_ru:100.00, tiflash_ru:50.00")
+	require.NotContains(t, logString, "# Request_unit_detail:")
+
+	t.Run("v1 calculation detail", func(t *testing.T) {
+		details := util.NewRUDetails()
+		details.Update(&rmpb.Consumption{RRU: 1.5}, 0)
+		details.AddRUCalculation(rmclient.RUCalculation{
+			Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1.5},
+			Inputs:  rmclient.RUCalculationInputs{ReadRPCCount: 1},
+			RRU:     1.5,
+		})
+		v1Items := &variable.SlowQueryLogItems{
+			SQL:         "select 1",
+			Digest:      "digest",
+			TimeTotal:   time.Second,
+			Succ:        true,
+			ExecDetail:  &execdetails.ExecDetails{},
+			UsedStats:   &stmtctx.UsedStatsInfo{},
+			RUDetails:   details,
+			RUV2Metrics: execdetails.NewRUV2Metrics(),
+			RUVersion:   rmclient.RUVersionV1,
+		}
+		v1Log := seVar.SlowLogFormat(v1Items)
+		require.Contains(t, v1Log,
+			"# Request_unit_detail: RRU=read_rpc_count(1)*READ_BASE_COST(1.5)=1.500000; RU=RRU(1.500000)=1.500000")
+	})
 
 	t.Run("default session weights come from config defaults", func(t *testing.T) {
 		original := config.GetGlobalConfig()

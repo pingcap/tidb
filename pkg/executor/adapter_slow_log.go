@@ -266,6 +266,11 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.ResourceGroupName = stmtCtx.ResourceGroupName
 	items.RUDetails = ruDetails
 	items.RUV2Metrics = ruv2Metrics
+	var ok bool
+	items.RUVersion, ok = execdetails.StatementRUVersionFromContext(a.GoCtx)
+	if !ok {
+		items.RUVersion = currentRUVersion(a.Ctx)
+	}
 	items.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	items.StorageKV = stmtCtx.IsTiKV.Load()
 	items.StorageMPP = stmtCtx.IsTiFlash.Load()

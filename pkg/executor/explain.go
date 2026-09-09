@@ -27,7 +27,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -37,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/size"
 	clientutil "github.com/tikv/client-go/v2/util"
-	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 )
 
@@ -144,9 +142,9 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 			}
 			ruv2Metrics := execdetails.SyncRUV2MetricsFromContext(ctx)
 			if ruDetails != nil || ruv2Metrics != nil {
-				ruVersion := rmclient.DefaultRUVersion
-				if do := domain.GetDomain(e.Ctx()); do != nil {
-					ruVersion = do.GetRUVersion()
+				ruVersion, ok := execdetails.StatementRUVersionFromContext(ctx)
+				if !ok {
+					ruVersion = currentRUVersion(e.Ctx())
 				}
 				coll.RegisterStats(e.explain.TargetPlan.ID(), &execdetails.RURuntimeStats{
 					RUDetails: ruDetails,

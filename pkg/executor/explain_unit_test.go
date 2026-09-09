@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	clientutil "github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 var (
@@ -171,6 +173,13 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
 		ctx.GetSessionVars().RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
 		require.NotNil(t, ctx.GetSessionVars().RUV2Metrics)
+		ruDetails := goCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
+		ruDetails.Update(&rmpb.Consumption{RRU: 1.5}, 0)
+		ruDetails.AddRUCalculation(rmclient.RUCalculation{
+			Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1.5},
+			Inputs:  rmclient.RUCalculationInputs{ReadRPCCount: 1},
+			RRU:     1.5,
+		})
 
 		analyzeExec := &mockEmptyOperator{
 			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(), 1),
@@ -193,7 +202,12 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		// DefaultRUVersion is v1 (no domain in unit test), so RU stats show RRU+WRU format.
 		// Verify the stats are registered and contain "RU:" prefix.
 		rootStatsStr := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(targetPlan.ID()).String()
-		require.Contains(t, rootStatsStr, "RU:")
+		require.Contains(t, rootStatsStr,
+			"RU:1.50, RU_detail:RRU=read_rpc_count(1)*READ_BASE_COST(1.5)=1.500000; RU=RRU(1.500000)=1.500000")
+
+		jsonResult, err := core.JSONToString([]*core.ExplainInfoForEncode{{ExecuteInfo: rootStatsStr}})
+		require.NoError(t, err)
+		require.Contains(t, jsonResult, "RU_detail:RRU=read_rpc_count(1)*READ_BASE_COST(1.5)")
 
 		require.Equal(t, int64(15), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
 	})
@@ -203,6 +217,7 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 
 		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		execdetails.SetStatementRUVersion(goCtx, rmclient.RUVersionV2)
 		ctx.GetSessionVars().RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
 		require.NotNil(t, ctx.GetSessionVars().RUV2Metrics)
 
@@ -237,6 +252,7 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 			}
 		}
 		require.NotNil(t, ruStats)
+		require.Equal(t, rmclient.RUVersionV2, ruStats.RUVersion)
 		require.Equal(t, int64(2), ruStats.Metrics.ResourceManagerReadCnt())
 		require.Equal(t, int64(3), ruStats.Metrics.ResourceManagerWriteCnt())
 	})
