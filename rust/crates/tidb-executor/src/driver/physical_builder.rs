@@ -492,11 +492,11 @@ fn build_table_scan(
             .copied()
             .ne(0..table.logical_data_source_column_count())
     {
-        if !source.accept_column_prune(&keep) {
-            return Err(DriverError::unsupported(
-                "the physical table scan cannot apply its projection",
-            ));
-        }
+        // Keep the complete source row until the Selection builder has
+        // supplied all predicate column dependencies. The scan plan's
+        // projection alone does not encode those dependencies, and pruning
+        // here can leave a residual expression addressing a missing slot.
+        let _ = source.accept_column_prune(&keep);
     }
     if let Some(slot) = extra_handle_slot {
         if !source.accept_extra_handle(slot) {
