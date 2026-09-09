@@ -434,12 +434,9 @@ fn table_scan_schema(
                 })?,
         );
     }
-    // Residual Selection expressions use the complete physical table row;
-    // pruning to the final projection here can leave their column offsets
-    // pointing past the returned Chunk.
     Ok((
-        Schema::new(full.clone()),
-        (0..full.len()).collect(),
+        output.clone(),
+        keep,
         extra_handle_slot,
         extra_commit_ts_slot,
     ))

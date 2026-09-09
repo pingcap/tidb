@@ -608,8 +608,14 @@ echo "--- PI(), a constant predicate that travels and rejects nothing"
 echo "    ${PI_QUERY}"
 printf '      wire: %s rows of %s   dag: %s\n' \
   "${WIRE_ROWS}" "${TABLE_ROWS}" "${WIRE_SHAPE}"
+PI_GO=$(go_rows "${PI_QUERY}")
+PI_RUST=$(rust_rows "${PI_QUERY}")
 check "PI(): both nodes returned the same rows, value for value" \
-  test "$(go_rows "${PI_QUERY}")" = "$(rust_rows "${PI_QUERY}")"
+  test "${PI_GO}" = "${PI_RUST}"
+if [[ "${PI_GO}" != "${PI_RUST}" ]]; then
+  printf '  diagnostic PI GO first/last: %s / %s\\n' "$(printf '%s\\n' "${PI_GO}" | sed -n '1p;$p')" "$(printf '%s\\n' "${PI_GO}" | sed -n '$p')" >&2
+  printf '  diagnostic PI RUST first/last: %s / %s\\n' "$(printf '%s\\n' "${PI_RUST}" | sed -n '1p;$p')" "$(printf '%s\\n' "${PI_RUST}" | sed -n '$p')" >&2
+fi
 if [[ "${WIRE_ROWS}" == error || "${WIRE_SHAPE}" == error ]]; then
   echo "  SKIP  PI(): no valid coprocessor receipt (environment observation)" >&2
   RECEIPT_SKIPS=$((RECEIPT_SKIPS + 1))
