@@ -606,6 +606,55 @@ func TestCheckCertBasedAuth(t *testing.T) {
 	require.Error(t, tk.Session().Auth(&auth.UserIdentity{Username: "r13_broken_user", Hostname: "localhost"}, nil, nil, nil))
 }
 
+func TestCheckCertBasedAuthWithURIWildcard(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	adminTK := testkit.NewTestKit(t, store)
+	adminTK.MustExec(`CREATE USER 'uri_san_wildcard'@'localhost' REQUIRE SAN 'URI:spiffe://domain.com/bar'`)
+	tk := testkit.NewTestKit(t, store)
+	authWithSANs := func(uriSANs, dnsSANs []string, ipSANs [][]byte) error {
+		tk.Session().GetSessionVars().TLSConnectionState = connectionState(
+			pkix.Name{}, pkix.Name{}, tls.TLS_AES_128_GCM_SHA256, func(cert *x509.Certificate) {
+				for _, uriSAN := range uriSANs {
+					uri, err := url.Parse(uriSAN)
+					require.NoError(t, err)
+					cert.URIs = append(cert.URIs, uri)
+				}
+				cert.DNSNames = dnsSANs
+				for _, ipSAN := range ipSANs {
+					cert.IPAddresses = append(cert.IPAddresses, ipSAN)
+				}
+			})
+		return tk.Session().Auth(&auth.UserIdentity{Username: "uri_san_wildcard", Hostname: "localhost"}, nil, nil, nil)
+	}
+
+	// A URI wildcard matches exactly one non-empty segment. Multiple URI
+	// requirements remain alternatives.
+	adminTK.MustExec(`ALTER USER 'uri_san_wildcard'@'localhost' REQUIRE SAN
+		'URI:spiffe://domain.com/no-match, URI:spiffe://domain.com/*/something/foo/*'`)
+	require.NoError(t, authWithSANs([]string{"spiffe://domain.com/bar/something/foo/baz"}, nil, nil))
+	require.NoError(t, authWithSANs([]string{"spiffe://domain.com/youpi/something/foo/yada"}, nil, nil))
+	require.Error(t, authWithSANs([]string{"spiffe://domain.com/bar/extra/something/foo/baz"}, nil, nil))
+	require.Error(t, authWithSANs([]string{"spiffe://domain.com//something/foo/baz"}, nil, nil))
+	require.Error(t, authWithSANs([]string{"spiffe://domain.com/bar/something/foo/"}, nil, nil))
+	adminTK.MustExec(`ALTER USER 'uri_san_wildcard'@'localhost' REQUIRE SAN 'URI:spiffe://*/bar/*'`)
+	require.Error(t, authWithSANs([]string{"spiffe://domain.com/bar/baz"}, nil, nil))
+
+	// An asterisk has no special meaning unless it is the entire URI segment.
+	adminTK.MustExec(`ALTER USER 'uri_san_wildcard'@'localhost' REQUIRE SAN 'URI:spiffe://domain.com/foo*/bar'`)
+	require.NoError(t, authWithSANs([]string{"spiffe://domain.com/foo*/bar"}, nil, nil))
+	require.Error(t, authWithSANs([]string{"spiffe://domain.com/foobar/bar"}, nil, nil))
+
+	// DNS and IP SAN requirements continue to use exact matching.
+	adminTK.MustExec(`ALTER USER 'uri_san_wildcard'@'localhost' REQUIRE SAN 'DNS:*.domain.com'`)
+	require.NoError(t, authWithSANs(nil, []string{"*.domain.com"}, nil))
+	require.Error(t, authWithSANs(nil, []string{"service.domain.com"}, nil))
+	adminTK.MustExec(`ALTER USER 'uri_san_wildcard'@'localhost' REQUIRE SAN 'IP:127.*'`)
+	require.Error(t, authWithSANs(nil, nil, [][]byte{{127, 0, 0, 1}}))
+	adminTK.MustExec(`ALTER USER 'uri_san_wildcard'@'localhost' REQUIRE SAN 'IP:127.0.0.1'`)
+	require.NoError(t, authWithSANs(nil, nil, [][]byte{{127, 0, 0, 1}}))
+}
+
 func connectionState(issuer, subject pkix.Name, cipher uint16, opt ...func(c *x509.Certificate)) *tls.ConnectionState {
 	cert := &x509.Certificate{Issuer: issuer, Subject: subject}
 	for _, o := range opt {
