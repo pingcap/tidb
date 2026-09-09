@@ -121,6 +121,9 @@ func TestNewLabels(t *testing.T) {
 	require.Len(t, labels, 1)
 	require.Equal(t, "merge_option", labels[0].Key)
 	require.Equal(t, "allow", labels[0].Value)
+
+	_, err = NewLabels([]string{"region_policy=exclusive", "region_policy=exclusive"})
+	require.ErrorContains(t, err, "duplicated attribute 'region_policy'")
 }
 
 func TestAddLabels(t *testing.T) {
@@ -244,5 +247,67 @@ func TestRestoreLabels(t *testing.T) {
 		require.Equal(t, `"merge_option=allow","keyspace=42"`, output)
 		output = RestoreRegionLabels(&[]pd.RegionLabel{input6, input1})
 		require.Equal(t, `"keyspace=42","merge_option=allow"`, output)
+	}
+}
+
+func TestValidateRegionPolicy(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         []string
+		appendLabel   *pd.RegionLabel
+		expectedLabel string
+		err           string
+	}{
+		{
+			name:          "valid exclusive",
+			input:         []string{"region_policy=exclusive"},
+			expectedLabel: "region_policy=exclusive",
+		},
+		{
+			name:          "normalize to lower case",
+			input:         []string{"region_policy=EXCLUSIVE"},
+			expectedLabel: "region_policy=exclusive",
+		},
+		{
+			name:        "duplicate in label slice",
+			input:       []string{"region_policy=exclusive"},
+			appendLabel: &pd.RegionLabel{Key: regionPolicyKey, Value: regionPolicyExclusive},
+			err:         "duplicated attribute 'region_policy'",
+		},
+		{
+			name:  "invalid shared",
+			input: []string{"region_policy=shared"},
+			err:   "invalid region policy attribute 'region_policy=shared'",
+		},
+		{
+			name:  "invalid random",
+			input: []string{"region_policy=random"},
+			err:   "invalid region policy attribute 'region_policy=random'",
+		},
+		{
+			name:  "unrelated attributes unchanged",
+			input: []string{"merge_option=deny"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			labels, err := NewLabels(test.input)
+			require.NoError(t, err)
+			if test.appendLabel != nil {
+				labels = append(labels, *test.appendLabel)
+			}
+
+			err = ValidateRegionPolicy(labels)
+			if test.err != "" {
+				require.ErrorContains(t, err, test.err)
+				return
+			}
+
+			require.NoError(t, err)
+			if test.expectedLabel != "" {
+				require.Equal(t, test.expectedLabel, RestoreRegionLabel(&labels[0]))
+			}
+		})
 	}
 }
