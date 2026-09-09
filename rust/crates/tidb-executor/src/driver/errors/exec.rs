@@ -57,7 +57,18 @@ pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
         ExecError::Internal(message) => MysqlError::unknown(message),
         // A porting boundary rather than a TiDB error: the carried text is
         // already the whole message, and Go has no answer to compare it with.
-        ExecError::Unsupported(reason) => MysqlError::unknown(reason),
+        ExecError::Unsupported(reason) => {
+            const PREFIX: &str = "__TIDB_ERRNO:";
+            if let Some(start) = reason.find(PREFIX) {
+                let rest = &reason[start + PREFIX.len()..];
+                if let Some((code, text)) = rest.split_once(':') {
+                    if let Ok(code) = code.parse::<u16>() {
+                        return MysqlError::coded(code, text.trim_end_matches(['"', ')']));
+                    }
+                }
+            }
+            MysqlError::unknown(reason)
+        }
         // Go surfaces a spill failure as the raw error from `Next`, i.e. 1105.
         ExecError::SpillFailed(reason) => MysqlError::unknown(reason),
         ExecError::Killed(error) => {
