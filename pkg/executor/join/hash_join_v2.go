@@ -634,6 +634,8 @@ type HashJoinV2Exec struct {
 	workerWg util.WaitGroupWrapper
 	waiterWg util.WaitGroupWrapper
 
+	hashTableCleanupOnce sync.Once
+
 	restoredBuildInDisk []*chunk.DataInDiskByChunks
 	restoredProbeInDisk []*chunk.DataInDiskByChunks
 
@@ -649,6 +651,18 @@ type HashJoinV2Exec struct {
 
 func (e *HashJoinV2Exec) isAllMemoryClearedForTest() bool {
 	return e.isMemoryClearedForTest
+}
+
+// cleanupHashTableContext releases all build-side segments owned by this query.
+// It must only be called after all workers that may access the hash table have
+// exited. The once guard also makes the build-error path and Close safe to use
+// together.
+func (e *HashJoinV2Exec) cleanupHashTableContext() {
+	e.hashTableCleanupOnce.Do(func() {
+		if e.hashTableContext != nil {
+			e.hashTableContext.reset()
+		}
+	})
 }
 
 func (e *HashJoinV2Exec) initMaxSpillRound() {
@@ -687,7 +701,7 @@ func (e *HashJoinV2Exec) Close() error {
 		}
 		e.ProbeSideTupleFetcher.probeChkResourceCh = nil
 		e.waiterWg.Wait()
-		e.hashTableContext.reset()
+		e.cleanupHashTableContext()
 	}
 	for _, w := range e.ProbeWorkers {
 		w.joinChkResourceCh = nil
@@ -722,6 +736,7 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 func (e *HashJoinV2Exec) OpenSelf() error {
 	e.prepared = false
 	e.inRestore = false
+	e.hashTableCleanupOnce = sync.Once{}
 	needScanRowTableAfterProbeDone := e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
 	e.HashJoinCtxV2.needScanRowTableAfterProbeDone = needScanRowTableAfterProbeDone
 	if e.RightAsBuildSide {
@@ -1104,6 +1119,8 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
 			e.joinResultCh <- &hashjoinWorkerResult{err: util.GetRecoverError(r)}
+		} else {
+			e.cleanupHashTableContext()
 		}
 		close(e.joinResultCh)
 	}()
@@ -1312,6 +1329,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 		wg.Wait()
 		close(errCh)
 		if err := <-errCh; err != nil {
+			e.cleanupHashTableContext()
 			e.buildFinished <- err
 			return false
 		}
@@ -1343,6 +1361,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 
 	totalSegmentCnt, err := e.hashTableContext.mergeRowTablesToHashTable(e.partitionNumber, e.spillHelper)
 	if err != nil {
+		e.cleanupHashTableContext()
 		e.buildFinished <- err
 		return
 	}
