@@ -261,10 +261,6 @@ func newAuroraFileRouter(files []RawFile, fallback FileRouter, logger log.Logger
 		path := filepath.ToSlash(file.Path)
 		parts := auroraDataPattern.FindStringSubmatch(path)
 		if parts == nil {
-			dir, leaf := filepath.Split(path)
-			if strings.HasPrefix(strings.ToLower(leaf), "part-") && dataFileSuffix.MatchString(leaf) && strings.Contains(dir, ".") {
-				return nil, errors.Errorf("unsupported or inconsistent Aurora directory: %s", path)
-			}
 			if dataFileSuffix.MatchString(path) {
 				res, err := fallback.Route(path)
 				if err != nil {
@@ -275,6 +271,10 @@ func newAuroraFileRouter(files []RawFile, fallback FileRouter, logger log.Logger
 				}
 			}
 			continue
+		}
+		// Check the raw export root and filename too, before generating wildcards.
+		if strings.ContainsAny(path, "*?[]\\") {
+			return nil, errors.New("Aurora file path contains glob metacharacters")
 		}
 		// Native keys are raw. Strip the exact schema prefix, not the last dot.
 		schema := parts[2]

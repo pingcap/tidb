@@ -228,7 +228,7 @@ func (s *fileScanner) EstimateImportDataSize(ctx context.Context) (*ImportDataSi
 		for _, tblMeta := range dbMeta.Tables {
 			singleReplicaSize, err := s.estimateOneTableSize(ctx, tblMeta)
 			if err != nil {
-				if s.config.skipInvalidFiles {
+				if s.config.skipInvalidFiles && !s.auroraSource {
 					s.logger.Warn("skipping table during size estimation", zap.String("database", dbMeta.Name), zap.String("table", tblMeta.Name), zap.Error(err))
 					continue
 				}
@@ -282,6 +282,10 @@ func (s *fileScanner) buildTableMeta(
 		return nil, errors.Trace(err)
 	}
 	uri := s.store.URI()
+	// URL encoding does not escape glob syntax in the importer's decoded path.
+	if s.auroraSource && strings.ContainsAny(uri, "*?[]\\") {
+		return nil, errors.New("Aurora source prefix contains glob metacharacters")
+	}
 	// import into only support absolute path
 	uri = strings.TrimPrefix(uri, "file://")
 	tableMeta.WildcardPath = strings.TrimSuffix(uri, "/") + "/" + wildcard
