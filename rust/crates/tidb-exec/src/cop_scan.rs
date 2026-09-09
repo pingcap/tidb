@@ -723,7 +723,20 @@ impl CopRowStream {
             };
             let batch = iter
                 .next_chunk_with_required_rows(required_rows.max(1))
-                .map_err(|error| StorageError::Backend(error.to_string()))?;
+                .map_err(|error| {
+                    let text = error.to_string();
+                    // Preserve a server errno through the storage adapter's
+                    // string boundary when a coprocessor response is an SQL
+                    // error (for example Go's COT(0) errno 1690).
+                    if let Some(rest) = text.strip_prefix("TiKV select response error ") {
+                        if let Some((code, message)) = rest.split_once(": ") {
+                            return StorageError::Backend(format!(
+                                "__TIDB_ERRNO:{code}:{message}"
+                            ));
+                        }
+                    }
+                    StorageError::Backend(text)
+                })?;
             let Some(batch) = batch else {
                 self.exhausted = true;
                 return Ok(None);
