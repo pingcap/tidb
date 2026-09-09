@@ -213,6 +213,7 @@ func TestLogSlowLogIndex(t *testing.T) {
 }
 
 func TestLogSlowLogRUV3(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
 	require.NoError(t, err)
 	require.NoError(t, f.Close())

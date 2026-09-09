@@ -151,6 +151,7 @@ func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
 		observedConnectionID uint64,
 		state string,
 		_, scanBytes, _, _, _, _ float64,
+		_, _, _, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
@@ -244,6 +245,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			cpuWork, scanBytes, netBytes, frontendCompileBytes, hashStateRows, joinOutputRows float64,
+			_, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -780,6 +782,7 @@ func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
 		observedConnectionID uint64,
 		state string,
 		_, scanBytes, netBytes, _, _, _ float64,
+		_, _, _, _ float64,
 	) {
 		if observedConnectionID != connectionID {
 			return
@@ -888,6 +891,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			_, observedScanBytes, _, _, _, _ float64,
+			_, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -933,6 +937,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			_, observedScanBytes, _, _, _, _ float64,
+			_, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -983,6 +988,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			_, observedScanBytes, _, _, _, _ float64,
+			_, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1016,6 +1022,7 @@ func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 			observedConnectionID uint64,
 			state string,
 			observedCPUWork, _, _, _, _, _ float64,
+			_, _, _, _ float64,
 		) {
 			if observedConnectionID != connectionID {
 				return
@@ -1296,18 +1303,150 @@ func TestStatementRURetryAndReplay(t *testing.T) {
 			installs.Add(1)
 		})
 
+		var chargedWrites atomic.Int64
+		connectionID := tk1.Session().GetSessionVars().ConnectionID
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			observedConnectionID uint64, _ string, _, _, _, _, _, _ float64,
+			writeStatement, _, _, _ float64,
+		) {
+			if observedConnectionID == connectionID {
+				chargedWrites.Add(int64(writeStatement))
+			}
+		})
+
 		tk1.MustExec("begin optimistic")
 		tk1.MustExec(query)
 		stmt := observedStmt.Load()
 		require.NotNil(t, stmt)
 		require.NotEmpty(t, requireStatementRUTerminalFlatPlan(t, stmt).Main)
-		require.Nil(t, observedOwner.Load(), "DML must not install the production statement RU owner")
+		require.NotNil(t, observedOwner.Load())
+		require.True(t, observedOwner.Load().ConsumedForTest())
 		installsAfterOriginalTerminal := installs.Load()
 
 		tk2.MustExec(query)
 		tk1.MustExec("commit")
 		require.Equal(t, installsAfterOriginalTerminal, installs.Load())
-		require.Nil(t, observedOwner.Load())
+		require.True(t, observedOwner.Load().ConsumedForTest())
+		require.Equal(t, int64(1), chargedWrites.Load(), "history replay must not bill the DML again")
 		tk2.MustQuery("select v from t where id = 1").Check(testkit.Rows("2"))
+	})
+}
+
+func TestStatementRUWriteLifecycle(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ru_write(id int primary key, v int)")
+	var count int
+	var writeStatement, operatorNum, writeKeys, writeBytes, cpuWork float64
+	connectionID := tk.Session().GetSessionVars().ConnectionID
+	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+		observedConnectionID uint64, _ string, cpu, _, _, _, _, _ float64,
+		ws, operators, keys, bytes float64,
+	) {
+		if observedConnectionID != connectionID {
+			return
+		}
+		count++
+		cpuWork = cpu
+		writeStatement, operatorNum, writeKeys, writeBytes = ws, operators, keys, bytes
+	})
+	check := func(sql string, wantStatement float64, committed bool) {
+		t.Helper()
+		before := count
+		tk.MustExecWithContext(context.Background(), sql)
+		require.Equal(t, before+1, count, sql)
+		require.Equal(t, wantStatement, writeStatement, sql)
+		if sql == "commit" {
+			require.Zero(t, operatorNum, sql)
+		} else {
+			require.Positive(t, operatorNum, sql)
+		}
+		if committed {
+			require.Positive(t, writeKeys, sql)
+			require.Positive(t, writeBytes, sql)
+		} else {
+			require.Zero(t, writeKeys, sql)
+			require.Zero(t, writeBytes, sql)
+		}
+	}
+	check("insert into ru_write values (1, 10)", 1, true)
+	require.Equal(t, float64(1), cpuWork)
+	require.Equal(t, float64(1), operatorNum)
+	check("replace into ru_write values (1, 20)", 1, true)
+	require.Equal(t, float64(1), cpuWork)
+	// Pessimistic autocommit commits lock mutations even when no row changes.
+	pessimisticAutoCommit := config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()
+	check("insert ignore into ru_write values (1, 99)", 1, pessimisticAutoCommit)
+	require.Equal(t, float64(1), cpuWork)
+	check("insert into ru_write values (1, 25) on duplicate key update v = values(v)", 1, true)
+	require.Equal(t, float64(1), cpuWork)
+	check("update ru_write set v = 30 where id = 1", 1, true)
+	require.Equal(t, float64(1), cpuWork)
+	check("delete from ru_write where id = 1", 1, true)
+	require.Equal(t, float64(1), cpuWork)
+	check("update ru_write set v = 40 where id = 99", 1, pessimisticAutoCommit)
+	require.Equal(t, float64(0), cpuWork)
+	tk.MustExec("prepare ru_insert from 'insert into ru_write values (?, ?)'")
+	tk.MustExec("set @id = 5, @v = 50")
+	check("execute ru_insert using @id, @v", 1, true)
+	tk.MustExec("set @id = 6")
+	check("execute ru_insert using @id, @v", 1, true)
+	check("delete from ru_write where id = 6", 1, true)
+	check("delete from ru_write where id = 5", 1, true)
+	tk.MustExec("deallocate prepare ru_insert")
+
+	tk.MustExec("begin")
+	check("insert into ru_write values (2, 20)", 1, false)
+	check("insert into ru_write values (3, 30)", 1, false)
+	check("commit", 0, true)
+	require.Equal(t, float64(2), writeKeys)
+	require.Zero(t, cpuWork)
+	tk.MustExec("begin")
+	check("insert into ru_write values (4, 40)", 1, false)
+	before := count
+	tk.MustExec("rollback")
+	require.Equal(t, before, count)
+	require.Error(t, tk.ExecToErr("insert into ru_write values (2, 99)"))
+	require.Equal(t, before, count)
+	tk.MustQuery("select * from ru_write where v > 0").Check(testkit.Rows("2 20", "3 30"))
+	require.Equal(t, before+1, count)
+	require.Zero(t, writeStatement)
+	require.Zero(t, writeKeys)
+	require.Zero(t, writeBytes)
+	t.Run("processed rows and target indexes", func(t *testing.T) {
+		tk.MustExec("create table ru_idx(id int primary key, v int, w int, unique key(v), key(w))")
+		tk.MustExec("create table ru_common(id varchar(10), v int, primary key(id) clustered, key(v))")
+		tk.MustExec("create table ru_noncluster(id int primary key nonclustered, v int)")
+		checkWork := func(sql string, want float64) {
+			t.Helper()
+			tk.MustExecWithContext(context.Background(), sql)
+			sc := tk.Session().GetSessionVars().StmtCtx
+			plan, ok := sc.GetPlan().(base.Plan)
+			require.True(t, ok, sql)
+			work, found := sc.RuntimeStatsColl.GetRootWriteCPUWork(plan.ID())
+			require.True(t, found, sql)
+			require.Equal(t, want, work, sql)
+		}
+		checkWork("insert into ru_idx values (1, 10, 20), (2, 11, 21)", 6)
+		checkWork("insert ignore into ru_idx values (1, 10, 20), (3, 12, 22)", 6)
+		checkWork("update ru_idx set v=v where id=1", 3)
+		checkWork("update ignore ru_idx set v=10 where id=2", 3)
+		checkWork("insert into ru_idx values (1, 10, 20) on duplicate key update v=v", 3)
+		checkWork("replace into ru_idx values (1, 11, 23)", 3)
+		checkWork("insert into ru_common values ('1', 1), ('2', 2)", 4)
+		checkWork("insert into ru_noncluster values (1, 1)", 2)
+		checkWork("update ru_idx a join ru_common b on a.id=b.id set a.w=a.w, b.v=b.v", 5)
+		checkWork("delete a,b from ru_idx a join ru_common b on a.id=b.id", 5)
+		checkWork("delete from ru_idx where id=3", 3)
+		checkWork("insert into ru_idx select 4, 14, 24 where false", 0)
+		checkWork("delete from ru_idx where id=99", 0)
+		for id := 2; id <= 65; id++ {
+			tk.MustExec(fmt.Sprintf("insert into ru_noncluster values (%d, %d)", id, id))
+		}
+		tk.MustExec("set tidb_init_chunk_size=2, tidb_max_chunk_size=32")
+		checkWork("update ru_noncluster set v=v", 130)
+		checkWork("delete from ru_noncluster", 130)
 	})
 }
