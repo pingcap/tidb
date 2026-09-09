@@ -5,16 +5,56 @@
       {
         "SQL": "explain analyze format='ru' select * from t",
         "Rows": [
-          ["TableReader_5", "root", "0", "44.00", "45.00", "100.00%", ""],
-          ["└─TableFullScan_4", "cop[tikv]", "0", "1.00", "1.00", "2.22%", ""]
+          [
+            "TableReader_5",
+            "root",
+            "0",
+            "18.00",
+            "19.00",
+            "100.00%",
+            ""
+          ],
+          [
+            "└─TableFullScan_4",
+            "cop[tikv]",
+            "0",
+            "1.00",
+            "1.00",
+            "5.26%",
+            ""
+          ]
         ]
       },
       {
         "SQL": "explain analyze format='ru' select * from t where a < 10",
         "Rows": [
-          ["TableReader_7", "root", "0", "57.00", "59.00", "100.00%", ""],
-          ["└─Selection_6", "cop[tikv]", "0", "1.00", "2.00", "3.39%", ""],
-          ["  └─TableFullScan_5", "cop[tikv]", "0", "1.00", "1.00", "1.69%", ""]
+          [
+            "TableReader_7",
+            "root",
+            "0",
+            "32.00",
+            "34.00",
+            "100.00%",
+            ""
+          ],
+          [
+            "└─Selection_6",
+            "cop[tikv]",
+            "0",
+            "1.00",
+            "2.00",
+            "5.88%",
+            ""
+          ],
+          [
+            "  └─TableFullScan_5",
+            "cop[tikv]",
+            "0",
+            "1.00",
+            "1.00",
+            "2.94%",
+            ""
+          ]
         ]
       }
     ]

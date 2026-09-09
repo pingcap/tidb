@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -227,14 +228,31 @@ func TestLogSlowLogRUV3(t *testing.T) {
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, b int,index idx(a));")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1), (2), (3)")
 	tk.MustExec("set tidb_slow_log_threshold=0;")
-	tk.MustQuery("select * from t use index (idx) where a in (1) union select * from t use index (idx) where a in (2,3);")
+	tk.MustQuery("select /*+ test_tag */ * from t where a < 2222")
 	tk.MustExec("set tidb_slow_log_threshold=300;")
-	// The empty result charges 101 frontend bytes and eight plan occurrences.
-	tk.MustQuery("select Request_unit_v2 from `information_schema`.`slow_query` " +
-		"where query like 'select%union%' limit 1").
-		Check(testkit.Rows("109"))
+	ruLogRows := tk.MustQuery("select Request_unit_v2 from `information_schema`.`slow_query` " +
+		"where query like '%test_tag%' limit 1").Rows()
+	require.Len(t, ruLogRows, 1)
+	require.Len(t, ruLogRows[0], 1)
+	ruLog, ok := ruLogRows[0][0].(string)
+	require.True(t, ok)
+
+	explainRows := tk.MustQuery("explain analyze format='ru' select * from t where a < 2222").Rows()
+	require.NotEmpty(t, explainRows)
+	require.Greater(t, len(explainRows[0]), 4)
+	ru, ok := explainRows[0][4].(string)
+	require.True(t, ok)
+
+	parseRU := func(value string) float64 {
+		t.Helper()
+		parsedRU, err := strconv.ParseFloat(value, 64)
+		require.NoError(t, err)
+		return parsedRU
+	}
+	require.Equal(t, parseRU(ru), parseRU(ruLog))
 }
 
 func TestSlowQuerySessionAlias(t *testing.T) {

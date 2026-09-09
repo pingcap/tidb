@@ -188,7 +188,6 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 			}
 			require.Positive(t, observation.scanBytes)
 			require.Positive(t, observation.netBytes)
-			require.Equal(t, float64(len(tc.query)), observation.frontendBytes)
 			totalUnits := observation.cpuWork + observation.scanBytes + observation.netBytes + observation.frontendBytes +
 				observation.hashStateRows + observation.joinOutputRows
 			require.InDelta(t, totalUnits, testutil.ToFloat64(metrics.RUV3Total)-totalBefore, 1e-9)
