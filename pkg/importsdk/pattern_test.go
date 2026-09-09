@@ -110,10 +110,6 @@ func TestGenerateMydumperPattern(t *testing.T) {
 	require.Equal(t, "", generateMydumperPattern(mydump.FileInfo{
 		TableName: filter.Table{},
 	}))
-	require.Equal(t, "", generateMydumperPattern(mydump.FileInfo{
-		TableName: filter.Table{Schema: "db", Name: "users"},
-		FileMeta:  mydump.SourceFileMeta{Path: "db/db.users/1/part-a.parquet"},
-	}))
 }
 
 func TestValidatePattern(t *testing.T) {

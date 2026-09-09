@@ -247,7 +247,7 @@ func NewDefaultFileRouter(logger log.Logger) (FileRouter, error) {
 }
 
 var (
-	auroraDataPattern = regexp.MustCompile(`^(?:(.*)/)?([^/]+)/([^/]+\.[^/]+)/(?:[0-9]+/)?(?i:part-[^/]+\.parquet)$`)
+	auroraDataPattern = regexp.MustCompile(`^(?:(.*)/)?([^/]+)/([^/]+\.[^/]+)/(?:[a-zA-Z0-9]+/)?(?i:part-[^/]+\.parquet)$`)
 	dataFileSuffix    = regexp.MustCompile(`(?i)\.(sql|csv|parquet)(\.[^./]+)?$`)
 )
 
@@ -299,7 +299,7 @@ func newAuroraFileRouter(files []RawFile, fallback FileRouter, logger log.Logger
 			// One source-scoped rule per schema handles dotted names without
 			// another router implementation or URL-decoding native identifiers.
 			rules = append(rules, &config.FileRouteRule{
-				Pattern: "^" + regexp.QuoteMeta(prefix) + "(" + regexp.QuoteMeta(schema) + ")/" + regexp.QuoteMeta(schema+".") + `([^/]+)/(?:[0-9]+/)?(?i:part-[^/]+\.parquet)$`,
+				Pattern: "^" + regexp.QuoteMeta(prefix) + "(" + regexp.QuoteMeta(schema) + ")/" + regexp.QuoteMeta(schema+".") + `([^/]+)/(?:[a-zA-Z0-9]+/)?(?i:part-[^/]+\.parquet)$`,
 				Schema:  "$1", Table: "$2", Type: TypeParquet,
 			})
 			schemas[schema] = true
