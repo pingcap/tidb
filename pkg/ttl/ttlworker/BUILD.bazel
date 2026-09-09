@@ -105,6 +105,7 @@ go_test(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",
+        "//pkg/util/codec",
         "//pkg/util/logutil",
         "//pkg/util/skip",
         "//pkg/util/sqlexec",

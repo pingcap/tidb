@@ -22,6 +22,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -29,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -468,6 +471,62 @@ func TestScanTaskDoScan(t *testing.T) {
 	task.schemaChangeIdx = 1
 	task.schemaChangeInRetry = 2
 	task.runDoScanForTest(1, "table 'test.t1' meta changed, should abort current job: [schema:1146]Table 'test.t1' doesn't exist")
+
+	t.Run("persisted temporal clustered-PK range", func(t *testing.T) {
+		tbl := newMockTTLTbl(t, "clustered_pk_range")
+		tbl.TimeColumn.FieldType = *types.NewFieldType(mysql.TypeTimestamp)
+		idColumn := &model.ColumnInfo{
+			ID:        2,
+			Name:      ast.NewCIStr("id"),
+			Offset:    1,
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+			State:     model.StatePublic,
+		}
+		tbl.Columns = append(tbl.Columns, idColumn)
+		tbl.IsCommonHandle = true
+		tbl.KeyColumns = []*model.ColumnInfo{tbl.TimeColumn, idColumn}
+		tbl.KeyColumnTypes = []*types.FieldType{&tbl.TimeColumn.FieldType, &idColumn.FieldType}
+
+		globalLoc := time.FixedZone("UTC+8", 8*60*60)
+		boundary := time.Date(2024, 1, 2, 3, 4, 5, 0, globalLoc)
+		// The task keeps the existing textual PK boundary format. TIMESTAMP is
+		// stored as UTC wall time because TTL scan sessions execute in UTC.
+		boundaryText := boundary.UTC().Format(time.DateTime)
+		encodedRange, err := codec.EncodeKey(time.UTC, nil,
+			types.NewBytesDatum([]byte(boundaryText)))
+		require.NoError(t, err)
+		scanRange, err := codec.Decode(encodedRange, len(encodedRange))
+		require.NoError(t, err)
+
+		expire := boundary.Add(time.Hour)
+		scanTask := &ttlScanTask{
+			ctx: cache.SetMockExpireTime(context.Background(), expire),
+			TTLTask: &cache.TTLTask{
+				ExpireTime:     expire,
+				ScanRangeStart: scanRange,
+			},
+			tbl:        tbl,
+			statistics: &ttlStatistics{},
+		}
+		pool := newMockSessionPool(t, tbl)
+		defer pool.AssertNoSessionInUse()
+		pool.se.sessionVars.TimeZone = globalLoc
+		pool.se.executeSQL = func(_ context.Context, sql string, _ ...any) ([]chunk.Row, error) {
+			require.Contains(t, sql, "FROM `test`.`clustered_pk_range`")
+			require.Contains(t, sql, fmt.Sprintf("`time` >= '%s'", boundaryText))
+			require.Contains(t, sql, "ORDER BY `time`, `id` ASC LIMIT 3")
+			return newMockRows(t, &tbl.TimeColumn.FieldType, &idColumn.FieldType).
+				Append(boundary, 1).Rows(), nil
+		}
+
+		origLimit := vardef.TTLScanBatchSize.Load()
+		vardef.TTLScanBatchSize.Store(3)
+		defer vardef.TTLScanBatchSize.Store(origLimit)
+		delCh := make(chan *ttlDeleteTask, 1)
+		result := scanTask.doScan(context.Background(), delCh, pool)
+		require.NoError(t, result.err)
+		require.Equal(t, types.NewIntDatum(1), (<-delCh).rows[0][1])
+	})
 }
 
 func TestScanTaskCheck(t *testing.T) {
