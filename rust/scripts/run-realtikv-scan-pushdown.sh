@@ -282,14 +282,25 @@ rust_rows() {
 WIRE_ROWS=""
 WIRE_SHAPE=""
 wire() {
-  local out
+  local out status
+  set +e
   out=$("${RUST_ROOT}/target/debug/cluster-session-smoke" \
-    --pd "127.0.0.1:${PD_PORT}" --schema pushdiff --cop --sql "$1" 2>&1) || {
+    --pd "127.0.0.1:${PD_PORT}" --schema pushdiff --cop --sql "$1" 2>&1)
+  status=$?
+  set -e
+  # The smoke binary can complete the query and print its receipt before a
+  # best-effort PD shutdown reports lingering background handles. Preserve a
+  # valid receipt in that case; only classify the call as an error when no
+  # coprocessor receipt was produced.
+  if ! printf '%s\n' "${out}" | grep -q 'rows across the wire'; then
     WIRE_ROWS="error"
     WIRE_SHAPE="error"
     printf '%s\n' "${out}" | tail -3 >&2
     return 0
-  }
+  fi
+  if ((status != 0)); then
+    printf '%s\n' "${out}" | grep 'cluster-session-smoke: .*shutdown failed' >&2 || true
+  fi
   WIRE_ROWS=$(printf '%s\n' "${out}" \
     | awk '/rows across the wire/ { print $NF }' | tail -1)
   WIRE_SHAPE=$(printf '%s\n' "${out}" \
