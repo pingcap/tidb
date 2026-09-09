@@ -1710,8 +1710,13 @@ impl KvTable {
         // cursor consumes the projected response schema. Keep both mappings
         // explicit: a plain double read projects the original handle slots
         // and then sees them densely at positions 0..handle_count.
-        let output_offsets = handle_only.then(|| handle_indices.clone());
-        let returned_handle_indices = if handle_only {
+        // A residual predicate may still reference any table/index column.
+        // Narrowing to handles in that case shifts the response coordinates
+        // and makes local evaluation index past the returned chunk. Keep the
+        // complete schema unless this is a predicate-free handle-only read.
+        let narrow_to_handles = handle_only && predicates.is_empty() && topn.is_none();
+        let output_offsets = narrow_to_handles.then(|| handle_indices.clone());
+        let returned_handle_indices = if narrow_to_handles {
             (0..handle_indices.len()).collect::<Vec<_>>()
         } else {
             handle_indices.clone()
