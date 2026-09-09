@@ -113,7 +113,7 @@ if [[ -z "${TIDB_SERVER}" ]] || [[ ! -x "${TIDB_SERVER}" ]]; then
 fi
 TIDB_SERVER_WRAPPER="${TMPDIR:-/tmp}/lock-recovery-tidb-server-${$}"
 TIDB_AUTH_FILE="${TMPDIR:-/tmp}/lock-recovery-auth-${$}.tsv"
-printf 'root\t\n' >"${TIDB_AUTH_FILE}"
+printf 'root\tlocalhost\tmysql_native_password\tEMPTY\n' >"${TIDB_AUTH_FILE}"
 chmod 600 "${TIDB_AUTH_FILE}"
 cat >"${TIDB_SERVER_WRAPPER}" <<EOF
 #!/bin/sh
