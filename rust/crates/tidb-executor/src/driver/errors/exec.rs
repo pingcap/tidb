@@ -49,6 +49,17 @@ const ER_WARN_ALLOWED_PACKET_OVERFLOWED: u16 = 1301;
 const ER_OPERAND_COLUMNS: u16 = tidb_error::mysql::errcode::ErrOperandColumns;
 
 /// The MySQL error an execution failure reaches the client as.
+#[test]
+fn coprocessor_cot_error_matches_go() {
+    // pkg/expression/builtin_math_test.go: TestCot.
+    let error = to_mysql_error(ExecError::unsupported(
+        "table bytes failed to decode: Storage(\"Backend(\\\"__TIDB_ERRNO:1690:DOUBLE value is out of range in 'cot(0)'\\\")\")",
+    ));
+    assert_eq!(error.code, 1690);
+    assert_eq!(error.state, *b"22003");
+    assert_eq!(error.message, "DOUBLE value is out of range in 'cot(0)'");
+}
+
 pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
     match error {
         ExecError::Eval(eval) => eval_to_mysql_error(eval),
@@ -63,7 +74,7 @@ pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
                 let rest = &reason[start + PREFIX.len()..];
                 if let Some((code, text)) = rest.split_once(':') {
                     if let Ok(code) = code.parse::<u16>() {
-                        return MysqlError::coded(code, text.trim_end_matches(['"', ')']));
+                        return MysqlError::coded(code, text.trim_end_matches(['"', ')', '\\']));
                     }
                 }
             }

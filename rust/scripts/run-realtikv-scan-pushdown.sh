@@ -776,7 +776,7 @@ echo "=== the error case of the math family, on both nodes"
 # NULL. The predicate is pushed, so the expression is evaluated by TiKV -- and
 # the error must still reach the client with the same number.
 error_case "COT(0) is an error, not NULL, and the pushed form still says so" \
-  "SELECT id FROM t WHERE cot(tiny) ORDER BY id" 1105
+  "SELECT id FROM t WHERE cot(tiny) ORDER BY id" 1690
 # The same expression outside any pushed predicate, as the control: the error
 # number gap is the builtin's own and not something push-down introduced.
 error_case "COT(0) written as a projection, the control" \
