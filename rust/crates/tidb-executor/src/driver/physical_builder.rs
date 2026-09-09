@@ -440,10 +440,7 @@ fn table_scan_schema(
     // A wider cost column set means a residual predicate still consumes the
     // physical row. Constant predicates such as PI() have no extra inputs and
     // must retain the plan's projected output shape.
-    let needs_full = scan
-        .tikv_pushdown
-        .as_ref()
-        .is_some_and(|spec| spec.columns.len() > output.columns.len());
+    let needs_full = true;
     Ok((
         if needs_full { Schema::new(full.clone()) } else { output.clone() },
         if needs_full { (0..full.len()).collect() } else { keep },
@@ -3161,6 +3158,24 @@ fn build_with_state(
                     .table_access()
                     .is_some_and(|access| access.accept_scan_filter(&pushed, ctx))
             {
+                let output = unary_schema(plan, child.as_ref());
+                if output.len() != child.schema().len() {
+                    let expressions = output
+                        .columns
+                        .iter()
+                        .map(|column| {
+                            let offset = child.schema().column_index(column);
+                            (offset >= 0).then(|| Expression::Column(child.schema().columns[offset as usize].clone()))
+                        })
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or_else(|| DriverError::unsupported("selection output column is absent from child"))?;
+                    return Ok(Box::new(ProjectionExec::new(
+                        meta(plan, output),
+                        expressions,
+                        child,
+                        ctx.clone(),
+                    )));
+                }
                 Ok(child)
             } else {
                 let schema = unary_schema(plan, child.as_ref());
