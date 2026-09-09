@@ -437,9 +437,13 @@ fn table_scan_schema(
     // Residual Selection expressions use the complete physical table row;
     // pruning to the final projection here can leave their column offsets
     // pointing past the returned Chunk.
+    // A wider cost column set means a residual predicate still consumes the
+    // physical row. Constant predicates such as PI() have no extra inputs and
+    // must retain the plan's projected output shape.
+    let needs_full = scan.cost_columns.len() > output.columns.len();
     Ok((
-        Schema::new(full.clone()),
-        (0..full.len()).collect(),
+        if needs_full { Schema::new(full.clone()) } else { output.clone() },
+        if needs_full { (0..full.len()).collect() } else { keep },
         extra_handle_slot,
         extra_commit_ts_slot,
     ))
