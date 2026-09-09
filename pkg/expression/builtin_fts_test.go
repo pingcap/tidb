@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
@@ -507,4 +508,65 @@ func TestFTSMysqlMatchAgainstNativeColumnSubstitution(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, isNull)
 	require.Equal(t, float64(1), result)
+}
+
+func TestFTSMysqlMatchAgainstMetadataSnapshotIdentity(t *testing.T) {
+	ctx := mock.NewContext()
+	sf := newFTSMatchAgainstForTest(t, ctx, "+tidb", 1, ast.FulltextSearchModifierBooleanMode)
+	stale := localEvalInfoForTest()
+	stale.MatchNothing, stale.SelectivityTerm = true, "stale"
+	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, stale))
+	before := sf.Clone().(*ScalarFunction)
+	hash := append([]byte(nil), sf.HashCode()...)
+	canonical := append([]byte(nil), sf.CanonicalHashCode()...)
+	hasher := base.NewHashEqualer()
+	sf.Hash64(hasher)
+	v, isNull, err := sf.EvalReal(ctx, stringRow("TiDB storage"))
+	require.NoError(t, err)
+	require.False(t, isNull)
+	require.Equal(t, float64(1), v)
+	info, ok := FTSMysqlMatchAgainstLocalEvalInfo(sf)
+	require.True(t, ok)
+	require.False(t, info.MatchNothing)
+	require.Equal(t, "tidb", info.SelectivityTerm)
+	// Refreshing derived state cannot change expression identity, even after
+	// cached hashes are cleared or the expression is cloned.
+	after := sf.Clone().(*ScalarFunction)
+	sf.CleanHashCode()
+	require.Equal(t, hash, sf.HashCode())
+	require.Equal(t, canonical, sf.CanonicalHashCode())
+	afterHasher := base.NewHashEqualer()
+	sf.Hash64(afterHasher)
+	require.Equal(t, hasher.Sum64(), afterHasher.Sum64())
+	require.True(t, before.Equal(ctx, after))
+	require.True(t, before.Equals(after))
+	info.SelectivityTerm = "caller mutation"
+	current, _ := FTSMysqlMatchAgainstLocalEvalInfo(sf)
+	require.Equal(t, "tidb", current.SelectivityTerm)
+
+	// The signature's shared query cache and metadata reads must remain safe
+	// when different workers compile different search strings.
+	sig := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
+	var workers sync.WaitGroup
+	for i := range 4 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for range 50 {
+				search := "tidb"
+				if i%2 == 0 {
+					search = "+ab"
+				}
+				if _, err := sig.getOrBuildLocalNoScorePlan(search); err != nil {
+					t.Errorf("compile query: %v", err)
+					return
+				}
+				info, _ := FTSMysqlMatchAgainstLocalEvalInfo(sf)
+				if (info.MatchNothing && info.SelectivityTerm != "") || (!info.MatchNothing && info.SelectivityTerm != "tidb") {
+					t.Errorf("inconsistent metadata snapshot: %+v", info)
+				}
+			}
+		}()
+	}
+	workers.Wait()
 }

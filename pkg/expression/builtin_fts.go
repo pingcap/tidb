@@ -114,7 +114,7 @@ func (b *builtinFtsMysqlMatchAgainstSig) Clone() builtinFunc {
 	newSig := &builtinFtsMysqlMatchAgainstSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	newSig.modifier = b.modifier
-	newSig.localEvalInfo = b.localEvalInfo.Clone()
+	newSig.localEvalInfo = b.localEvalInfoSnapshot()
 	return newSig
 }
 
@@ -123,9 +123,7 @@ func (b *builtinFtsMysqlMatchAgainstSig) sameFTSState(other *builtinFtsMysqlMatc
 	if b.localEvalInfo == nil || other.localEvalInfo == nil {
 		return b.localEvalInfo == other.localEvalInfo
 	}
-	return b.modifier == other.modifier && b.localEvalInfo.AnalyzerConfig.Equal(other.localEvalInfo.AnalyzerConfig) &&
-		b.localEvalInfo.MatchNothing == other.localEvalInfo.MatchNothing &&
-		b.localEvalInfo.SelectivityTerm == other.localEvalInfo.SelectivityTerm
+	return b.modifier == other.modifier && b.localEvalInfo.AnalyzerConfig.Equal(other.localEvalInfo.AnalyzerConfig)
 }
 
 func (b *builtinFtsMysqlMatchAgainstSig) equal(ctx EvalContext, other builtinFunc) bool {
@@ -156,12 +154,7 @@ func (b *builtinFtsMysqlMatchAgainstSig) appendFTSStateHash(dst []byte) []byte {
 	for _, word := range config.Stopwords {
 		dst = codec.EncodeCompactBytes(dst, []byte(word))
 	}
-	if info.MatchNothing {
-		dst = append(dst, 1)
-	} else {
-		dst = append(dst, 0)
-	}
-	return codec.EncodeCompactBytes(dst, []byte(info.SelectivityTerm))
+	return dst
 }
 
 func (c *ftsMatchWordFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -248,13 +241,27 @@ func SetFTSMysqlMatchAgainstLocalEvalInfo(sf *ScalarFunction, info *FTSLocalEval
 	return nil
 }
 
-// FTSMysqlMatchAgainstLocalEvalInfo returns attached local-evaluation metadata.
+// FTSMysqlMatchAgainstLocalEvalInfo returns a snapshot of local-evaluation metadata.
 func FTSMysqlMatchAgainstLocalEvalInfo(sf *ScalarFunction) (*FTSLocalEvalInfo, bool) {
 	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
 	if !ok || sig.localEvalInfo == nil {
 		return nil, false
 	}
-	return sig.localEvalInfo, true
+	return sig.localEvalInfoSnapshot(), true
+}
+
+// localEvalInfoSnapshot derives search-dependent fields from the latest compiled
+// query. Keep the attached analyzer configuration immutable so evaluation cannot
+// race with metadata readers or change the expression's hash/equality state.
+func (b *builtinFtsMysqlMatchAgainstSig) localEvalInfoSnapshot() *FTSLocalEvalInfo {
+	b.localPlanMu.Lock()
+	defer b.localPlanMu.Unlock()
+	info := b.localEvalInfo.Clone()
+	if info != nil && b.localPlan != nil {
+		info.MatchNothing = b.localPlan.query.MatchesNothing()
+		info.SelectivityTerm, _ = b.localPlan.query.SelectivityTerm()
+	}
+	return info
 }
 
 // FTSModifierSupportedByLocalNoScore reports whether local boolean matching can
