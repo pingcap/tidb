@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -39,7 +40,7 @@ func InjectMockBackendCtx(t *testing.T, store kv.Storage) (restore func()) {
 			*mockBackendCtx = ingest.NewMockBackendCtx(job, tk.Session(), cpOp)
 		})
 	ingest.LitInitialized = true
-	ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
+	ingest.LitDiskRoot = newMockDiskRoot()
 	ingest.LitMemRoot = ingest.NewMemRootImpl(math.MaxInt64)
 
 	return func() {
@@ -68,4 +69,53 @@ func CheckIngestLeakageForTest(exitCode int) {
 		}
 	}
 	os.Exit(exitCode)
+}
+
+type mockDiskRoot struct {
+	mu    sync.Mutex
+	items map[int64]ingest.ResourceTracker
+}
+
+func newMockDiskRoot() *mockDiskRoot {
+	return &mockDiskRoot{
+		items: make(map[int64]ingest.ResourceTracker),
+	}
+}
+
+func (d *mockDiskRoot) Add(id int64, tracker ingest.ResourceTracker) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.items[id] = tracker
+	ingest.TrackerCountForTest.Add(1)
+}
+
+func (d *mockDiskRoot) Remove(id int64) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.items, id)
+	ingest.TrackerCountForTest.Add(-1)
+}
+
+func (d *mockDiskRoot) Count() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.items)
+}
+
+func (*mockDiskRoot) UpdateUsage() {}
+
+func (*mockDiskRoot) ShouldImport() bool {
+	return false
+}
+
+func (*mockDiskRoot) UsageInfo() string {
+	return "mock disk root"
+}
+
+func (*mockDiskRoot) PreCheckUsage() error {
+	return nil
+}
+
+func (*mockDiskRoot) StartupCheck() error {
+	return nil
 }
