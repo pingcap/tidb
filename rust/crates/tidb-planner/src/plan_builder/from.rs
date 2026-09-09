@@ -144,7 +144,7 @@ use tidb_datatype::{
     FieldName, FieldNameMetadata, FieldType, FieldTypeCode, FieldTypeFlags, IdentifierMetadata,
 };
 use tidb_expr::column::Column;
-use tidb_expr::expr_util::normal_form::split_cnf_items;
+use tidb_expr::expr_util::normal_form::into_cnf_items;
 use tidb_expr::expr_util::{FunctionBuilder, RealFunctionBuilder, SubstituteOptions};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::{merge_schema, Schema};
@@ -913,7 +913,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             // a subquery surfaces as an unresolved-column error instead.
             let on_expr =
                 self.rewrite_scalar(&Self::clause_scratch(on), &schema, &names, &BTreeMap::new())?;
-            let on_condition = split_cnf_items(&on_expr);
+            let on_condition = into_cnf_items(on_expr);
             // `:930` "Keep these expressions as a LogicalSelection upon the
             // inner join, in order to apply possible decorrelate
             // optimizations. The ON clause is actually treated as a WHERE
@@ -1036,7 +1036,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             let builder = RealFunctionBuilder::new(self.ctx);
             let opts = SubstituteOptions::new(&builder);
             apply.join.attach_on_conds(
-                &split_cnf_items(&on_expr),
+                &into_cnf_items(on_expr),
                 &left_schema,
                 &right_schema,
                 &opts,

@@ -316,6 +316,64 @@ fn the_dirty_mark_does_not_outlive_the_transaction_that_set_it() {
     );
 }
 
+/// The wire server calls transaction control directly, without the ordinary
+/// statement dispatcher. A new transaction must still start with no staged
+/// writes, including after COMMIT publishes a previously dirty catalog.
+#[test]
+fn direct_transaction_control_does_not_inherit_committed_dirty_marks() {
+    let mut session = session_with_rows();
+    session.control_transaction("BEGIN").unwrap();
+    session.run("INSERT INTO us VALUES (5, 10, 500)").unwrap();
+    session.control_transaction("COMMIT").unwrap();
+    session.control_transaction("BEGIN").unwrap();
+    let clean = session
+        .with_catalog_mut(|catalog| {
+            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "us") else {
+                panic!("fixture table exists");
+            };
+            Ok(!table.has_dirty_content())
+        })
+        .unwrap();
+    assert!(
+        clean,
+        "a fresh transaction inherited the committed transaction's staged-write mark"
+    );
+    assert_eq!(
+        double_read(&mut session, "us"),
+        vec![
+            vec!["1".to_owned(), "100".to_owned()],
+            vec!["2".to_owned(), "200".to_owned()],
+            vec!["3".to_owned(), "300".to_owned()],
+            vec!["4".to_owned(), "400".to_owned()],
+            vec!["5".to_owned(), "500".to_owned()],
+        ]
+    );
+    session.control_transaction("ROLLBACK").unwrap();
+
+    // Starting another transaction must not clear the first one's private
+    // dirty marks or make its uncommitted row visible to the new reader.
+    let mut peer = Session::with_catalog(session.shared_catalog());
+    session.control_transaction("BEGIN").unwrap();
+    session.run("INSERT INTO us VALUES (6, 5, 600)").unwrap();
+    peer.control_transaction("BEGIN").unwrap();
+    assert!(
+        session
+            .with_catalog_mut(|catalog| {
+                let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "us")
+                else {
+                    panic!("fixture table exists");
+                };
+                Ok(table.has_dirty_content())
+            })
+            .unwrap(),
+        "a peer's BEGIN cleared another transaction's staged-write mark"
+    );
+    assert_eq!(rows(&mut peer, "SELECT COUNT(*) FROM test.us"), [["5"]]);
+    assert_eq!(rows(&mut session, "SELECT COUNT(*) FROM test.us"), [["6"]]);
+    peer.control_transaction("ROLLBACK").unwrap();
+    session.control_transaction("ROLLBACK").unwrap();
+}
+
 /// The mark does not leak from an AUTOCOMMIT write into the next statement
 /// either. Go gives every autocommit statement its own membuffer, so the
 /// `SELECT` after an `INSERT` sees a clean table.

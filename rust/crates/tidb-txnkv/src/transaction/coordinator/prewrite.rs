@@ -25,8 +25,7 @@ use tidb_proto::{
 };
 
 use crate::lock::{
-    decode_blocking_lock_observation, pessimistic_prewrite_recovery_enabled,
-    resolve_blocking_locks, BlockingLock, LockAdmissionError, LockRecoveryClient,
+    decode_blocking_lock_observation, resolve_blocking_locks, LockRecoveryClient,
     LockRecoveryError, TimestampSource,
 };
 use crate::region::RegionRecoveryLoader;
@@ -37,7 +36,7 @@ use super::super::mutation::OptimisticMutation;
 use super::super::region_batches::RegionMutationBatch;
 use super::super::state::TransactionCause;
 use super::{
-    alive_retry_delay, classify_key_error, wait_with_call, RealOptimisticTransaction,
+    classify_key_error, wait_with_call, RealOptimisticTransaction,
     ASYNC_COMMIT_KEYS_LIMIT, ASYNC_COMMIT_SAFE_WINDOW_MS, ASYNC_COMMIT_TOTAL_KEY_SIZE_LIMIT,
     TSO_LOGICAL_BITS,
 };
@@ -176,7 +175,7 @@ where
     }
 
     pub(super) fn handle_prewrite_key_errors(
-        &self,
+        &mut self,
         errors: &[KvrpcKeyError],
         context: &tidb_proto::KvrpcContext,
         call: &UnaryCallContext,
@@ -186,27 +185,14 @@ where
             let Some(lock_info) = error.locked.as_ref() else {
                 return Err(classify_key_error(error));
             };
-            // A Go tidb-server sharing this cluster can leave a genuine
-            // pessimistic lock on a key an optimistic prewrite needs, so the
-            // observation is admitted under the wider blocking-lock protocol
-            // and the narrower optimistic-only refusal is re-imposed below,
-            // where it can still be the answer.
+            // Prewrite can meet either protocol. Like client-go, resolve each
+            // lock through its owner's protocol and wait for live owners.
             let locks = decode_blocking_lock_observation(lock_info).map_err(|error| {
                 TransactionCause::InvalidResponse {
                     detail: format!("invalid Prewrite lock observation: {error}"),
                 }
             })?;
             for lock in locks {
-                if let BlockingLock::Pessimistic(pessimistic) = &lock {
-                    if !pessimistic_prewrite_recovery_enabled() {
-                        return Err(TransactionCause::InvalidResponse {
-                            detail: format!(
-                                "invalid Prewrite lock observation: {}",
-                                LockAdmissionError::Pessimistic(pessimistic.lock_type)
-                            ),
-                        });
-                    }
-                }
                 // client-go `prewrite.go:541`: an *optimistic* committer that
                 // meets a lock with a larger start TS will fail with
                 // WriteConflict whatever the resolver decides, so the error is
@@ -254,17 +240,21 @@ where
         .map_err(|error| prewrite_lock_recovery_cause(eligible_locks[0].key(), error))?
         {
             recovery if !recovery.is_alive() => Ok(()),
-            recovery if alive_retry_delay(recovery.ttl) <= call.timeout() => {
-                wait_with_call(call, alive_retry_delay(recovery.ttl))?;
-                Ok(())
+            recovery => {
+                // client-go prewrite.go: resolveLocks uses BoTxnLock with
+                // TTL as a cap, not a sleep. Recheck a released lock without
+                // waiting for its old TTL to expire; share the region budget.
+                let delay = self.forward_backoff.next_delay_capped(
+                    crate::retry::RegionBackoffKind::TxnLock, recovery.ttl,
+                ).map_err(|error| TransactionCause::Lock {
+                    key: eligible_locks[0].key().to_vec(),
+                    detail: format!("Prewrite lock retry budget exhausted: {error:?}"),
+                })?;
+                wait_with_call(call, delay).map_err(|error| TransactionCause::Lock {
+                    key: eligible_locks[0].key().to_vec(),
+                    detail: format!("Prewrite lock wait failed: {error:?}"),
+                })
             }
-            recovery => Err(TransactionCause::Lock {
-                key: eligible_locks[0].key().to_vec(),
-                detail: format!(
-                    "Prewrite lock remains alive for {:?}, beyond transaction deadline",
-                    recovery.ttl
-                ),
-            }),
         }
     }
 }

@@ -175,6 +175,7 @@ class MysqlConnection:
         self.close()
 
     def read_packet(self, expected_sequence: int) -> bytes:
+        expected_sequence %= 256
         header = read_exact(self.stream, 4)
         length = int.from_bytes(header[:3], "little")
         sequence = header[3]

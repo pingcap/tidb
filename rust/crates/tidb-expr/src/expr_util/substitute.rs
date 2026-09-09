@@ -478,7 +478,7 @@ pub fn substitute_cor_col_2_constant(
             // Go dereferences `*x.Data` unguarded: a correlated column reached
             // here is always bound. An unbound one becomes NULL rather than a
             // panic, which is the value an unbound correlated column reads as.
-            let value = cor.data.clone().unwrap_or(Datum::Null);
+            let value = cor.eval();
             let mut constant = Constant::new(
                 value,
                 cor.column

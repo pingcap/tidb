@@ -17,7 +17,7 @@
 //! This module owns one physical attempt only. Region selection, retry,
 //! transaction state, primary choice, and two-phase commit stay above it.
 
-use std::marker::PhantomData;
+use std::{marker::PhantomData, sync::Arc};
 
 use prost::Message;
 use tidb_proto::{
@@ -31,14 +31,13 @@ use tidb_proto::{
 
 use super::batch::{
     batch_get_entry, batch_rollback_entry, commit_entry, get_entry, pessimistic_lock_entry,
-    pessimistic_rollback_entry, prewrite_entry, scan_entry, txn_heart_beat_entry,
-    BatchCommandEntry, BatchCommandTag, BatchInflightError, BatchPublicationReceipt, BatchRoute,
-    OpaqueBatchCommand,
+    pessimistic_rollback_entry, prewrite_entry, reply_pair, scan_entry, txn_heart_beat_entry,
+    BatchCommandEntry, BatchCommandTag, BatchInflightError, BatchReply, BatchRequestProgress,
+    BatchRoute, OpaqueBatchCommand,
 };
 use super::TonicCoprocessorClient;
 use super::{
-    completion_pair, CompletionError, CompletionPull, CompletionRunLoop, DirectUnaryClientError,
-    DirectUnaryConnectionError, UnaryCallContext,
+    CompletionError, DirectUnaryClientError, DirectUnaryConnectionError, UnaryCallContext,
 };
 
 /// Immutable identity assigned before one transaction command enters tonic.
@@ -50,29 +49,6 @@ pub struct TransactionBatchPublication {
 }
 
 impl TransactionBatchPublication {
-    fn from_receipts(
-        tag: BatchCommandTag,
-        receipts: &[BatchPublicationReceipt],
-    ) -> Result<Self, DirectUnaryClientError> {
-        let [receipt] = receipts else {
-            return Err(DirectUnaryClientError::InvalidRequest(format!(
-                "one {tag:?} command requires exactly one BatchCommands publication receipt, got {}",
-                receipts.len()
-            )));
-        };
-        let [request_id] = receipt.request_ids() else {
-            return Err(DirectUnaryClientError::InvalidRequest(format!(
-                "one {tag:?} command requires exactly one published request ID, got {}",
-                receipt.request_ids().len()
-            )));
-        };
-        Ok(Self {
-            tag,
-            route: receipt.route().clone(),
-            request_id: *request_id,
-        })
-    }
-
     /// Publication identity for a command a store completed in-process.
     ///
     /// Go's unistore RPCClient answers every kvrpcpb command inside the
@@ -137,16 +113,10 @@ pub struct TransactionBatchResponse<R> {
 /// Pull-side owner of one typed transaction command completion.
 pub struct TransactionBatchPending<R> {
     tag: BatchCommandTag,
-    completion: CompletionPull<OpaqueBatchCommand, BatchInflightError>,
+    completion: BatchReply,
     publication: Option<TransactionBatchPublication>,
-    /// The receipt this attempt was submitted under, not yet collected.
-    ///
-    /// client-go's caller never learns its entry's identity at send time --
-    /// `sendBatchRequest` puts the entry on `batchCommandsCh` and waits only
-    /// on the response. The receipt is read here only when the attempt has to
-    /// be NAMED, which is the error path; by then the worker has long since
-    /// sent it, so collecting it costs nothing.
-    deferred: Option<crate::rpc::transport_runtime::DeferredReceipts>,
+    progress: Arc<BatchRequestProgress>,
+    barrier: Option<crate::rpc::transport_runtime::PublicationBarrier>,
     response: PhantomData<fn() -> R>,
 }
 
@@ -159,67 +129,62 @@ where
         encoded_request: Vec<u8>,
         forwarded_host: Option<&str>,
     ) -> (BatchCommandEntry, Self) {
-        let (completion, pull) = completion_pair(CompletionRunLoop::new(), || {});
+        let (completion, pull) = reply_pair();
         crate::rpc::batch::wire::wire_diag::note_outbound(tag);
         let mut entry =
             BatchCommandEntry::new(OpaqueBatchCommand::new(tag, encoded_request), completion);
         if let Some(forwarded_host) = forwarded_host {
             entry = entry.with_forwarded_host(forwarded_host);
         }
+        let progress = entry.progress();
         (
             entry,
             Self {
                 tag,
                 completion: pull,
                 publication: None,
-                deferred: None,
+                progress,
+                barrier: None,
                 response: PhantomData,
             },
         )
     }
 
-    /// Retains the submission's uncollected receipt.
-    fn retain_deferred(&mut self, deferred: crate::rpc::transport_runtime::DeferredReceipts) {
-        self.deferred = Some(deferred);
+    fn retain_barrier(&mut self, barrier: crate::rpc::transport_runtime::PublicationBarrier) {
+        self.barrier = Some(barrier);
     }
 
-    /// Collects the deferred receipt, if one is still outstanding.
-    ///
-    /// Idempotent: once bound, the publication stands. A receipt the worker
-    /// could not produce leaves the publication unset, which every caller
-    /// already tolerates -- they read only the error beside it.
+    /// In-flight admission records identity before a response can complete.
+    /// Go's entry likewise carries its identity through receive and errors.
     fn resolve_publication(&mut self) {
         if self.publication.is_some() {
             return;
         }
-        let Some(deferred) = self.deferred.take() else {
-            return;
-        };
-        if let Ok(receipts) = deferred.wait() {
-            let _ = self.bind_publication(&receipts);
+        if self.progress.publication_route().is_none() {
+            if let Some(barrier) = self.barrier.take() {
+                barrier.wait();
+            }
         }
+        self.capture_publication();
     }
 
-    fn bind_publication(
-        &mut self,
-        receipts: &[BatchPublicationReceipt],
-    ) -> Result<(), DirectUnaryClientError> {
+    fn capture_publication(&mut self) {
         if self.publication.is_some() {
-            return Err(DirectUnaryClientError::InvalidRequest(format!(
-                "{:?} pending attempt was bound to publication twice",
-                self.tag
-            )));
+            return;
         }
-        self.publication = Some(TransactionBatchPublication::from_receipts(
-            self.tag, receipts,
-        )?);
-        Ok(())
+        self.publication =
+            self.progress
+                .publication_route()
+                .map(|route| TransactionBatchPublication {
+                    tag: self.tag,
+                    route: route.clone(),
+                    request_id: self.progress.request_id(),
+                });
     }
 
     /// Publication identity, available after successful in-flight admission.
     ///
-    /// Collects the deferred receipt on first read -- the submission no longer
-    /// waits for it, so this is where it lands.
+    /// An explicit pre-response read waits for address-local admission only.
     #[must_use]
     pub fn publication(&mut self) -> Option<&TransactionBatchPublication> {
         self.resolve_publication();
@@ -272,10 +237,8 @@ where
         let Some(result) = self.completion.try_complete()? else {
             return Ok(None);
         };
-        // Same rule as `complete`: the receipt is collected only once a
-        // response exists, so `map_result`'s success arm can name the
-        // publication without the caller having waited for it up front.
-        self.resolve_publication();
+        // A completed response already has identity in its original entry.
+        self.capture_publication();
         Ok(Some(self.map_result(result)))
     }
 
@@ -285,14 +248,20 @@ where
         call: &UnaryCallContext,
     ) -> Result<Result<TransactionBatchResponse<R>, DirectUnaryClientError>, CompletionError> {
         let result = self.completion.complete(call)?;
-        // The receipt is collected HERE, after the response has landed, not
-        // before the wait starts. By now the worker sent it long ago, so this
-        // never parks -- which is the whole point: client-go's
-        // `sendBatchRequest` hands the entry off and then waits exactly ONCE,
-        // on the response (`internal/client/client_batch.go:1465`). Resolving
-        // it earlier reinstates the very round trip the deferral removed.
-        self.resolve_publication();
+        // No second acknowledgement follows the response on the success path.
+        self.capture_publication();
         Ok(self.map_result(result))
+    }
+
+    pub(crate) fn poll_complete(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<
+        Result<Result<TransactionBatchResponse<R>, DirectUnaryClientError>, CompletionError>,
+    > {
+        let result = std::task::ready!(self.completion.poll_complete(cx))?;
+        self.capture_publication();
+        std::task::Poll::Ready(Ok(self.map_result(result)))
     }
 
     /// Cancels this exact completion without creating a response.
@@ -328,18 +297,17 @@ impl TonicCoprocessorClient {
                 timeout_ms: 0,
             });
         }
-        // Hand off and wait once, as `sendBatchRequest` does: the receipt is
-        // retained unread, and the only wait that remains is `complete`'s.
-        let deferred =
-            match self.submit_batch_commands_deferred(physical_address, vec![entry], call) {
-                Ok(deferred) => deferred,
+        // Go sendBatchRequest waits on the response, not a publication ACK.
+        let barrier =
+            match self.submit_batch_commands_with_call(physical_address, vec![entry], call) {
+                Ok(barrier) => barrier,
                 Err(error) => {
                     pending.cancel();
                     return Err(error);
                 }
             };
-        pending.retain_deferred(deferred);
-        Ok(retain_published_pending(pending, call))
+        pending.retain_barrier(barrier);
+        Ok(pending)
     }
 
     /// Begins one transactional Get on an already selected TiKV route.
@@ -465,18 +433,6 @@ impl TonicCoprocessorClient {
     }
 }
 
-fn retain_published_pending<R>(
-    pending: TransactionBatchPending<R>,
-    _call: &UnaryCallContext,
-) -> TransactionBatchPending<R> {
-    // Publication is the irrevocable boundary. Cancellation after the receipt
-    // is bound must flow through `complete`, which cancels the physical attempt
-    // while leaving its identity available to transaction cleanup or
-    // undetermined-primary classification.
-    debug_assert!(pending.publication.is_some() || pending.deferred.is_some());
-    pending
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -485,11 +441,75 @@ mod tests {
 
     use super::*;
 
+    #[derive(Default)]
+    struct WakeCount(std::sync::atomic::AtomicUsize);
+
+    impl std::task::Wake for WakeCount {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
     #[test]
-    fn publication_requires_one_receipt_before_completion_can_escape() {
-        let error = TransactionBatchPublication::from_receipts(BatchCommandTag::Get, &[])
-            .expect_err("an admitted transaction command cannot lose its publication receipt");
-        assert!(matches!(error, DirectUnaryClientError::InvalidRequest(_)));
+    fn completed_transaction_uses_entry_publication() {
+        use crate::rpc::batch::{
+            BatchInflightTable, BatchScheduler, BatchWireResponse, PendingBatchCommand,
+        };
+        for poll_before_response in [false, true] {
+            let wake = Arc::new(WakeCount::default());
+            let waker = std::task::Waker::from(Arc::clone(&wake));
+            let mut cx = std::task::Context::from_waker(&waker);
+            let (entry, mut pending) = TransactionBatchPending::<KvrpcGetResponse>::entry(
+                BatchCommandTag::Get,
+                vec![],
+                Some("logical:20160"),
+            );
+            // There is no separate publication ACK: the original entry is enough.
+            let mut scheduler = BatchScheduler::new();
+            scheduler.push(entry);
+            let group = scheduler
+                .build_with_limit(1)
+                .into_parts()
+                .forwarded
+                .into_values()
+                .next()
+                .unwrap();
+            let scheduled = group.into_entries().pop().unwrap();
+            let request_id = scheduled.request_id();
+            let (_, request) = PendingBatchCommand::from_scheduled(scheduled);
+            let route = BatchRoute::forwarded("physical:20160", "logical:20160", 17);
+            let mut inflight = BatchInflightTable::new();
+            inflight.publish(route.clone(), vec![request]).unwrap();
+            if poll_before_response {
+                assert!(pending.poll_complete(&mut cx).is_pending());
+            }
+            let response = BatchWireResponse::new(
+                vec![OpaqueBatchCommand::new(
+                    BatchCommandTag::Get,
+                    KvrpcGetResponse::default().encode_to_vec(),
+                )],
+                vec![request_id],
+                0,
+                None,
+                0,
+            )
+            .unwrap();
+            assert_eq!(inflight.receive(&route, response).completed, 1);
+            let std::task::Poll::Ready(Ok(Ok(response))) = pending.poll_complete(&mut cx) else {
+                panic!("published response must be ready without another receipt");
+            };
+            assert_eq!(response.publication.route, route);
+            assert_eq!(response.publication.request_id, request_id);
+            assert_eq!(
+                wake.0.load(std::sync::atomic::Ordering::Relaxed),
+                usize::from(poll_before_response)
+            );
+            assert_eq!(
+                Arc::strong_count(&wake),
+                2,
+                "completed pull must release its task waker"
+            );
+        }
     }
 
     #[test]
@@ -508,11 +528,21 @@ mod tests {
         cancellation.cancel();
         let call = UnaryCallContext::new(Duration::from_secs(1), cancellation);
 
-        let mut pending = retain_published_pending(pending, &call);
+        let wake = Arc::new(WakeCount::default());
+        let waker = std::task::Waker::from(Arc::clone(&wake));
+        let mut cx = std::task::Context::from_waker(&waker);
+        assert!(pending.poll_complete(&mut cx).is_pending());
+        assert_eq!(pending.complete(&call), Err(CompletionError::Cancelled));
+        assert!(matches!(
+            pending.poll_complete(&mut cx),
+            std::task::Poll::Ready(Err(CompletionError::Cancelled))
+        ));
+        assert_eq!(wake.0.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(Arc::strong_count(&wake), 2);
 
         let publication = pending
             .publication()
-            .expect("published cancellation retains its receipt");
+            .expect("published cancellation retains its identity");
         assert_eq!(publication.request_id(), 11);
         assert_eq!(publication.batch_stream_generation(), 7);
     }

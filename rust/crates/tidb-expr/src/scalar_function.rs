@@ -242,7 +242,11 @@ pub struct ScalarFunction {
 /// integer class (`BIGINT` / `BIGINT UNSIGNED`, from the function's own
 /// declared result type) and the operand list rendered as Go's
 /// `StringWithCtx(errors.RedactLogDisable)` renders constants.
-fn arithmetic_overflow_error(function: &ScalarFunction, op: tidb_ast::BinaryOp) -> EvalError {
+fn arithmetic_overflow_error(
+    function: &ScalarFunction,
+    op: tidb_ast::BinaryOp,
+    ctx: &impl Columns,
+) -> EvalError {
     let symbol = match op {
         tidb_ast::BinaryOp::Plus => "+",
         tidb_ast::BinaryOp::Minus => "-",
@@ -257,9 +261,9 @@ fn arithmetic_overflow_error(function: &ScalarFunction, op: tidb_ast::BinaryOp) 
     // would print its qualified SQL name (`test.y.a`), which this layer does
     // not know, so a non-constant operand keeps the bare overflow error
     // rather than emitting a wrong message.
-    fn render(expression: &Expression) -> Option<String> {
+    fn render(expression: &Expression, ctx: &impl Columns) -> Option<String> {
         match expression {
-            Expression::Constant(constant) => match &constant.value {
+            Expression::Constant(constant) => match constant.eval_in(ctx).ok()? {
                 Datum::Int(value) => Some(value.to_string()),
                 Datum::UInt(value) => Some(value.to_string()),
                 Datum::Real(value) => {
@@ -274,7 +278,7 @@ fn arithmetic_overflow_error(function: &ScalarFunction, op: tidb_ast::BinaryOp) 
         }
     }
     let operands = match function.get_args() {
-        [left, right] => match (render(left), render(right)) {
+        [left, right] => match (render(left, ctx), render(right, ctx)) {
             (Some(left), Some(right)) => {
                 format!("({left} {symbol} {right})")
             }
@@ -568,7 +572,7 @@ impl ScalarFunction {
                 // `types.ErrOverflow.GenWithStackByArgs("BIGINT[ UNSIGNED]",
                 // "(arg OP arg)")` -- MySQL 1690 carries the OPERANDS, same as
                 // the generic entry below.
-                EvalError::IntOverflow => arithmetic_overflow_error(self, op),
+                EvalError::IntOverflow => arithmetic_overflow_error(self, op, ctx),
                 other => other,
             },
         )
@@ -644,7 +648,7 @@ impl ScalarFunction {
                     // overflow becomes the source-shaped message here, where
                     // the argument expressions are still at hand.
                     EvalError::IntOverflow => {
-                        arithmetic_overflow_error(self, op)
+                        arithmetic_overflow_error(self, op, ctx)
                     }
                     other => other,
                 });
@@ -913,33 +917,43 @@ impl ScalarFunction {
             }
             return Ok(Datum::new_string(output));
         }
-        // Go `builtinLikeSig`: both operands are stringified, NULL in either
-        // propagates, and the third argument is the escape byte.
+        // Go builtinLikeSig/builtinIlikeSig evaluate each argument in order
+        // and stop at NULL. The escape is EvalInt followed by byte(escape),
+        // not a range-checked conversion that substitutes a default.
         if (name == "like" || name == "ilike") && self.args.len() == 3 {
             let value = self.args[0].eval(ctx, row)?;
-            let pattern = self.args[1].eval(ctx, row)?;
-            if value.is_null() || pattern.is_null() {
+            if value.is_null() {
                 return Ok(Datum::Null);
             }
-            let escape = match self.args[2].eval(ctx, row)? {
-                Datum::Int(byte) => u8::try_from(byte).ok(),
-                _ => None,
-            };
             let text = value
                 .sql_bytes()
                 .map_err(|_| EvalError::Unsupported("invalid LIKE operand scalar domain"))?;
+            let pattern = self.args[1].eval(ctx, row)?;
+            if pattern.is_null() {
+                return Ok(Datum::Null);
+            }
             let pattern = pattern
                 .sql_bytes()
                 .map_err(|_| EvalError::Unsupported("invalid LIKE pattern scalar domain"))?;
+            let raw_escape = self.args[2].eval(ctx, row)?;
+            let int_escape = crate::cast::cast_arg_as_int(
+                &raw_escape,
+                self.args[2].static_type(),
+                ctx,
+            )?;
+            let Some(escape) = crate::arg_eval_type::eval_int(&int_escape)? else {
+                return Ok(Datum::Null);
+            };
+            let escape = escape as u8;
             let matched = if name == "ilike" {
                 crate::like::ilike_match_with_collation(
                     text,
                     pattern,
-                    escape.unwrap_or(b'\\'),
+                    escape,
                     self.derived_collation(),
                 )
             } else {
-                crate::like_match_with_collation(text, pattern, escape, self.derived_collation())
+                crate::like_match_with_collation(text, pattern, Some(escape), self.derived_collation())
             };
             return Ok(Datum::Int(i64::from(matched)));
         }
@@ -2181,7 +2195,7 @@ mod tests {
         let corr = plus(vec![Expression::CorrelatedColumn(
             crate::column::CorrelatedColumn {
                 column: Column::new(1, ft()),
-                data: None,
+                data: Default::default(),
             },
         )]);
         assert!(corr.is_correlated());

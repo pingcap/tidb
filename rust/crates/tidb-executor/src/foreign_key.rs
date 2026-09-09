@@ -180,17 +180,27 @@ fn referring(
     table: &str,
 ) -> Vec<(String, String, KvForeignKey)> {
     let mut found = Vec::new();
-    for (child_db, child_table) in catalog.table_paths() {
-        let (keys, _) = declared(catalog, &child_db, &child_table);
-        for foreign_key in keys {
+    for (child_db, child_table, entry) in catalog.table_entries() {
+        let TableEntry::Kv(child) = entry else {
+            continue;
+        };
+        for foreign_key in child.foreign_keys() {
             if foreign_key.ref_schema.eq_ignore_ascii_case(database)
                 && foreign_key.ref_table.eq_ignore_ascii_case(table)
             {
-                found.push((child_db.clone(), child_table.clone(), foreign_key));
+                found.push((child_db, child_table, foreign_key));
             }
         }
     }
+    // Preserve the existing schema/table cascade order and declaration order
+    // within each child. Only matching constraints need owned metadata: the
+    // cascade mutates the catalog after this borrow ends. Unrelated tables
+    // contribute no name, column, or constraint copies.
+    found.sort_by(|left, right| (left.0, left.1).cmp(&(right.0, right.1)));
     found
+        .into_iter()
+        .map(|(database, table, key)| (database.to_owned(), table.to_owned(), key.clone()))
+        .collect()
 }
 
 /// Resolves the REFERENCING columns' offsets in the child's own schema.
@@ -943,4 +953,169 @@ pub(crate) fn check_drop_tables(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+
+    fn add_key(catalog: &mut Catalog, database: &str, table: &str, name: &str) {
+        let Some(TableEntry::Kv(child)) = catalog.get_mut_in(database, table) else {
+            panic!("missing child {database}.{table}");
+        };
+        child.add_foreign_key(KvForeignKey {
+            name: name.to_owned(),
+            cols: vec!["pid".to_owned()],
+            ref_schema: "TeSt".to_owned(),
+            ref_table: "PaReNt".to_owned(),
+            ref_cols: vec!["id".to_owned()],
+            on_delete: FkAction::Cascade,
+            on_update: FkAction::Restrict,
+        });
+    }
+
+    fn fixture() -> Catalog {
+        let mut catalog = Catalog::default();
+        catalog.create_database("Alpha");
+        catalog.create_database("zeta");
+        for table in [
+            "test.parent", "test.child_b", "test.child_a", "Alpha.child", "zeta.child",
+        ] {
+            crate::run_create_table_on(
+                &format!("CREATE TABLE {table} (id INT PRIMARY KEY, pid INT)"),
+                &mut catalog,
+            )
+            .unwrap();
+        }
+        for (database, table, key) in [
+            ("test", "child_b", "fk_z"),
+            ("test", "child_b", "fk_a"),
+            ("test", "child_a", "fk_a"),
+            ("Alpha", "child", "fk_a"),
+            ("zeta", "child", "fk_a"),
+        ] {
+            add_key(&mut catalog, database, table, key);
+        }
+        catalog.register("memory_only", crate::driver::MemTable::default());
+        catalog
+    }
+
+    // The previous discovery algorithm is the compatibility oracle for
+    // ordering and the benchmark's owned-metadata reference, not production.
+    fn owned_reference(
+        catalog: &Catalog,
+        database: &str,
+        table: &str,
+    ) -> Vec<(String, String, KvForeignKey)> {
+        let mut paths: Vec<_> = catalog
+            .table_entries()
+            .map(|(db, name, _)| (db.to_owned(), name.to_owned()))
+            .collect();
+        paths.sort();
+        let mut found = Vec::new();
+        for (db, name) in paths {
+            let (keys, _) = declared(catalog, &db, &name);
+            for key in keys {
+                if key.ref_schema.eq_ignore_ascii_case(database)
+                    && key.ref_table.eq_ignore_ascii_case(table)
+                {
+                    found.push((db.clone(), name.clone(), key));
+                }
+            }
+        }
+        found
+    }
+
+    fn identities(keys: Vec<(String, String, KvForeignKey)>) -> Vec<(String, String, String)> {
+        keys.into_iter()
+            .map(|(db, table, key)| (db, table, key.name))
+            .collect()
+    }
+
+    #[test]
+    fn borrowed_discovery_preserves_case_matching_and_cascade_order() {
+        let catalog = fixture();
+        let actual = identities(referring(&catalog, "TEST", "PARENT"));
+        assert_eq!(
+            actual,
+            identities(owned_reference(&catalog, "TEST", "PARENT"))
+        );
+        assert_eq!(actual, vec![
+            ("Alpha".to_owned(), "child".to_owned(), "fk_a".to_owned()),
+            ("test".to_owned(), "child_a".to_owned(), "fk_a".to_owned()),
+            ("test".to_owned(), "child_b".to_owned(), "fk_z".to_owned()),
+            ("test".to_owned(), "child_b".to_owned(), "fk_a".to_owned()),
+            ("zeta".to_owned(), "child".to_owned(), "fk_a".to_owned()),
+        ]);
+        assert!(referring(&catalog, "missing", "parent").is_empty());
+        assert!(referring(&catalog, "test", "missing").is_empty());
+    }
+
+    #[test]
+    fn borrowed_discovery_observes_current_metadata_without_changing_snapshots() {
+        let mut catalog = fixture();
+        let snapshot = catalog.clone();
+        let original = identities(referring(&snapshot, "test", "parent"));
+        let Some(TableEntry::Kv(child)) = catalog.get_mut_in("test", "child_b") else {
+            panic!("missing child");
+        };
+        assert!(child.drop_foreign_key("fk_z"));
+        child.foreign_keys_mut()[0].ref_table = "other".to_owned();
+        add_key(&mut catalog, "test", "child_a", "new_key");
+        catalog.drop_table_in("zeta", "child");
+        assert_eq!(
+            identities(referring(&snapshot, "test", "parent")),
+            original
+        );
+        for parent in ["parent", "other"] {
+            assert_eq!(
+                identities(referring(&catalog, "test", parent)),
+                identities(owned_reference(&catalog, "test", parent))
+            );
+        }
+        assert_eq!(referring(&catalog, "test", "parent").len(), 3);
+        assert_eq!(referring(&catalog, "test", "other").len(), 1);
+    }
+
+    #[test]
+    #[ignore = "manual metadata-only timing; run without concurrent builds or workloads"]
+    fn benchmark_referring_metadata() {
+        let mut catalog = fixture();
+        let columns = (0..32)
+            .map(|i| format!("c{i} VARCHAR(32)"))
+            .collect::<Vec<_>>()
+            .join(",");
+        for i in 0..100 {
+            crate::run_create_table_on(
+                &format!("CREATE TABLE unrelated_{i} ({columns})"),
+                &mut catalog,
+            )
+            .unwrap();
+        }
+        for parent in ["parent", "missing"] {
+            for round in 0..6 {
+                let order = if round % 2 == 0 {
+                    [false, true]
+                } else {
+                    [true, false]
+                };
+                for borrowed in order {
+                    let start = std::time::Instant::now();
+                    for _ in 0..5000 {
+                        let keys = if borrowed {
+                            referring(std::hint::black_box(&catalog), "test", parent)
+                        } else {
+                            owned_reference(std::hint::black_box(&catalog), "test", parent)
+                        };
+                        assert_eq!(keys.len(), if parent == "parent" { 5 } else { 0 });
+                        std::hint::black_box(keys);
+                    }
+                    println!(
+                        "parent={parent} round={round} borrowed={borrowed} ns={}",
+                        start.elapsed().as_nanos()
+                    );
+                }
+            }
+        }
+    }
 }

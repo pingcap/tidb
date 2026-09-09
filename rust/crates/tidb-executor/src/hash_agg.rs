@@ -74,6 +74,7 @@
 
 use crate::agg_spill::AggSpillDiskAction;
 
+mod builder;
 mod parallel;
 mod spill;
 
@@ -920,6 +921,9 @@ pub(crate) fn append_group_key_part(
 ) {
     match datum.as_raw_bytes() {
         Some(bytes) => {
+            // Go encodeBytes(..., false) tags the compact payload; without
+            // this tag an empty string and NULL both encode as [0].
+            output.push(tidb_codec::COMPACT_BYTES_FLAG);
             encode_compact_bytes(output, &collation.key(bytes));
         }
         None => tidb_codec::Encoder::new(true).hash_code(output, datum),
@@ -944,6 +948,13 @@ fn append_integer_group_key_part(
         output.push(VARINT_FLAG);
         encode_varint(output, row.get_int64(index));
     }
+}
+
+/// Evaluation type alone does not describe chunk storage: BIT and hybrid
+/// ENUM/SET expressions may evaluate as integers but have variable-width cells.
+/// Go Column.EvalInt decodes those cells instead of using Row.GetInt64.
+fn has_integer_cells(field_type: &FieldType) -> bool {
+    field_type.eval_type() == EvalType::Int && tidb_chunk::column::get_fixed_len(field_type) == 8
 }
 
 pub(crate) fn group_key_part(collation: &tidb_datatype::Collation, datum: &Datum) -> Vec<u8> {
@@ -1928,6 +1939,8 @@ fn finish_agg_value<C: Columns>(
 /// StreamAgg; grouped input continues through [`HashAggExec`].
 pub struct StreamAggExec<C: Columns> {
     meta: ExecutorMeta,
+    /// Go builder's DefaultVal, absent for partial or FIRST_ROW-only plans.
+    emit_default_row: bool,
     agg_funcs: Vec<AggFunc>,
     child: Box<dyn Executor>,
     ctx: C,
@@ -1952,6 +1965,9 @@ impl<C: Columns> StreamAggExec<C> {
         let truncated = vec![false; agg_funcs.len()];
         Self {
             meta,
+            emit_default_row: !agg_funcs
+                .iter()
+                .all(|func| matches!(func.kind, AggKind::FirstRow)),
             agg_funcs,
             child,
             ctx,
@@ -1961,6 +1977,12 @@ impl<C: Columns> StreamAggExec<C> {
             emitted: false,
             child_returned_empty: true,
         }
+    }
+
+    /// Go's builder only installs DefaultVal for a final aggregation.
+    pub(crate) fn with_default_row(mut self, enabled: bool) -> Self {
+        self.emit_default_row = enabled;
+        self
     }
 
     fn update_row(
@@ -2019,7 +2041,7 @@ impl<C: Columns> Executor for StreamAggExec<C> {
             && match self.agg_funcs[0].arg.as_ref() {
                 None => true,
                 Some(Expression::Constant(constant)) => {
-                    matches!(constant.value, Datum::Int(1) | Datum::UInt(1))
+                    matches!(constant.literal_value(), Some(Datum::Int(1) | Datum::UInt(1)))
                 }
                 Some(_) => false,
             };
@@ -2052,6 +2074,10 @@ impl<C: Columns> Executor for StreamAggExec<C> {
                 }
                 self.child_chunk.reset();
             }
+        }
+        if self.child_returned_empty && !self.emit_default_row {
+            self.emitted = true;
+            return Ok(());
         }
         if self.agg_funcs.is_empty() {
             req.set_num_virtual_rows(1);
@@ -2293,6 +2319,8 @@ impl<C: Columns> Executor for GroupedStreamAggExec<C> {
 /// declaration every context must make (see [`hash_agg::parallel`]).
 pub struct HashAggExec<C: HashAggContext> {
     meta: ExecutorMeta,
+    /// Go builder's DefaultVal: only final, non-FIRST_ROW global aggregates.
+    emit_default_row: bool,
     group_by: Vec<Expression>,
     /// Present when every GROUP BY expression is a resolved integer column.
     /// Go's vectorized hash aggregation reads those typed chunk cells
@@ -2369,9 +2397,9 @@ pub struct HashAggExec<C: HashAggContext> {
     parallel_output_cursor: usize,
     parallel_output_active: bool,
     parallel_agg_windows: usize,
-    /// The parallel partial/final worker pipeline is engaged for this Open
-    /// (Go `parallelExecValid`). Decided once per Open; `execute` never
-    /// re-decides mid-run.
+    /// The partial/final state implementation is eligible for this Open
+    /// (Go `parallelExecValid`). Execution admits worker lanes only when
+    /// lookahead shows more than one input batch; completed inputs fold inline.
     pipeline_mode: bool,
     /// Resolved worker counts for the current Open (diagnostics).
     pipeline_partial_concurrency: usize,
@@ -2410,12 +2438,16 @@ impl<C: HashAggContext> HashAggExec<C> {
                 let column = expr.as_column()?;
                 let index = usize::try_from(column.index).ok()?;
                 let field_type = column.get_static_type()?;
-                (field_type.eval_type() == EvalType::Int)
+                has_integer_cells(field_type)
                     .then_some((index, field_type.is_unsigned()))
             })
             .collect::<Option<Vec<_>>>();
+        let emit_default_row = !agg_funcs
+            .iter()
+            .all(|func| matches!(func.kind, AggKind::FirstRow));
         HashAggExec {
             meta,
+            emit_default_row,
             group_by,
             integer_group_columns,
             agg_funcs,
@@ -2486,7 +2518,7 @@ impl<C: HashAggContext> HashAggExec<C> {
         let group_column = self.group_by[0].as_column()?;
         let group_index = usize::try_from(group_column.index).ok()?;
         let group_type = group_column.get_static_type()?;
-        if group_type.eval_type() != EvalType::Int {
+        if !has_integer_cells(group_type) {
             return None;
         }
         let mut specs = Vec::with_capacity(self.agg_funcs.len());
@@ -2508,7 +2540,7 @@ impl<C: HashAggContext> HashAggExec<C> {
                 AggKind::FinalCount => {
                     let expr = f.arg.as_ref()?.as_column()?;
                     let field_type = expr.get_static_type()?;
-                    if field_type.eval_type() != EvalType::Int {
+                    if !has_integer_cells(field_type) {
                         return None;
                     }
                     specs.push(ParallelIntAggSpec::FinalCount {
@@ -2519,7 +2551,7 @@ impl<C: HashAggContext> HashAggExec<C> {
                 AggKind::Avg => {
                     let count_expr = f.arg.as_ref()?.as_column()?;
                     let count_type = count_expr.get_static_type()?;
-                    if count_type.eval_type() != EvalType::Int || f.extra_args.len() != 1 {
+                    if !has_integer_cells(count_type) || f.extra_args.len() != 1 {
                         return None;
                     }
                     let sum_expr = f.extra_args[0].as_column()?;
@@ -2536,7 +2568,7 @@ impl<C: HashAggContext> HashAggExec<C> {
                 AggKind::FirstRow => {
                     let expr = f.arg.as_ref()?.as_column()?;
                     let field_type = expr.get_static_type()?;
-                    if field_type.eval_type() != EvalType::Int {
+                    if !has_integer_cells(field_type) {
                         return None;
                     }
                     specs.push(ParallelIntAggSpec::FirstRow {
@@ -2681,7 +2713,8 @@ impl<C: HashAggContext> HashAggExec<C> {
                     }
                     AggKind::FinalCount => {
                         let column = func.arg.as_ref()?.as_column()?;
-                        if column.get_static_type()?.is_unsigned() {
+                        let field_type = column.get_static_type()?;
+                        if !has_integer_cells(field_type) || field_type.is_unsigned() {
                             return None;
                         }
                         Some(DirectStringAgg::FinalCount(
@@ -2758,7 +2791,7 @@ impl<C: HashAggContext> HashAggExec<C> {
             AggKind::FinalCount => true,
             _ => return None,
         };
-        if final_count && count_type.eval_type() != EvalType::Int {
+        if final_count && !has_integer_cells(count_type) {
             return None;
         }
         let count_unsigned = count_type.is_unsigned();
@@ -2972,9 +3005,7 @@ impl<C: HashAggContext> HashAggExec<C> {
                 DirectStringAgg::Count(Some(index))
                 | DirectStringAgg::FinalCount(index)
                 | DirectStringAgg::Sum(index)
-                | DirectStringAgg::FirstRow { column: index, .. } => {
-                    Some(chunk.column(*index))
-                }
+                | DirectStringAgg::FirstRow { column: index, .. } => Some(chunk.column(*index)),
                 DirectStringAgg::Count(None) => None,
             })
             .collect::<Vec<_>>();
@@ -3368,15 +3399,20 @@ impl<C: HashAggContext> HashAggExec<C> {
         self.parallel_output_active = true;
     }
 
+    /// Go's builder only installs DefaultVal for a final aggregation.
+    pub(crate) fn with_default_row(mut self, enabled: bool) -> Self {
+        self.emit_default_row = enabled;
+        self
+    }
+
     /// Go's inner loop of `execute`: fold `chunk`'s rows into their groups,
     /// returning the bytes the group table grew by and the rows this round
     /// refused to open a group for (Go's `sel`).
     fn fold_chunk(&mut self, chunk: &Chunk, rows: usize) -> Result<Vec<usize>, ExecError> {
         if let Some((offset, collation)) = self.direct_string_group_column() {
             if let Some(specs) = self.direct_string_aggregate_specs() {
-                return self.fold_direct_string_group_columnar(
-                    chunk, rows, offset, collation, &specs,
-                );
+                return self
+                    .fold_direct_string_group_columnar(chunk, rows, offset, collation, &specs);
             }
             return self.fold_direct_string_group(chunk, rows, offset, collation);
         }
@@ -3660,10 +3696,6 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
         self.parallel_output_active = false;
         self.parallel_agg_windows = 0;
         self.pipeline_mode = false;
-        #[cfg(test)]
-        {
-            self.pipeline_concurrency_override = None;
-        }
         self.pipeline_stats = None;
         self.in_spill_mode.store(false, SeqCst);
         // Go `HashAggExec.Open` -> `e.memTracker.Reset()`: an aggregation
@@ -3763,7 +3795,8 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
             // cardinality directly. This is the same shortcut as Go's
             // aggregate executor and lets a derived join answer COUNT
             // without materializing its joined rows.
-            if self.group_by.is_empty()
+            if self.emit_default_row
+                && self.group_by.is_empty()
                 && self.agg_funcs.len() == 1
                 && matches!(self.agg_funcs[0].kind, AggKind::Count)
                 && !self.agg_funcs[0].distinct
@@ -3773,7 +3806,7 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
                 let counts_all_rows = match self.agg_funcs[0].arg.as_ref() {
                     None => true,
                     Some(Expression::Constant(constant)) => {
-                        matches!(constant.value, Datum::Int(1) | Datum::UInt(1))
+                        matches!(constant.literal_value(), Some(Datum::Int(1) | Datum::UInt(1)))
                     }
                     Some(_) => false,
                 };
@@ -3792,7 +3825,11 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
                     }
                 }
             }
-            if let Some((offset, collation)) = self.direct_global_count_distinct_column() {
+            if let Some((offset, collation)) = self
+                .emit_default_row
+                .then(|| self.direct_global_count_distinct_column())
+                .flatten()
+            {
                 self.execute_direct_global_count_distinct(offset, collation)?;
                 continue;
             }
@@ -3800,7 +3837,11 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
             // No group-by and no data: one empty group, so a global COUNT is 0.
             // (The pipeline synthesizes its own defaults row; its output is
             // already staged in `parallel_output`.)
-            if self.group_count == 0 && self.group_by.is_empty() && !self.pipeline_mode {
+            if self.group_count == 0
+                && self.emit_default_row
+                && self.group_by.is_empty()
+                && !self.pipeline_mode
+            {
                 self.ordered
                     .extend(self.agg_funcs.iter().map(AggState::new));
                 self.group_count = 1;

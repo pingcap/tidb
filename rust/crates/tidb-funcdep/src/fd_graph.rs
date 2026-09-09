@@ -42,6 +42,7 @@
 //! resulting edge list, so the shrinking rules are behavior.
 
 use super::ColSet;
+mod projection;
 
 /// One dependency edge. `strict`/`equiv` together name the four kinds
 /// described in the module doc.
@@ -139,7 +140,13 @@ pub struct FdSet {
     conditional_edges: Vec<ConditionalFd>,
     /// Go `FDSet.NotNullCols`: the columns known never to be NULL, kept so a
     /// lax edge added LATER can still be promoted.
-    not_null_cols: ColSet,
+    pub not_null_cols: ColSet,
+    /// Go HashCodeToUniqueID: statement-local identities for scalar expressions.
+    pub hash_code_to_unique_id: std::collections::HashMap<Vec<u8>, i64>,
+    /// Go GroupByCols, retained through the projection above an aggregation.
+    pub group_by_cols: ColSet,
+    /// Go HasAggBuilt.
+    pub has_agg_built: bool,
 }
 
 /// The three source decisions consumed by Go `FDSet.MakeOuterJoin`.
@@ -401,6 +408,13 @@ impl FdSet {
         self.add_equivalence_closure(from.union(&to));
     }
 
+    /// Go AddEquivalenceUnion, including a class already expressed as a union.
+    pub fn add_equivalence_union(&mut self, columns: ColSet) {
+        if columns.len() > 1 {
+            self.add_equivalence_closure(columns);
+        }
+    }
+
     /// Go `FDSet.AddConstants`: every listed column holds one value for all
     /// rows, which propagates through the strict closure and then simplifies
     /// the determinant of every strict edge and the dependency side of every
@@ -536,7 +550,6 @@ impl FdSet {
         }
         self.conditional_edges
             .extend(rhs.conditional_edges.iter().cloned());
-        self.not_null_cols.union_with(&rhs.not_null_cols);
     }
 
     /// Every column named by an ordinary edge. This mirrors Go `AllCols`;
@@ -706,6 +719,10 @@ impl FdSet {
 
         self.not_null_cols.union_with(&filter.not_null_cols);
         self.not_null_cols.difference_with(inner_cols);
+        self.hash_code_to_unique_id
+            .extend(inner.hash_code_to_unique_id.clone());
+        self.group_by_cols.union_with(&inner.group_by_cols);
+        self.has_agg_built |= inner.has_agg_built;
     }
 }
 

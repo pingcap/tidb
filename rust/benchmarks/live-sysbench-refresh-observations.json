@@ -1,0 +1,932 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-09",
+  "status": "WIP diagnosis; no Rust production change or accepted performance win in this increment",
+  "git_head": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "branch": "hparser-integration",
+  "artifacts": "/private/tmp/tidb-live-workload.nIrZBe",
+  "binaries": {
+    "rust_sha256": "8969985b8dd5afaebc949db4ba4393f9ff0e555f06d4e6d25e3d4da1149679a7",
+    "go_revision": "23bff313186b8ceb61fcbe9faac43ae700e7fb14",
+    "go_client_module": "v2.0.8-0.20260724023932-61ecd7c11416",
+    "checkout_client_module": "v2.0.8-0.20260708122311-01bd8f99f4da",
+    "client_source_comparison": "The two installed conn_batch.go files are identical by diff; the Go binary is not built from the checkout HEAD."
+  },
+  "fixture": {
+    "database": "perf_sysbench",
+    "table": "sbtest1",
+    "rows": 100000,
+    "sum_id": 5019587284,
+    "sum_k": 5007845749,
+    "seed": 1,
+    "created_only_in_new_owned_cluster": true,
+    "measured_workloads": "read-only; both SQL engines use the same TiKV data"
+  },
+  "parity": {
+    "queries": 6,
+    "output_lines": 307,
+    "sha256": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "coverage": "Point values, ordered range, SUM, sorted range, DISTINCT, full-table count/sums. Identical text output; not exhaustive binary metadata or package parity.",
+    "settings": {
+      "prepared_plan_cache": 1,
+      "init_chunk_size": 32,
+      "max_chunk_size": 1024,
+      "distsql_scan_concurrency": 15,
+      "tls_cipher": "TLS_AES_128_GCM_SHA256"
+    }
+  },
+  "throughput": [
+    {
+      "configuration": {
+        "server": [
+          [
+            "go",
+            57110
+          ],
+          [
+            "rust",
+            57112
+          ]
+        ],
+        "database": "perf_sysbench",
+        "workload": [
+          "oltp_read_only"
+        ],
+        "host": "127.0.0.1",
+        "user": "root",
+        "threads": 1,
+        "seconds": 15,
+        "rounds": 3,
+        "table_size": 100000,
+        "tables": 1,
+        "ps_mode": "auto",
+        "output": "/private/tmp/tidb-live-workload.nIrZBe/one-client"
+      },
+      "samples": [
+        {
+          "transactions": 6982,
+          "queries": 111712,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 15.0023,
+          "tps": 465.39530605307186,
+          "qps": 7446.32489684915,
+          "server": "go",
+          "workload": "oltp_read_only",
+          "round": 0,
+          "log": "/private/tmp/tidb-live-workload.nIrZBe/one-client/w0-r0-go.log"
+        },
+        {
+          "transactions": 7085,
+          "queries": 113360,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 15.0028,
+          "tps": 472.2451808995654,
+          "qps": 7555.922894393047,
+          "server": "rust",
+          "workload": "oltp_read_only",
+          "round": 0,
+          "log": "/private/tmp/tidb-live-workload.nIrZBe/one-client/w0-r0-rust.log"
+        },
+        {
+          "transactions": 7196,
+          "queries": 115136,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 15.0029,
+          "tps": 479.64060281678877,
+          "qps": 7674.24964506862,
+          "server": "rust",
+          "workload": "oltp_read_only",
+          "round": 1,
+          "log": "/private/tmp/tidb-live-workload.nIrZBe/one-client/w0-r1-rust.log"
+        },
+        {
+          "transactions": 7179,
+          "queries": 114864,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 15.002,
+          "tps": 478.5361951739768,
+          "qps": 7656.579122783629,
+          "server": "go",
+          "workload": "oltp_read_only",
+          "round": 1,
+          "log": "/private/tmp/tidb-live-workload.nIrZBe/one-client/w0-r1-go.log"
+        },
+        {
+          "transactions": 7163,
+          "queries": 114608,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 15.0015,
+          "tps": 477.48558477485585,
+          "qps": 7639.769356397694,
+          "server": "go",
+          "workload": "oltp_read_only",
+          "round": 2,
+          "log": "/private/tmp/tidb-live-workload.nIrZBe/one-client/w0-r2-go.log"
+        },
+        {
+          "transactions": 7122,
+          "queries": 113952,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 15.0018,
+          "tps": 474.7430308362997,
+          "qps": 7595.888493380795,
+          "server": "rust",
+          "workload": "oltp_read_only",
+          "round": 2,
+          "log": "/private/tmp/tidb-live-workload.nIrZBe/one-client/w0-r2-rust.log"
+        }
+      ],
+      "summary": [
+        {
+          "server": "go",
+          "workload": "oltp_read_only",
+          "median_tps": 477.48558477485585,
+          "min_tps": 465.39530605307186,
+          "max_tps": 478.5361951739768,
+          "samples": 3
+        },
+        {
+          "server": "rust",
+          "workload": "oltp_read_only",
+          "median_tps": 474.7430308362997,
+          "min_tps": 472.2451808995654,
+          "max_tps": 479.64060281678877,
+          "samples": 3
+        }
+      ]
+    },
+    {
+      "configuration": {
+        "server": [
+          [
+            "go",
+            57110
+          ],
+          [
+            "rust",
+            57112
+          ]
+        ],
+        "database": "perf_sysbench",
+        "workload": [
+          "oltp_read_only"
+        ],
+        "host": "127.0.0.1",
+        "user": "root",
+        "threads": 8,
+        "seconds": 15,
+        "rounds": 3,
+        "table_size": 100000,
+        "tables": 1,
+        "ps_mode": "auto",
+        "output": "/private/tmp/tidb-live-workload.nIrZBe/eight-client"
+      },
+      "samples": [
+        {
+          "transactions": 32648,
+          "queries": 522368,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 15.0071,
+          "tps": 2175.50359496505,
+          "qps": 34808.0575194408,
+          "server": "go",
+          "workload": "oltp_read_only",
+          "round": 0,
+          "log": "/private/tmp/tidb-live-workload.nIrZBe/eight-client/w0-r0-go.log"
+        },
+        {
+          "transactions": 30187,
+          "queries": 482992,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 15.0062,
+          "tps": 2011.6351907878077,
+          "qps": 32186.163052604923,
+          "server": "rust",
+          "workload": "oltp_read_only",
+          "round": 0,
+          "log": "/private/tmp/tidb-live-workload.nIrZBe/eight-client/w0-r0-rust.log"
+        },
+        {
+          "transactions": 31086,
+          "queries": 497376,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 15.0055,
+          "tps": 2071.6403985205425,
+          "qps": 33146.24637632868,
+          "server": "rust",
+          "workload": "oltp_read_only",
+          "round": 1,
+          "log": "/private/tmp/tidb-live-workload.nIrZBe/eight-client/w0-r1-rust.log"
+        },
+        {
+          "transactions": 30504,
+          "queries": 488064,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 15.0048,
+          "tps": 2032.9494561740244,
+          "qps": 32527.19129878439,
+          "server": "go",
+          "workload": "oltp_read_only",
+          "round": 1,
+          "log": "/private/tmp/tidb-live-workload.nIrZBe/eight-client/w0-r1-go.log"
+        },
+        {
+          "transactions": 30466,
+          "queries": 487456,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 15.0061,
+          "tps": 2030.2410353123064,
+          "qps": 32483.856564996902,
+          "server": "go",
+          "workload": "oltp_read_only",
+          "round": 2,
+          "log": "/private/tmp/tidb-live-workload.nIrZBe/eight-client/w0-r2-go.log"
+        },
+        {
+          "transactions": 31116,
+          "queries": 497856,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 15.0078,
+          "tps": 2073.3218726262344,
+          "qps": 33173.14996201975,
+          "server": "rust",
+          "workload": "oltp_read_only",
+          "round": 2,
+          "log": "/private/tmp/tidb-live-workload.nIrZBe/eight-client/w0-r2-rust.log"
+        }
+      ],
+      "summary": [
+        {
+          "server": "go",
+          "workload": "oltp_read_only",
+          "median_tps": 2032.9494561740244,
+          "min_tps": 2030.2410353123064,
+          "max_tps": 2175.50359496505,
+          "samples": 3
+        },
+        {
+          "server": "rust",
+          "workload": "oltp_read_only",
+          "median_tps": 2071.6403985205425,
+          "min_tps": 2011.6351907878077,
+          "max_tps": 2073.3218726262344,
+          "samples": 3
+        }
+      ]
+    }
+  ],
+  "fixed_work_cpu": [
+    {
+      "name": "go",
+      "threads": 1,
+      "round": 0,
+      "transactions": 6000,
+      "seconds": 14.3704,
+      "tps": 417.5249123197684,
+      "sql_cpu_seconds": 13.669999999999959,
+      "tikv_cpu_seconds": 8.580000000000041,
+      "command": [
+        "sysbench",
+        "oltp_read_only",
+        "--db-driver=mysql",
+        "--mysql-ssl=off",
+        "--mysql-host=127.0.0.1",
+        "--mysql-port=57110",
+        "--mysql-user=root",
+        "--mysql-db=perf_sysbench",
+        "--threads=1",
+        "--events=6000",
+        "--time=0",
+        "--table-size=100000",
+        "--tables=1",
+        "--db-ps-mode=auto",
+        "--rand-seed=1",
+        "run"
+      ],
+      "log": "/private/tmp/tidb-live-workload.nIrZBe/fixed-1-0-go.log"
+    },
+    {
+      "name": "rust",
+      "threads": 1,
+      "round": 1,
+      "transactions": 6000,
+      "seconds": 13.8695,
+      "tps": 432.60391506543135,
+      "sql_cpu_seconds": 7.6200000000000045,
+      "tikv_cpu_seconds": 7.439999999999941,
+      "command": [
+        "sysbench",
+        "oltp_read_only",
+        "--db-driver=mysql",
+        "--mysql-ssl=off",
+        "--mysql-host=127.0.0.1",
+        "--mysql-port=57112",
+        "--mysql-user=root",
+        "--mysql-db=perf_sysbench",
+        "--threads=1",
+        "--events=6000",
+        "--time=0",
+        "--table-size=100000",
+        "--tables=1",
+        "--db-ps-mode=auto",
+        "--rand-seed=1",
+        "run"
+      ],
+      "log": "/private/tmp/tidb-live-workload.nIrZBe/fixed-1-1-rust.log"
+    },
+    {
+      "name": "rust",
+      "threads": 1,
+      "round": 2,
+      "transactions": 6000,
+      "seconds": 13.5576,
+      "tps": 442.556204637989,
+      "sql_cpu_seconds": 7.439999999999998,
+      "tikv_cpu_seconds": 7.279999999999973,
+      "command": [
+        "sysbench",
+        "oltp_read_only",
+        "--db-driver=mysql",
+        "--mysql-ssl=off",
+        "--mysql-host=127.0.0.1",
+        "--mysql-port=57112",
+        "--mysql-user=root",
+        "--mysql-db=perf_sysbench",
+        "--threads=1",
+        "--events=6000",
+        "--time=0",
+        "--table-size=100000",
+        "--tables=1",
+        "--db-ps-mode=auto",
+        "--rand-seed=1",
+        "run"
+      ],
+      "log": "/private/tmp/tidb-live-workload.nIrZBe/fixed-1-2-rust.log"
+    },
+    {
+      "name": "go",
+      "threads": 1,
+      "round": 3,
+      "transactions": 6000,
+      "seconds": 14.1544,
+      "tps": 423.8964562256259,
+      "sql_cpu_seconds": 13.439999999999998,
+      "tikv_cpu_seconds": 8.480000000000018,
+      "command": [
+        "sysbench",
+        "oltp_read_only",
+        "--db-driver=mysql",
+        "--mysql-ssl=off",
+        "--mysql-host=127.0.0.1",
+        "--mysql-port=57110",
+        "--mysql-user=root",
+        "--mysql-db=perf_sysbench",
+        "--threads=1",
+        "--events=6000",
+        "--time=0",
+        "--table-size=100000",
+        "--tables=1",
+        "--db-ps-mode=auto",
+        "--rand-seed=1",
+        "run"
+      ],
+      "log": "/private/tmp/tidb-live-workload.nIrZBe/fixed-1-3-go.log"
+    },
+    {
+      "name": "go",
+      "threads": 8,
+      "round": 0,
+      "transactions": 6000,
+      "seconds": 3.0438,
+      "tps": 1971.2201852946973,
+      "sql_cpu_seconds": 13.529999999999973,
+      "tikv_cpu_seconds": 12.230000000000018,
+      "command": [
+        "sysbench",
+        "oltp_read_only",
+        "--db-driver=mysql",
+        "--mysql-ssl=off",
+        "--mysql-host=127.0.0.1",
+        "--mysql-port=57110",
+        "--mysql-user=root",
+        "--mysql-db=perf_sysbench",
+        "--threads=8",
+        "--events=6000",
+        "--time=0",
+        "--table-size=100000",
+        "--tables=1",
+        "--db-ps-mode=auto",
+        "--rand-seed=1",
+        "run"
+      ],
+      "log": "/private/tmp/tidb-live-workload.nIrZBe/fixed-8-0-go.log"
+    },
+    {
+      "name": "rust",
+      "threads": 8,
+      "round": 1,
+      "transactions": 6000,
+      "seconds": 3.0288,
+      "tps": 1980.9825673534074,
+      "sql_cpu_seconds": 12.979999999999961,
+      "tikv_cpu_seconds": 12.920000000000073,
+      "command": [
+        "sysbench",
+        "oltp_read_only",
+        "--db-driver=mysql",
+        "--mysql-ssl=off",
+        "--mysql-host=127.0.0.1",
+        "--mysql-port=57112",
+        "--mysql-user=root",
+        "--mysql-db=perf_sysbench",
+        "--threads=8",
+        "--events=6000",
+        "--time=0",
+        "--table-size=100000",
+        "--tables=1",
+        "--db-ps-mode=auto",
+        "--rand-seed=1",
+        "run"
+      ],
+      "log": "/private/tmp/tidb-live-workload.nIrZBe/fixed-8-1-rust.log"
+    },
+    {
+      "name": "rust",
+      "threads": 8,
+      "round": 2,
+      "transactions": 6000,
+      "seconds": 3.0144,
+      "tps": 1990.4458598726114,
+      "sql_cpu_seconds": 13,
+      "tikv_cpu_seconds": 12.889999999999986,
+      "command": [
+        "sysbench",
+        "oltp_read_only",
+        "--db-driver=mysql",
+        "--mysql-ssl=off",
+        "--mysql-host=127.0.0.1",
+        "--mysql-port=57112",
+        "--mysql-user=root",
+        "--mysql-db=perf_sysbench",
+        "--threads=8",
+        "--events=6000",
+        "--time=0",
+        "--table-size=100000",
+        "--tables=1",
+        "--db-ps-mode=auto",
+        "--rand-seed=1",
+        "run"
+      ],
+      "log": "/private/tmp/tidb-live-workload.nIrZBe/fixed-8-2-rust.log"
+    },
+    {
+      "name": "go",
+      "threads": 8,
+      "round": 3,
+      "transactions": 6000,
+      "seconds": 3.0741,
+      "tps": 1951.790768029667,
+      "sql_cpu_seconds": 13.639999999999986,
+      "tikv_cpu_seconds": 12.409999999999968,
+      "command": [
+        "sysbench",
+        "oltp_read_only",
+        "--db-driver=mysql",
+        "--mysql-ssl=off",
+        "--mysql-host=127.0.0.1",
+        "--mysql-port=57110",
+        "--mysql-user=root",
+        "--mysql-db=perf_sysbench",
+        "--threads=8",
+        "--events=6000",
+        "--time=0",
+        "--table-size=100000",
+        "--tables=1",
+        "--db-ps-mode=auto",
+        "--rand-seed=1",
+        "run"
+      ],
+      "log": "/private/tmp/tidb-live-workload.nIrZBe/fixed-8-3-go.log"
+    }
+  ],
+  "batch_size_control": [
+    {
+      "server": "go",
+      "round": 0,
+      "transactions": 30000,
+      "command": [
+        "sysbench",
+        "oltp_read_only",
+        "--db-driver=mysql",
+        "--mysql-ssl=off",
+        "--mysql-host=127.0.0.1",
+        "--mysql-port=57110",
+        "--mysql-user=root",
+        "--mysql-db=perf_sysbench",
+        "--threads=8",
+        "--events=30000",
+        "--time=0",
+        "--table-size=100000",
+        "--tables=1",
+        "--db-ps-mode=auto",
+        "--rand-seed=1",
+        "run"
+      ],
+      "counters": {
+        "tikv_server_grpc_req_batch_size_bucket{le=\"1\"}": 58512,
+        "tikv_server_grpc_req_batch_size_sum": 566962,
+        "tikv_server_grpc_req_batch_size_count": 268243,
+        "tikv_server_grpc_resp_batch_size_sum": 566962,
+        "tikv_server_grpc_resp_batch_size_count": 437925
+      },
+      "request_batch_mean": 2.113613402772859,
+      "singleton_fraction": 0.21813057563477892
+    },
+    {
+      "server": "rust",
+      "round": 1,
+      "transactions": 30000,
+      "command": [
+        "sysbench",
+        "oltp_read_only",
+        "--db-driver=mysql",
+        "--mysql-ssl=off",
+        "--mysql-host=127.0.0.1",
+        "--mysql-port=57112",
+        "--mysql-user=root",
+        "--mysql-db=perf_sysbench",
+        "--threads=8",
+        "--events=30000",
+        "--time=0",
+        "--table-size=100000",
+        "--tables=1",
+        "--db-ps-mode=auto",
+        "--rand-seed=1",
+        "run"
+      ],
+      "counters": {
+        "tikv_server_grpc_req_batch_size_bucket{le=\"1\"}": 238955,
+        "tikv_server_grpc_req_batch_size_sum": 567993,
+        "tikv_server_grpc_req_batch_size_count": 369522,
+        "tikv_server_grpc_resp_batch_size_sum": 567993,
+        "tikv_server_grpc_resp_batch_size_count": 471100
+      },
+      "request_batch_mean": 1.5371019858086934,
+      "singleton_fraction": 0.64665973879769
+    },
+    {
+      "server": "rust",
+      "round": 2,
+      "transactions": 30000,
+      "command": [
+        "sysbench",
+        "oltp_read_only",
+        "--db-driver=mysql",
+        "--mysql-ssl=off",
+        "--mysql-host=127.0.0.1",
+        "--mysql-port=57112",
+        "--mysql-user=root",
+        "--mysql-db=perf_sysbench",
+        "--threads=8",
+        "--events=30000",
+        "--time=0",
+        "--table-size=100000",
+        "--tables=1",
+        "--db-ps-mode=auto",
+        "--rand-seed=1",
+        "run"
+      ],
+      "counters": {
+        "tikv_server_grpc_req_batch_size_bucket{le=\"1\"}": 239261,
+        "tikv_server_grpc_req_batch_size_sum": 567983,
+        "tikv_server_grpc_req_batch_size_count": 369817,
+        "tikv_server_grpc_resp_batch_size_sum": 567983,
+        "tikv_server_grpc_resp_batch_size_count": 471285
+      },
+      "request_batch_mean": 1.5358488117095752,
+      "singleton_fraction": 0.6469713398789131
+    },
+    {
+      "server": "go",
+      "round": 3,
+      "transactions": 30000,
+      "command": [
+        "sysbench",
+        "oltp_read_only",
+        "--db-driver=mysql",
+        "--mysql-ssl=off",
+        "--mysql-host=127.0.0.1",
+        "--mysql-port=57110",
+        "--mysql-user=root",
+        "--mysql-db=perf_sysbench",
+        "--threads=8",
+        "--events=30000",
+        "--time=0",
+        "--table-size=100000",
+        "--tables=1",
+        "--db-ps-mode=auto",
+        "--rand-seed=1",
+        "run"
+      ],
+      "counters": {
+        "tikv_server_grpc_req_batch_size_bucket{le=\"1\"}": 58211,
+        "tikv_server_grpc_req_batch_size_sum": 566995,
+        "tikv_server_grpc_req_batch_size_count": 267824,
+        "tikv_server_grpc_resp_batch_size_sum": 566995,
+        "tikv_server_grpc_resp_batch_size_count": 437525
+      },
+      "request_batch_mean": 2.1170432821554455,
+      "singleton_fraction": 0.21734795985423264
+    }
+  ],
+  "go_policy_control": {
+    "samples": [
+      {
+        "policy": "standard",
+        "round": 0,
+        "transactions": 30000,
+        "seconds": 15.0746,
+        "tps": 1990.1025566184178,
+        "sql_cpu_seconds": 67.13,
+        "counters": {
+          "tikv_server_grpc_req_batch_size_bucket{le=\"1\"}": 56735,
+          "tikv_server_grpc_req_batch_size_sum": 567129,
+          "tikv_server_grpc_req_batch_size_count": 268000
+        },
+        "request_batch_mean": 2.116152985074627,
+        "singleton_fraction": 0.21169776119402986
+      },
+      {
+        "policy": "basic",
+        "round": 1,
+        "transactions": 30000,
+        "seconds": 15.51,
+        "tps": 1934.2359767891683,
+        "sql_cpu_seconds": 72.19999999999999,
+        "counters": {
+          "tikv_server_grpc_req_batch_size_bucket{le=\"1\"}": 477428,
+          "tikv_server_grpc_req_batch_size_sum": 567140,
+          "tikv_server_grpc_req_batch_size_count": 512363
+        },
+        "request_batch_mean": 1.1069105302295443,
+        "singleton_fraction": 0.9318159195726468
+      },
+      {
+        "policy": "basic",
+        "round": 2,
+        "transactions": 30000,
+        "seconds": 15.4616,
+        "tps": 1940.2907849122987,
+        "sql_cpu_seconds": 72.32,
+        "counters": {
+          "tikv_server_grpc_req_batch_size_bucket{le=\"1\"}": 477576,
+          "tikv_server_grpc_req_batch_size_sum": 567147,
+          "tikv_server_grpc_req_batch_size_count": 512584
+        },
+        "request_batch_mean": 1.106446943330264,
+        "singleton_fraction": 0.9317029013781156
+      },
+      {
+        "policy": "standard",
+        "round": 3,
+        "transactions": 30000,
+        "seconds": 15.2686,
+        "tps": 1964.816682603513,
+        "sql_cpu_seconds": 67.76999999999998,
+        "counters": {
+          "tikv_server_grpc_req_batch_size_bucket{le=\"1\"}": 64148,
+          "tikv_server_grpc_req_batch_size_sum": 567124,
+          "tikv_server_grpc_req_batch_size_count": 272639
+        },
+        "request_batch_mean": 2.0801279347415447,
+        "singleton_fraction": 0.23528548740275604
+      }
+    ],
+    "two_sample_medians": {
+      "standard": {
+        "tps": 1977.4596196109655,
+        "sql_cpu_seconds": 67.44999999999999,
+        "request_batch_mean": 2.0981404599080857,
+        "singleton_fraction": 0.22349162429839295
+      },
+      "basic": {
+        "tps": 1937.2633808507335,
+        "sql_cpu_seconds": 72.25999999999999,
+        "request_batch_mean": 1.1066787367799042,
+        "singleton_fraction": 0.9317594104753812
+      }
+    },
+    "interpretation": "Same Go binary, shared fixture, eight clients, 3000-event warmup followed by 30000 events, standard/basic/basic/standard. Standard has 2.07% higher median TPS and 6.66% lower SQL CPU than basic. This isolates a supported Go policy configuration, not a Rust optimization. Separate endpoint identity and non-quiescent desktop remain limitations."
+  },
+  "profiles": {
+    "rust": {
+      "path": "/private/tmp/tidb-live-workload.nIrZBe/rust-sample-final.txt",
+      "inclusive_nonrecursive": {
+        "general_execute": 46381,
+        "select_driver": 19540,
+        "access_commit": 764,
+        "datasource_statistics": 412,
+        "rewrite": 158,
+        "result_write": 62,
+        "catalog_copy": 1,
+        "point_execute": 24951,
+        "socket_options": 145,
+        "sysvar_lookup": 178,
+        "cop_scan": 0
+      },
+      "top_self": [
+        [
+          "semaphore_wait_trap",
+          381512
+        ],
+        [
+          "__psynch_cvwait",
+          83052
+        ],
+        [
+          "kevent",
+          54495
+        ],
+        [
+          "__semwait_signal",
+          48094
+        ],
+        [
+          "semaphore_timedwait_trap",
+          18645
+        ],
+        [
+          "__recvfrom",
+          13259
+        ],
+        [
+          "swtch_pri",
+          1921
+        ],
+        [
+          "writev",
+          1654
+        ],
+        [
+          "semaphore_signal_trap",
+          1499
+        ],
+        [
+          "_platform_memmove",
+          1007
+        ],
+        [
+          "mach_absolute_time",
+          752
+        ],
+        [
+          "__psynch_cvsignal",
+          730
+        ],
+        [
+          "_rjem_malloc",
+          550
+        ],
+        [
+          "_rjem_sdallocx.cold.1",
+          373
+        ],
+        [
+          "__psynch_mutexwait",
+          320
+        ],
+        [
+          "_RNvMsa_NtCshUOpSQjOPNG_17crossbeam_channel7channelINtB5_8ReceiverNtNtCsftR0iWavVJf_9tidb_exec21cluster_table_storage18TransactionRequestE4recvCs5shZUXI7gMO_11tidb_server",
+          264
+        ],
+        [
+          "pthread_mutex_unlock",
+          225
+        ],
+        [
+          "pthread_mutex_lock",
+          207
+        ],
+        [
+          "<deduplicated_symbol>",
+          191
+        ],
+        [
+          "_rjem_sdallocx",
+          169
+        ],
+        [
+          "_RNvNtCs86qUWZMTMg2_12tidb_session6sysvar20sys_var_index_lookup",
+          150
+        ],
+        [
+          "_rjem_je_arena_ptr_array_flush",
+          149
+        ],
+        [
+          "setsockopt",
+          145
+        ],
+        [
+          "_RNvNtNtCs8T9RoTQYmkB_4core3str8converts9from_utf8",
+          142
+        ],
+        [
+          "pthread_getspecific",
+          139
+        ],
+        [
+          "OUTLINED_FUNCTION_13",
+          127
+        ],
+        [
+          "pthread_mutexattr_settype",
+          124
+        ],
+        [
+          "OUTLINED_FUNCTION_8",
+          120
+        ],
+        [
+          "DYLD-STUB$$pthread_getspecific",
+          105
+        ],
+        [
+          "OUTLINED_FUNCTION_7",
+          104
+        ],
+        [
+          "_RNvXsZ_NtCs3f1x69wEOVy_5alloc6stringNtB5_6StringNtNtCs8T9RoTQYmkB_4core3fmt5Write9write_str",
+          99
+        ],
+        [
+          "OUTLINED_FUNCTION_23",
+          97
+        ],
+        [
+          "pthread_mutex_init",
+          84
+        ],
+        [
+          "OUTLINED_FUNCTION_12",
+          83
+        ],
+        [
+          "_platform_memcmp",
+          83
+        ]
+      ],
+      "interpretation": "All-thread sample counts include waiting and blocked states, not CPU time. Inclusive categories overlap; frame labels remain mangled."
+    },
+    "go": {
+      "path": "/private/tmp/tidb-live-workload.nIrZBe/go-cpu.pprof",
+      "duration_seconds": 14.51,
+      "total_sample_weight_seconds": 52.9,
+      "cached_range_rebuild_weight_seconds": 0.03,
+      "summary": "/private/tmp/tidb-live-workload.nIrZBe/go-cpu-summary.txt"
+    },
+    "interpretation": "Separate eight-client diagnostic intervals, not timing baselines. Rust all-thread samples include blocked/idle states and are not comparable CPU percentages to Go pprof. Original Rust wrapper captured successfully but failed while printing its summary and terminated its workload; the final direct sample capture and complete 30-second workload both succeeded."
+  },
+  "source_findings": [
+    "Go conn_batch.go fetchAllPendingRequests drains ready requests, then batchSendLoop uses the default standard adaptive trigger; max-batch-wait-time=0 disables overload waiting, not this adaptive policy.",
+    "Live Go /settings confirms standard, 128 max commands, batch-wait-size 8 and four gRPC connections.",
+    "Rust transport_runtime/batching.rs only drains try_recv. BatchTrigger is implemented and exported but has no production caller.",
+    "Do not restore the previously removed blocking adaptive collector blindly: transport-batching-baseline.json records its eight-client regression. A next implementation needs source-shaped collection and lifecycle handling without reintroducing that waiting cost.",
+    "Rust general prepared SELECT still reconstructs plans behind access-path pins. Go lookupPlanCache/adjustCachedPlan/RebuildPlan4CachedPlan retains a physical plan. This is separate from the measured transport batching gap."
+  ],
+  "validation_profile": "WIP",
+  "commands": [
+    "cd rust && cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+    "ruby /private/tmp/tidb-live-workload.nIrZBe/cluster.rb",
+    "sysbench /opt/homebrew/share/sysbench/oltp_read_only.lua --db-driver=mysql --mysql-ssl=off --mysql-host=127.0.0.1 --mysql-port=57110 --mysql-user=root --mysql-db=perf_sysbench --tables=1 --table-size=100000 --rand-seed=1 prepare",
+    "python3 rust/scripts/compare-sysbench.py --server go:57110 --server rust:57112 --database perf_sysbench --workload oltp_read_only --threads 1 --seconds 15 --rounds 3 --table-size 100000 --output /private/tmp/tidb-live-workload.nIrZBe/one-client",
+    "python3 rust/scripts/compare-sysbench.py --server go:57110 --server rust:57112 --database perf_sysbench --workload oltp_read_only --threads 8 --seconds 15 --rounds 3 --table-size 100000 --output /private/tmp/tidb-live-workload.nIrZBe/eight-client",
+    "ruby /private/tmp/tidb-live-workload.nIrZBe/fixed-work.rb",
+    "ruby /private/tmp/tidb-live-workload.nIrZBe/batch-work.rb",
+    "ruby /private/tmp/tidb-live-workload.nIrZBe/profile.rb",
+    "ruby /private/tmp/tidb-live-workload.nIrZBe/profile.rb rust",
+    "ruby /private/tmp/tidb-live-workload.nIrZBe/go-policy-control.rb",
+    "diff -u /private/tmp/tidb-live-workload.nIrZBe/parity-57110.log /private/tmp/tidb-live-workload.nIrZBe/parity-57112.log",
+    "git diff --check"
+  ],
+  "limitations": [
+    "No immediate pre-cumulative-change Rust server control; current Rust versus Go does not quantify earlier Rust improvements.",
+    "Chrome renderer CPU activity was observed. No host-quiescence or universal throughput claim.",
+    "TiKV histogram counters are process-wide; background metadata traffic is included. Equal work, alternating isolated workloads and near-equal command sums constrain but do not remove that noise.",
+    "Go auto-TLS enabled in the isolated environment after installed sysbench required SSL despite mysql-ssl=off. Both endpoints verified the same cipher; this did not modify production TLS defaults.",
+    "No TPC-C writes, Ready lint, full package parity, commit or push.",
+    "All five owned services stopped and all ten owned ports verified closed; fixture, immutable binary, commands and logs are retained for reuse."
+  ]
+}

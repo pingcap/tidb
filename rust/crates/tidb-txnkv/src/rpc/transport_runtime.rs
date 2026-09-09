@@ -12,25 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Sole Tokio runtime, channel pool, and transport lifecycle worker.
+//! Channel pools and their asynchronous transport lifecycle owner.
 
-use std::sync::mpsc;
+use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
-use std::thread::JoinHandle;
 use std::time::Duration;
 
+use futures::FutureExt;
 use tidb_pd_client::ClusterSecurity;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, oneshot, watch};
+use tokio::task::JoinHandle;
+
+use super::execution::{wait, ConnectionRuntime};
 
 use crate::region::StoreLiveness;
 
 use super::batch::{
-    BatchCommandEntry, BatchPublicationReceipt, BatchStreamEvent, BatchTransportState,
+    BatchCommandEntry, BatchPublicationReceipt, BatchStreamEvent, BatchSubmission,
+    BatchTransportState,
 };
 use super::channel_pool::ChannelPool;
 use super::liveness::check_liveness;
 use super::unary::{prepare_unary, RawUnaryRequest, RawUnaryResponse, UnaryCallContext};
 use super::{DirectUnaryClientError, TransportShutdownError};
+
+mod batching;
 
 /// Env-gated admission diagnostics (`TIKV_ADMISSION_LOG=1`). Purely additive:
 /// relaxed atomics on the measured paths plus one stderr dumper thread.
@@ -58,24 +65,39 @@ pub mod admit_diag {
         if !enabled() {
             return;
         }
-        bump(&ADMIT_WAIT_US, &ADMIT_COUNT, &ADMIT_MAX_US, wait.as_micros() as u64);
+        bump(
+            &ADMIT_WAIT_US,
+            &ADMIT_COUNT,
+            &ADMIT_MAX_US,
+            wait.as_micros() as u64,
+        );
         start_dumper();
     }
 
-    /// Worker side: one BatchSubmit block_on duration.
+    /// Worker side: one batch publication duration.
     pub fn note_worker_submit(elapsed: std::time::Duration) {
         if !enabled() {
             return;
         }
-        bump(&WORKER_SUBMIT_US, &WORKER_SUBMIT_COUNT, &WORKER_SUBMIT_MAX_US, elapsed.as_micros() as u64);
+        bump(
+            &WORKER_SUBMIT_US,
+            &WORKER_SUBMIT_COUNT,
+            &WORKER_SUBMIT_MAX_US,
+            elapsed.as_micros() as u64,
+        );
     }
 
-    /// Worker side: one BatchEvent block_on duration.
+    /// Worker side: one stream retirement/recreation duration.
     pub fn note_worker_event(elapsed: std::time::Duration) {
         if !enabled() {
             return;
         }
-        bump(&WORKER_EVENT_US, &WORKER_EVENT_COUNT, &WORKER_EVENT_MAX_US, elapsed.as_micros() as u64);
+        bump(
+            &WORKER_EVENT_US,
+            &WORKER_EVENT_COUNT,
+            &WORKER_EVENT_MAX_US,
+            elapsed.as_micros() as u64,
+        );
     }
 
     static WORKER_EVENT_MAX_US: AtomicU64 = AtomicU64::new(0);
@@ -133,48 +155,49 @@ pub(super) enum WorkerCommand {
         address: String,
         request: RawUnaryRequest,
         call: UnaryCallContext,
-        reply: mpsc::Sender<Result<RawUnaryResponse, DirectUnaryClientError>>,
+        reply: oneshot::Sender<Result<RawUnaryResponse, DirectUnaryClientError>>,
     },
     BatchSubmit {
         address: String,
         entries: Vec<BatchCommandEntry>,
         call: Option<UnaryCallContext>,
-        reply: mpsc::Sender<Vec<BatchPublicationReceipt>>,
+        reply: Option<oneshot::Sender<Vec<BatchPublicationReceipt>>>,
     },
     BatchEvent(BatchStreamEvent),
     CloseAddress {
         address: String,
-        reply: mpsc::Sender<()>,
+        reply: oneshot::Sender<()>,
     },
     CloseAddressVersion {
         address: String,
         version: u64,
-        reply: mpsc::Sender<()>,
+        reply: oneshot::Sender<()>,
     },
     Liveness {
         address: String,
         timeout: Duration,
-        reply: mpsc::Sender<StoreLiveness>,
+        reply: oneshot::Sender<StoreLiveness>,
     },
     Inspect {
         address: String,
-        reply: mpsc::Sender<(Option<u64>, usize)>,
+        reply: oneshot::Sender<(Option<u64>, usize)>,
     },
     InspectBatch {
         address: String,
         forwarded_host: Option<String>,
-        reply: mpsc::Sender<(Option<u64>, u64)>,
+        reply: oneshot::Sender<(Option<u64>, u64)>,
     },
     Close {
-        reply: mpsc::Sender<()>,
+        reply: oneshot::Sender<()>,
     },
 }
 
 /// Unique owner of the one retained transport worker.
 pub(super) struct TransportRuntime {
-    commands: Option<mpsc::Sender<WorkerCommand>>,
+    commands: Option<mpsc::UnboundedSender<WorkerCommand>>,
     worker: Option<JoinHandle<()>>,
     cancellation: TransportShutdownCancellation,
+    io: Vec<ConnectionRuntime>,
 }
 
 /// Cloneable request capability for the retained transport worker.
@@ -184,7 +207,7 @@ pub(super) struct TransportRuntime {
 /// worker, and no request handle can join it.
 #[derive(Clone)]
 pub(super) struct TransportHandle {
-    commands: mpsc::Sender<WorkerCommand>,
+    commands: mpsc::UnboundedSender<WorkerCommand>,
 }
 
 /// Cloneable direct cancellation for interrupting a blocked transport open.
@@ -194,13 +217,6 @@ pub struct TransportShutdownCancellation {
 }
 
 impl TransportShutdownCancellation {
-    /// Builds one cancellation from its own watch sender, for an owner that
-    /// fans ONE watch out to every shard of a sharded transport.
-    #[must_use]
-    pub(super) fn from_sender(shutdown: watch::Sender<bool>) -> Self {
-        Self { shutdown }
-    }
-
     /// Interrupts runtime-owned operations before orderly close is queued.
     pub fn cancel(&self) {
         let _ = self.shutdown.send(true);
@@ -213,57 +229,30 @@ impl TransportShutdownCancellation {
 }
 
 impl TransportRuntime {
-    pub(super) fn new(security: Arc<ClusterSecurity>) -> Result<Self, DirectUnaryClientError> {
-        let (_shutdown, shutdown_rx) = watch::channel(false);
-        Self::new_with_shutdown_receiver(security, shutdown_rx)
-    }
-
-    /// One SHARD of a sharded transport: identical to [`Self::new], except
-    /// the worker listens on the CALLER's shutdown watch instead of a private
-    /// one, so one top-level cancellation stops every shard at once. This
-    /// runtime's own `cancellation stays wired to a sender nobody else holds,
-    /// which keeps this shard's orderly-close path (`Self::shutdown) intact.
-    pub(super) fn new_with_shutdown_receiver(
+    pub(super) fn new(
         security: Arc<ClusterSecurity>,
-        shutdown_rx: watch::Receiver<bool>,
+        connection_count: NonZeroUsize,
     ) -> Result<Self, DirectUnaryClientError> {
-        let (commands, receiver) = mpsc::channel();
-        let worker_commands = commands.clone();
-        let (shutdown, _private_rx) = watch::channel(false);
-        let cancellation = TransportShutdownCancellation { shutdown };
-        let (ready_tx, ready_rx) = mpsc::channel();
-        let worker = std::thread::spawn(move || {
-            let runtime = match tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
-                .enable_all()
-                .build()
-            {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    let _ = ready_tx.send(Err(DirectUnaryClientError::Runtime(error.to_string())));
-                    return;
-                }
-            };
-            if ready_tx.send(Ok(())).is_err() {
-                return;
-            }
-            run_worker(runtime, receiver, worker_commands, shutdown_rx, security);
-        });
-        match ready_rx.recv() {
-            Ok(Ok(())) => Ok(Self {
-                commands: Some(commands),
-                worker: Some(worker),
-                cancellation,
-            }),
-            Ok(Err(error)) => {
-                let _ = worker.join();
-                Err(error)
-            }
-            Err(error) => {
-                let _ = worker.join();
-                Err(DirectUnaryClientError::Runtime(error.to_string()))
-            }
-        }
+        let runtime = super::execution_runtime().map_err(DirectUnaryClientError::Runtime)?;
+        let io = (0..connection_count.get())
+            .map(|_| ConnectionRuntime::new())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(DirectUnaryClientError::Runtime)?;
+        let (commands, receiver) = mpsc::unbounded_channel();
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let worker = runtime.spawn(run_worker(
+            io.iter().map(|driver| driver.handle.clone()).collect(),
+            receiver,
+            commands.clone(),
+            shutdown_rx,
+            security,
+        ));
+        Ok(Self {
+            commands: Some(commands),
+            worker: Some(worker),
+            cancellation: TransportShutdownCancellation { shutdown },
+            io,
+        })
     }
 
     pub(super) fn handle(&self) -> TransportHandle {
@@ -282,31 +271,45 @@ impl TransportRuntime {
 
     pub(super) fn shutdown(&mut self) -> Result<(), DirectUnaryClientError> {
         self.cancellation.cancel();
-        let mut shutdown_errors = Vec::new();
-        if let Some(commands) = self.commands.take() {
-            let (reply, response) = mpsc::channel();
-            match commands.send(WorkerCommand::Close { reply }) {
-                Ok(()) => {
-                    if response.recv().is_err() {
-                        shutdown_errors.push(TransportShutdownError::CloseAcknowledgementLost);
+        let commands = self.commands.take();
+        let worker = self.worker.take();
+        let mut shutdown_errors = wait(async {
+            let mut shutdown_errors = Vec::new();
+            if let Some(commands) = commands {
+                let (reply, response) = oneshot::channel();
+                match commands.send(WorkerCommand::Close { reply }) {
+                    Ok(()) => {
+                        if response.await.is_err() {
+                            shutdown_errors.push(TransportShutdownError::CloseAcknowledgementLost);
+                        }
                     }
-                }
-                Err(_) => {
-                    shutdown_errors.push(TransportShutdownError::CommandChannelClosed);
+                    Err(_) => shutdown_errors.push(TransportShutdownError::CommandChannelClosed),
                 }
             }
-        }
-        if let Some(worker) = self.worker.take() {
-            if let Err(panic) = worker.join() {
+            if let Some(worker) = worker {
+                if let Err(error) = worker.await {
+                    shutdown_errors.push(if error.is_panic() {
+                        TransportShutdownError::WorkerPanicked {
+                            message: panic_message(&error.into_panic()).to_owned(),
+                        }
+                    } else {
+                        TransportShutdownError::WorkerCancelled
+                    });
+                }
+            }
+            shutdown_errors
+        });
+        for mut driver in self.io.drain(..) {
+            if let Err(panic) = driver.shutdown() {
                 shutdown_errors.push(TransportShutdownError::WorkerPanicked {
-                    message: panic_message(&panic).to_owned(),
+                    message: format!("connection I/O: {}", panic_message(&panic)),
                 });
             }
         }
         match shutdown_errors.len() {
             0 => Ok(()),
             1 => Err(DirectUnaryClientError::Shutdown(
-                shutdown_errors.pop().expect("one shutdown error"),
+                shutdown_errors.pop().unwrap(),
             )),
             _ => Err(DirectUnaryClientError::Shutdown(
                 TransportShutdownError::Multiple(shutdown_errors),
@@ -321,21 +324,25 @@ impl Drop for TransportRuntime {
     }
 }
 
-/// The publication receipt of a submission that has not been collected yet.
-///
-/// Holding one is the whole of client-go's post-send state: the entry is on
-/// the worker's queue, its own completion is the only thing the caller waits
-/// on, and the receipt is read only if the attempt has to be named.
-pub(super) struct DeferredReceipts {
-    response: mpsc::Receiver<Vec<BatchPublicationReceipt>>,
+/// On-demand barrier for an observer that needs identity before a response.
+/// Ordinary requests read their entry's publication state without a second ACK.
+pub(super) struct PublicationBarrier {
+    handle: TransportHandle,
+    address: String,
 }
 
-impl DeferredReceipts {
-    /// Collects the receipt, blocking only if the worker has not sent it yet.
-    pub(super) fn wait(self) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
-        self.response
-            .recv()
-            .map_err(|_| DirectUnaryClientError::Closed)
+impl PublicationBarrier {
+    pub(super) fn new(handle: TransportHandle, address: &str) -> Self {
+        Self {
+            handle,
+            address: address.to_owned(),
+        }
+    }
+
+    pub(super) fn wait(self) {
+        // Inspect is ordered after admission and flushes the address collector.
+        // It does not create/recreate a connection or wait for a response.
+        self.handle.inspect(&self.address);
     }
 }
 
@@ -346,7 +353,7 @@ impl TransportHandle {
         request: RawUnaryRequest,
         call: &UnaryCallContext,
     ) -> Result<RawUnaryResponse, DirectUnaryClientError> {
-        let (reply, response) = mpsc::channel();
+        let (reply, response) = oneshot::channel();
         self.commands
             .send(WorkerCommand::UnarySend {
                 address: address.to_owned(),
@@ -355,9 +362,7 @@ impl TransportHandle {
                 reply,
             })
             .map_err(|_| DirectUnaryClientError::Closed)?;
-        response
-            .recv()
-            .unwrap_or(Err(DirectUnaryClientError::Closed))
+        wait(response).unwrap_or(Err(DirectUnaryClientError::Closed))
     }
 
     pub(super) fn batch_submit(
@@ -365,79 +370,59 @@ impl TransportHandle {
         address: &str,
         entries: Vec<BatchCommandEntry>,
     ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
-        self.batch_submit_inner(address, entries, None)
-    }
-
-    pub(super) fn batch_submit_with_call(
-        &self,
-        address: &str,
-        entries: Vec<BatchCommandEntry>,
-        call: &UnaryCallContext,
-    ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
-        self.batch_submit_inner(address, entries, Some(call.clone()))
-    }
-
-    pub(super) fn batch_submit_deferred_with_call(
-        &self,
-        address: &str,
-        entries: Vec<BatchCommandEntry>,
-        call: &UnaryCallContext,
-    ) -> Result<DeferredReceipts, DirectUnaryClientError> {
-        self.batch_submit_deferred(address, entries, Some(call.clone()))
-    }
-
-    fn batch_submit_inner(
-        &self,
-        address: &str,
-        entries: Vec<BatchCommandEntry>,
-        call: Option<UnaryCallContext>,
-    ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
         let started = std::time::Instant::now();
-        let deferred = self.batch_submit_deferred(address, entries, call)?;
-        let receipts = deferred.wait();
+        let response = self.batch_submit_with_receipts(address, entries, None)?;
+        let receipts = wait(response).map_err(|_| DirectUnaryClientError::Closed);
         admit_diag::note_admit_wait(started.elapsed());
         receipts
     }
 
-    /// Hands the entries to the transport worker WITHOUT waiting for their
-    /// publication receipt -- client-go's `sendBatchRequest`
-    /// (`internal/client/client_batch.go:1465`), whose first `select` only
-    /// puts the entry on `batchCommandsCh` and whose second waits once, on the
-    /// response.
-    ///
-    /// The caller used to block here for a receipt it needs only to NAME a
-    /// failed attempt, and that wait cost 22-25us on every RPC -- a full
-    /// cross-thread wake-up round trip ahead of the network wait, measured
-    /// over 20000 RPCs per window. The receipt still arrives; it is simply
-    /// collected when it is read, by which time the worker has long since
-    /// sent it.
-    pub(super) fn batch_submit_deferred(
+    fn batch_submit_with_receipts(
         &self,
         address: &str,
         entries: Vec<BatchCommandEntry>,
         call: Option<UnaryCallContext>,
-    ) -> Result<DeferredReceipts, DirectUnaryClientError> {
-        let (reply, response) = mpsc::channel();
+    ) -> Result<oneshot::Receiver<Vec<BatchPublicationReceipt>>, DirectUnaryClientError> {
+        let (reply, response) = oneshot::channel();
         self.commands
             .send(WorkerCommand::BatchSubmit {
                 address: address.to_owned(),
                 entries,
                 call,
-                reply,
+                reply: Some(reply),
             })
             .map_err(|_| DirectUnaryClientError::Closed)?;
-        Ok(DeferredReceipts { response })
+        Ok(response)
+    }
+
+    /// Go sendBatchRequest queues the entry and waits only for its response.
+    /// No publication acknowledgement is allocated or sent on this path.
+    pub(super) fn batch_submit_with_call(
+        &self,
+        address: &str,
+        entries: Vec<BatchCommandEntry>,
+        call: &UnaryCallContext,
+    ) -> Result<PublicationBarrier, DirectUnaryClientError> {
+        self.commands
+            .send(WorkerCommand::BatchSubmit {
+                address: address.to_owned(),
+                entries,
+                call: Some(call.clone()),
+                reply: None,
+            })
+            .map_err(|_| DirectUnaryClientError::Closed)?;
+        Ok(PublicationBarrier::new(self.clone(), address))
     }
 
     pub(super) fn close_address(&self, address: &str) -> Result<(), DirectUnaryClientError> {
-        let (reply, response) = mpsc::channel();
+        let (reply, response) = oneshot::channel();
         self.commands
             .send(WorkerCommand::CloseAddress {
                 address: address.to_owned(),
                 reply,
             })
             .map_err(|_| DirectUnaryClientError::Closed)?;
-        response.recv().map_err(|_| DirectUnaryClientError::Closed)
+        wait(response).map_err(|_| DirectUnaryClientError::Closed)
     }
 
     pub(super) fn close_address_version(
@@ -445,7 +430,7 @@ impl TransportHandle {
         address: &str,
         version: u64,
     ) -> Result<(), DirectUnaryClientError> {
-        let (reply, response) = mpsc::channel();
+        let (reply, response) = oneshot::channel();
         self.commands
             .send(WorkerCommand::CloseAddressVersion {
                 address: address.to_owned(),
@@ -453,7 +438,7 @@ impl TransportHandle {
                 reply,
             })
             .map_err(|_| DirectUnaryClientError::Closed)?;
-        response.recv().map_err(|_| DirectUnaryClientError::Closed)
+        wait(response).map_err(|_| DirectUnaryClientError::Closed)
     }
 
     pub(super) fn liveness(
@@ -461,7 +446,7 @@ impl TransportHandle {
         address: &str,
         timeout: Duration,
     ) -> Result<StoreLiveness, DirectUnaryClientError> {
-        let (reply, response) = mpsc::channel();
+        let (reply, response) = oneshot::channel();
         self.commands
             .send(WorkerCommand::Liveness {
                 address: address.to_owned(),
@@ -469,11 +454,11 @@ impl TransportHandle {
                 reply,
             })
             .map_err(|_| DirectUnaryClientError::Closed)?;
-        response.recv().map_err(|_| DirectUnaryClientError::Closed)
+        wait(response).map_err(|_| DirectUnaryClientError::Closed)
     }
 
     pub(super) fn inspect(&self, address: &str) -> (Option<u64>, usize) {
-        let (reply, response) = mpsc::channel();
+        let (reply, response) = oneshot::channel();
         if self
             .commands
             .send(WorkerCommand::Inspect {
@@ -484,7 +469,7 @@ impl TransportHandle {
         {
             return (None, 0);
         }
-        response.recv().unwrap_or((None, 0))
+        wait(response).unwrap_or((None, 0))
     }
 
     pub(super) fn inspect_batch(
@@ -492,7 +477,7 @@ impl TransportHandle {
         address: &str,
         forwarded_host: Option<&str>,
     ) -> (Option<u64>, u64) {
-        let (reply, response) = mpsc::channel();
+        let (reply, response) = oneshot::channel();
         if self
             .commands
             .send(WorkerCommand::InspectBatch {
@@ -504,7 +489,7 @@ impl TransportHandle {
         {
             return (None, 0);
         }
-        response.recv().unwrap_or((None, 0))
+        wait(response).unwrap_or((None, 0))
     }
 }
 
@@ -514,99 +499,320 @@ pub(in crate::rpc) fn wtrace_enabled() -> bool {
     *ON.get_or_init(|| std::env::var_os("TIKV_QUERY_TRACE").is_some())
 }
 
-fn run_worker(
-    runtime: tokio::runtime::Runtime,
-    receiver: mpsc::Receiver<WorkerCommand>,
-    commands: mpsc::Sender<WorkerCommand>,
+struct TransportConnection {
+    channels: ChannelPool,
+    batch: BatchTransportState,
+    runtime: tokio::runtime::Handle,
+}
+
+fn select_connection(
+    cursors: &mut HashMap<String, usize>,
+    address: &str,
+    count: NonZeroUsize,
+) -> usize {
+    let cursor = cursors.entry(address.to_owned()).or_default();
+    let selected = *cursor;
+    *cursor = (*cursor + 1) % count.get();
+    selected
+}
+
+fn publish_batch(
+    connections: &mut [TransportConnection],
+    cursors: &mut HashMap<String, usize>,
+    address: &str,
+    submissions: Vec<BatchSubmission>,
+    commands: &mpsc::UnboundedSender<WorkerCommand>,
+) {
+    let started = std::time::Instant::now();
+    let count = NonZeroUsize::new(connections.len()).expect("nonempty connection fleet");
+    let index = select_connection(cursors, address, count);
+    let connection = &mut connections[index];
+    // Publication only queues a packet; the retained stream task owns I/O.
+    // Go getClientAndSend likewise publishes directly from the send loop.
+    connection.batch.submit(
+        &mut connection.channels,
+        &connection.runtime,
+        address,
+        submissions,
+        commands,
+    );
+    admit_diag::note_worker_submit(started.elapsed());
+}
+
+async fn run_worker(
+    runtimes: Vec<tokio::runtime::Handle>,
+    mut receiver: mpsc::UnboundedReceiver<WorkerCommand>,
+    commands: mpsc::UnboundedSender<WorkerCommand>,
     shutdown: watch::Receiver<bool>,
     security: Arc<ClusterSecurity>,
 ) {
-    let mut channels = ChannelPool::with_security(Arc::clone(&security));
-    let mut batch = BatchTransportState::new(shutdown);
-    while let Ok(command) = receiver.recv() {
-        match command {
-            WorkerCommand::UnarySend {
-                address,
-                request,
-                call,
-                reply,
-            } => match prepare_unary(&runtime, &mut channels, &address, request, &call) {
-                Ok(prepared) => {
-                    // The runtime, not an unbounded per-call OS thread, owns
-                    // the wait. The worker immediately resumes command
-                    // dispatch while channel-pool mutation remains serialized.
-                    runtime.spawn(async move {
-                        let _ = reply.send(prepared.execute().await);
-                    });
-                }
-                Err(error) => {
-                    let _ = reply.send(Err(error));
-                }
-            },
-            WorkerCommand::BatchSubmit {
-                address,
-                entries,
-                call,
-                reply,
-            } => {
-                let submit_started = std::time::Instant::now();
-                let receipts = runtime.block_on(batch.submit(
-                    &mut channels,
-                    &runtime,
+    let versions = Arc::new(std::sync::Mutex::new(HashMap::new()));
+    let request_ids = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let connection_count = NonZeroUsize::new(runtimes.len()).expect("nonempty connection fleet");
+    let mut connections: Vec<_> = runtimes
+        .into_iter()
+        .map(|runtime| TransportConnection {
+            runtime,
+            channels: ChannelPool::with_security(Arc::clone(&security), Arc::clone(&versions)),
+            batch: BatchTransportState::new(shutdown.clone(), Arc::clone(&request_ids)),
+        })
+        .collect();
+    let result = std::panic::AssertUnwindSafe(async {
+        let mut cursors = HashMap::new();
+        let mut pending = None;
+        let mut collectors = batching::Collectors::default();
+        let mut timer: Option<(std::time::Instant, futures_timer::Delay)> = None;
+        loop {
+            let now = std::time::Instant::now();
+            if let Some((address, submissions)) = collectors.take_due(now) {
+                publish_batch(
+                    &mut connections,
+                    &mut cursors,
                     &address,
-                    entries,
-                    call.as_ref(),
+                    submissions,
                     &commands,
-                ));
-                admit_diag::note_worker_submit(submit_started.elapsed());
-                let _ = reply.send(receipts);
+                );
+                continue;
             }
-            WorkerCommand::BatchEvent(event) => {
-                let event_started = std::time::Instant::now();
-                runtime.block_on(batch.handle_event(&mut channels, &runtime, &commands, event));
-                admit_diag::note_worker_event(event_started.elapsed());
-            }
-            WorkerCommand::CloseAddress { address, reply } => {
-                if let Some(physical_channel) = channels.close_address(&address) {
-                    batch.close_physical_channel(&physical_channel);
+            let command = if let Some(command) = pending.take() {
+                command
+            } else if let Some(deadline) = collectors.next_deadline() {
+                // Go uses a sub-millisecond batch deadline. Tokio Sleep rounds to
+                // milliseconds; this native timer retains the Instant deadline.
+                tokio::select! {
+                    biased;
+                    command = receiver.recv() => match command {
+                        Some(command) => command,
+                        None => break None,
+                    },
+                    () = async {
+                        // Poll ready commands before registering a timer. The
+                        // loop checks expired deadlines before every command;
+                        // timer I/O is only needed when collection must wait.
+                        let delay = match &mut timer {
+                            Some((armed, delay)) => {
+                                if *armed != deadline {
+                                    delay.reset(deadline.saturating_duration_since(std::time::Instant::now()));
+                                    *armed = deadline;
+                                }
+                                delay
+                            }
+                            slot @ None => &mut slot.insert((
+                                deadline,
+                                futures_timer::Delay::new(deadline.saturating_duration_since(std::time::Instant::now())),
+                            )).1,
+                        };
+                        delay.await;
+                    } => continue,
                 }
-                let _ = reply.send(());
-            }
-            WorkerCommand::CloseAddressVersion {
-                address,
-                version,
-                reply,
-            } => {
-                if let Some(physical_channel) = channels.close_address_version(&address, version) {
-                    batch.close_physical_channel(&physical_channel);
+            } else {
+                timer = None;
+                let Some(command) = receiver.recv().await else {
+                    break None;
+                };
+                command
+            };
+            // A waiting batch is address-local. Preserve preceding publication
+            // before observation/invalidation, without holding other stores behind
+            // its collection timer. Retirement events still name exact channels.
+            match &command {
+                WorkerCommand::UnarySend { address, .. }
+                | WorkerCommand::CloseAddress { address, .. }
+                | WorkerCommand::CloseAddressVersion { address, .. }
+                | WorkerCommand::Liveness { address, .. }
+                | WorkerCommand::Inspect { address, .. }
+                | WorkerCommand::InspectBatch { address, .. } => {
+                    if let Some(submissions) = collectors.finish_address(address) {
+                        publish_batch(
+                            &mut connections,
+                            &mut cursors,
+                            address,
+                            submissions,
+                            &commands,
+                        );
+                    }
                 }
-                let _ = reply.send(());
+                WorkerCommand::Close { .. } => {
+                    for (address, submissions) in collectors.finish_all() {
+                        publish_batch(
+                            &mut connections,
+                            &mut cursors,
+                            &address,
+                            submissions,
+                            &commands,
+                        );
+                    }
+                }
+                _ => {}
             }
-            WorkerCommand::Liveness {
-                address,
-                timeout,
-                reply,
-            } => {
-                let result = check_liveness(&runtime, &address, timeout, &security);
-                let _ = reply.send(result);
-            }
-            WorkerCommand::Inspect { address, reply } => {
-                let _ = reply.send((channels.version(&address), channels.len()));
-            }
-            WorkerCommand::InspectBatch {
-                address,
-                forwarded_host,
-                reply,
-            } => {
-                let _ = reply.send(batch.inspect(&address, forwarded_host.as_deref()));
-            }
-            WorkerCommand::Close { reply } => {
-                batch.close();
-                channels.close();
-                let _ = reply.send(());
-                break;
+            match command {
+                WorkerCommand::UnarySend {
+                    address,
+                    request,
+                    call,
+                    reply,
+                } => {
+                    let index = select_connection(&mut cursors, &address, connection_count);
+                    let connection = &mut connections[index];
+                    match prepare_unary(
+                        &connection.runtime,
+                        &mut connection.channels,
+                        &address,
+                        request,
+                        &call,
+                    ) {
+                        Ok(prepared) => {
+                            prepared.spawn(reply, shutdown.clone());
+                        }
+                        Err(error) => {
+                            let _ = reply.send(Err(error));
+                        }
+                    }
+                }
+                WorkerCommand::BatchSubmit {
+                    address,
+                    entries,
+                    call,
+                    reply,
+                } => {
+                    let submissions = batching::collect(
+                        &address,
+                        BatchSubmission {
+                            entries,
+                            call,
+                            reply,
+                        },
+                        &mut receiver,
+                        &mut pending,
+                    );
+                    match collectors.push(&address, submissions, std::time::Instant::now()) {
+                        batching::Admission::Publish(submissions) => {
+                            publish_batch(
+                                &mut connections,
+                                &mut cursors,
+                                &address,
+                                submissions,
+                                &commands,
+                            );
+                        }
+                        batching::Admission::Yield => {
+                            // Go fetchMorePendingRequests yields once and drains
+                            // again. No synthetic command or flush token is needed.
+                            tokio::task::yield_now().await;
+                            if let Some(submissions) =
+                                collectors.finish_turn(&address, &mut receiver, &mut pending)
+                            {
+                                publish_batch(
+                                    &mut connections,
+                                    &mut cursors,
+                                    &address,
+                                    submissions,
+                                    &commands,
+                                );
+                            }
+                        }
+                        batching::Admission::Pending => {}
+                    }
+                }
+                WorkerCommand::BatchEvent(event) => {
+                    let event_started = std::time::Instant::now();
+                    let BatchStreamEvent::Retired { route } = &event;
+                    // Channel versions are unique within this owner. A stale event
+                    // after exact invalidation cannot match another connection.
+                    if let Some(connection) = connections.iter_mut().find(|connection| {
+                        connection.channels.version(route.physical_address())
+                            == Some(route.physical_channel_version())
+                    }) {
+                        connection.batch.handle_event(
+                            &mut connection.channels,
+                            &connection.runtime,
+                            &commands,
+                            event,
+                        );
+                    }
+                    admit_diag::note_worker_event(event_started.elapsed());
+                }
+                WorkerCommand::CloseAddress { address, reply } => {
+                    for connection in &mut connections {
+                        if let Some(channel) = connection.channels.close_address(&address).await {
+                            connection.batch.close_physical_channel(&channel);
+                        }
+                    }
+                    cursors.remove(&address);
+                    collectors.remove(&address);
+                    let _ = reply.send(());
+                }
+                WorkerCommand::CloseAddressVersion {
+                    address,
+                    version,
+                    reply,
+                } => {
+                    for connection in &mut connections {
+                        if let Some(channel) = connection
+                            .channels
+                            .close_address_version(&address, version)
+                            .await
+                        {
+                            connection.batch.close_physical_channel(&channel);
+                        }
+                    }
+                    let _ = reply.send(());
+                }
+                WorkerCommand::Liveness {
+                    address,
+                    timeout,
+                    reply,
+                } => {
+                    let _ = reply.send(
+                        check_liveness(&connections[0].runtime, &address, timeout, &security).await,
+                    );
+                }
+                WorkerCommand::Inspect { address, reply } => {
+                    let version = connections
+                        .iter()
+                        .filter_map(|connection| connection.channels.version(&address))
+                        .max();
+                    let addresses: std::collections::HashSet<_> = connections
+                        .iter()
+                        .flat_map(|connection| connection.channels.addresses())
+                        .collect();
+                    let _ = reply.send((version, addresses.len()));
+                }
+                WorkerCommand::InspectBatch {
+                    address,
+                    forwarded_host,
+                    reply,
+                } => {
+                    let observation = connections
+                        .iter()
+                        .map(|connection| {
+                            connection
+                                .batch
+                                .inspect(&address, forwarded_host.as_deref())
+                        })
+                        .fold((None, 0), |(generation, watermark), (next, id)| {
+                            (generation.max(next), watermark.max(id))
+                        });
+                    let _ = reply.send(observation);
+                }
+                WorkerCommand::Close { reply } => break Some(reply),
             }
         }
+    })
+    .catch_unwind()
+    .await;
+    // Normal close, receiver termination and panic all retire the same owners
+    // before acknowledgment or join reports completion.
+    for connection in &mut connections {
+        connection.batch.close();
+        connection.channels.close().await;
+    }
+    match result {
+        Ok(Some(reply)) => {
+            let _ = reply.send(());
+        }
+        Ok(None) => {}
+        Err(panic) => std::panic::resume_unwind(panic),
     }
 }
 
@@ -622,6 +828,177 @@ fn panic_message<'a>(panic: &'a Box<dyn std::any::Any + Send + 'static>) -> &'a 
 mod tests {
     use super::*;
 
+    #[test]
+    fn queued_submissions_share_a_batch_without_crossing_lifecycle_barriers() {
+        use crate::rpc::batch::{BatchCommandTag, OpaqueBatchCommand};
+        use crate::rpc::{completion_pair, CompletionRunLoop};
+
+        let (commands, receiver) = mpsc::unbounded_channel();
+        let handle = TransportHandle {
+            commands: commands.clone(),
+        };
+        let mut progress = Vec::new();
+        let mut pending = Vec::new();
+        let mut receipts = Vec::new();
+        for index in 0..5 {
+            if index == 2 {
+                let (reply, _) = oneshot::channel();
+                commands
+                    .send(WorkerCommand::Inspect {
+                        address: "invalid address".to_owned(),
+                        reply,
+                    })
+                    .unwrap();
+            }
+            let (completion, pull) = completion_pair(CompletionRunLoop::new(), || {});
+            let entry = BatchCommandEntry::new(
+                OpaqueBatchCommand::new(BatchCommandTag::Empty, vec![index]),
+                completion.into(),
+            );
+            progress.push(entry.progress());
+            pending.push(pull);
+            let address = if index == 3 {
+                "another invalid address"
+            } else {
+                "invalid address"
+            };
+            receipts.push(
+                handle
+                    .batch_submit_with_receipts(address, vec![entry], None)
+                    .unwrap(),
+            );
+        }
+        let (reply, _) = oneshot::channel();
+        commands.send(WorkerCommand::Close { reply }).unwrap();
+        let (_, shutdown) = watch::channel(false);
+        wait(super::super::execution_runtime().unwrap().spawn(run_worker(
+            vec![super::super::execution_runtime().unwrap().handle().clone()],
+            receiver,
+            commands,
+            shutdown,
+            Arc::new(ClusterSecurity::default()),
+        )))
+        .unwrap();
+
+        // Selection happens before the deliberately invalid endpoint fails.
+        // All commands were queued before dispatch, so no timing assumptions
+        // determine whether the first two callers can be coalesced.
+        assert_eq!(progress[0].batch_state().unwrap().batch_size(), 2);
+        assert_eq!(progress[1].batch_state().unwrap().batch_size(), 2);
+        assert_eq!(progress[3].batch_state().unwrap().batch_size(), 1);
+        // Go owns collection per store. Work for the other address is not a
+        // barrier between entries 2 and 4; either one or two entries per batch
+        // is valid depending on the adaptive interval. The explicit Inspect
+        // above remains a publication barrier for entries 0/1 versus 2/4.
+        for index in [2, 4] {
+            let state = progress[index].batch_state().unwrap();
+            assert!(matches!(state.batch_size(), 1 | 2));
+            assert!(!state.shares_state_with(&progress[0].batch_state().unwrap()));
+            assert!(!state.shares_state_with(&progress[3].batch_state().unwrap()));
+        }
+        assert!(progress[0]
+            .batch_state()
+            .unwrap()
+            .shares_state_with(&progress[1].batch_state().unwrap()));
+        for receipt in receipts {
+            assert!(wait(receipt).unwrap().is_empty());
+        }
+        for mut pull in pending {
+            assert!(pull.try_complete().unwrap().unwrap().is_err());
+        }
+    }
+
+    #[test]
+    fn coalesced_callers_keep_cancellation_deadlines_forwarding_and_receipts() {
+        use crate::rpc::batch::{BatchCommandTag, OpaqueBatchCommand};
+        use crate::rpc::{completion_pair, CompletionRunLoop};
+
+        let (commands, receiver) = mpsc::unbounded_channel();
+        let handle = TransportHandle {
+            commands: commands.clone(),
+        };
+        let canceled = UnaryCallContext::with_timeout(Duration::from_secs(30));
+        canceled.cancellation().cancel();
+        let expired = UnaryCallContext::with_timeout(Duration::ZERO);
+        let live = UnaryCallContext::with_timeout(Duration::from_secs(30));
+        let mut progress = Vec::new();
+        let mut pending = Vec::new();
+        let mut receipts = Vec::new();
+        for (index, call) in [None, Some(canceled), Some(expired), Some(live), None, None]
+            .into_iter()
+            .enumerate()
+        {
+            let (completion, mut pull) = completion_pair(CompletionRunLoop::new(), || {});
+            let mut entry = BatchCommandEntry::new(
+                OpaqueBatchCommand::new(BatchCommandTag::Empty, vec![index as u8]),
+                completion.into(),
+            );
+            if index == 3 {
+                entry = entry.with_forwarded_host("logical-store:20160");
+            }
+            if index == 4 {
+                pull.cancel();
+            }
+            progress.push(entry.progress());
+            pending.push(pull);
+            receipts.push(
+                handle
+                    .batch_submit_with_receipts("127.0.0.1:1", vec![entry], call)
+                    .unwrap(),
+            );
+        }
+        let (reply, _) = oneshot::channel();
+        commands.send(WorkerCommand::Close { reply }).unwrap();
+        // Publication is synchronous; inspect admission and orderly retirement.
+        let (_shutdown, shutdown_rx) = watch::channel(false);
+        wait(super::super::execution_runtime().unwrap().spawn(run_worker(
+            vec![super::super::execution_runtime().unwrap().handle().clone()],
+            receiver,
+            commands,
+            shutdown_rx,
+            Arc::new(ClusterSecurity::default()),
+        )))
+        .unwrap();
+
+        for (index, receipt) in receipts.into_iter().enumerate() {
+            let receipt = wait(receipt).unwrap();
+            if matches!(index, 0 | 3 | 5) {
+                assert_eq!(receipt.len(), 1);
+                assert_eq!(receipt[0].request_ids(), &[progress[index].request_id()]);
+                assert_eq!(
+                    receipt[0].route().forwarded_host(),
+                    (index == 3).then_some("logical-store:20160")
+                );
+                assert_eq!(receipt[0].route().physical_channel_version(), 1);
+                assert_eq!(receipt[0].route().generation(), 1);
+            } else {
+                assert!(receipt.is_empty());
+                assert_eq!(progress[index].request_id(), 0);
+            }
+        }
+        assert!(matches!(
+            pending[1].try_complete().unwrap().unwrap(),
+            Err(crate::BatchInflightError::Transport(
+                DirectUnaryClientError::CallerCancelled
+            ))
+        ));
+        assert!(matches!(
+            pending[2].try_complete().unwrap().unwrap(),
+            Err(crate::BatchInflightError::Transport(
+                DirectUnaryClientError::Timeout { .. }
+            ))
+        ));
+        assert!(pending[4].try_complete().unwrap().is_none());
+        assert!(progress[0]
+            .batch_state()
+            .unwrap()
+            .shares_state_with(&progress[5].batch_state().unwrap()));
+        assert!(!progress[0]
+            .batch_state()
+            .unwrap()
+            .shares_state_with(&progress[3].batch_state().unwrap()));
+    }
+
     fn cancellation() -> TransportShutdownCancellation {
         let (shutdown, _) = watch::channel(false);
         TransportShutdownCancellation { shutdown }
@@ -629,13 +1006,14 @@ mod tests {
 
     #[test]
     fn shutdown_reports_closed_command_channel() {
-        let (commands, receiver) = mpsc::channel();
+        let (commands, receiver) = mpsc::unbounded_channel();
         drop(receiver);
-        let worker = std::thread::spawn(|| {});
+        let worker = super::super::execution_runtime().unwrap().spawn(async {});
         let mut runtime = TransportRuntime {
             commands: Some(commands),
             worker: Some(worker),
             cancellation: cancellation(),
+            io: Vec::new(),
         };
 
         assert_eq!(
@@ -648,16 +1026,19 @@ mod tests {
 
     #[test]
     fn shutdown_reports_lost_close_acknowledgement() {
-        let (commands, receiver) = mpsc::channel();
-        let worker = std::thread::spawn(move || {
-            if let Ok(WorkerCommand::Close { reply }) = receiver.recv() {
-                drop(reply);
-            }
-        });
+        let (commands, mut receiver) = mpsc::unbounded_channel();
+        let worker = super::super::execution_runtime()
+            .unwrap()
+            .spawn(async move {
+                if let Some(WorkerCommand::Close { reply }) = receiver.recv().await {
+                    drop(reply);
+                }
+            });
         let mut runtime = TransportRuntime {
             commands: Some(commands),
             worker: Some(worker),
             cancellation: cancellation(),
+            io: Vec::new(),
         };
 
         assert_eq!(
@@ -670,17 +1051,20 @@ mod tests {
 
     #[test]
     fn shutdown_reports_worker_panic() {
-        let (commands, receiver) = mpsc::channel();
-        let worker = std::thread::spawn(move || {
-            if let Ok(WorkerCommand::Close { reply }) = receiver.recv() {
-                reply.send(()).unwrap();
-            }
-            panic!("injected transport worker panic");
-        });
+        let (commands, mut receiver) = mpsc::unbounded_channel();
+        let worker = super::super::execution_runtime()
+            .unwrap()
+            .spawn(async move {
+                if let Some(WorkerCommand::Close { reply }) = receiver.recv().await {
+                    reply.send(()).unwrap();
+                }
+                panic!("injected transport worker panic");
+            });
         let mut runtime = TransportRuntime {
             commands: Some(commands),
             worker: Some(worker),
             cancellation: cancellation(),
+            io: Vec::new(),
         };
 
         assert_eq!(
@@ -695,17 +1079,20 @@ mod tests {
 
     #[test]
     fn shutdown_retains_lost_acknowledgement_and_worker_panic() {
-        let (commands, receiver) = mpsc::channel();
-        let worker = std::thread::spawn(move || {
-            if let Ok(WorkerCommand::Close { reply }) = receiver.recv() {
-                drop(reply);
-            }
-            panic!("panic after dropping close acknowledgement");
-        });
+        let (commands, mut receiver) = mpsc::unbounded_channel();
+        let worker = super::super::execution_runtime()
+            .unwrap()
+            .spawn(async move {
+                if let Some(WorkerCommand::Close { reply }) = receiver.recv().await {
+                    drop(reply);
+                }
+                panic!("panic after dropping close acknowledgement");
+            });
         let mut runtime = TransportRuntime {
             commands: Some(commands),
             worker: Some(worker),
             cancellation: cancellation(),
+            io: Vec::new(),
         };
 
         assert_eq!(

@@ -87,6 +87,8 @@ pub struct DataSource {
     pub partition_definition_names: Vec<String>,
     /// Go `Columns`, in schema order.
     pub columns: Vec<DataSourceColumn>,
+    /// Go TblCols: complete table-order columns, preserved across pruning.
+    pub table_columns: Vec<Column>,
     /// Go `PushedDownConds`: the conditions the storage layer will evaluate.
     pub pushed_down_conds: Vec<Expression>,
     /// Go `AllConds`: every condition on this table, pushed down or not.
@@ -401,6 +403,7 @@ impl DataSource {
             partition_def_idx: self.partition_def_idx,
             partition_definition_names: self.partition_definition_names.clone(),
             columns: self.columns.clone(),
+            table_columns: self.table_columns.clone(),
             pushed_down_conds: self.pushed_down_conds.clone(),
             all_conds: self.all_conds.clone(),
             enumerated_paths: self.enumerated_paths.clone(),

@@ -14,7 +14,8 @@
 
 #![allow(missing_docs)]
 
-use std::io::Cursor;
+use std::collections::VecDeque;
+use std::io::{self, Cursor, IoSlice, Write};
 
 use tidb_protocol::{
     CompressedHeader, CompressedReader, CompressedWriter, CompressionAlgorithm, PacketError,
@@ -75,6 +76,231 @@ fn test_packet_io_write_packets_preserves_each_logical_frame() {
     assert_eq!(reader.read_packet().unwrap(), b"row-1");
     assert_eq!(reader.read_packet().unwrap(), b"eof");
     assert_eq!(reader.sequence(), 3);
+}
+
+#[test]
+fn buffered_packets_preserve_compression_fragmentation_and_sequence_wrap() {
+    let boundary = vec![b'x'; MAX_PAYLOAD_LEN];
+    let payloads = [b"".as_slice(), b"row", boundary.as_slice(), b"end"];
+    for algorithm in [CompressionAlgorithm::None, CompressionAlgorithm::Zlib, CompressionAlgorithm::Zstd] {
+        let mut expected = PacketIoWriter::new(Vec::new(), algorithm).unwrap();
+        let mut buffered = PacketIoWriter::new(Vec::new(), algorithm).unwrap();
+        expected.set_sequence(254);
+        buffered.set_sequence(254);
+        expected.set_compressed_sequence(9);
+        buffered.set_compressed_sequence(9);
+        for payload in payloads {
+            expected.write_packet(payload).unwrap();
+            buffered.buffer_packet(payload).unwrap();
+            assert_eq!(buffered.sequence(), expected.sequence());
+        }
+        if algorithm == CompressionAlgorithm::None {
+            assert!(buffered.get_ref().is_empty());
+        }
+        expected.flush().unwrap();
+        buffered.flush().unwrap();
+        assert_eq!(buffered.sequence(), expected.sequence());
+        assert_eq!(buffered.compressed_sequence(), expected.compressed_sequence());
+        assert_eq!(buffered.into_inner(), expected.into_inner());
+    }
+}
+
+#[test]
+fn buffered_and_immediate_writes_keep_order_without_replaying_prior_batches() {
+    let mut writer = PacketIoWriter::new(FrameTransport::default(), CompressionAlgorithm::None).unwrap();
+    writer.buffer_packet(b"a").unwrap();
+    writer.buffer_packet(b"b").unwrap();
+    assert!(writer.get_ref().bytes.is_empty());
+    writer.flush().unwrap();
+    assert_eq!(writer.get_ref().scalar_writes, 1);
+    writer.buffer_packet(b"c").unwrap();
+    writer.write_packet(b"d").unwrap();
+    writer.buffer_packet(b"e").unwrap();
+    writer.write_packets(&[b"f", b""]).unwrap();
+    writer.flush().unwrap();
+    let mut reader = PacketReader::new(Cursor::new(writer.into_inner().bytes));
+    for expected in [b"a".as_slice(), b"b", b"c", b"d", b"e", b"f", b""] {
+        assert_eq!(reader.read_packet().unwrap(), expected);
+    }
+    assert_eq!(reader.sequence(), 7);
+    assert!(reader.read_packet().is_err());
+}
+
+#[test]
+fn a_failed_buffer_flush_never_replays_its_accepted_prefix() {
+    let transport = FrameTransport {
+        failure: Some((5, io::ErrorKind::BrokenPipe)),
+        ..FrameTransport::default()
+    };
+    let mut writer = PacketIoWriter::new(transport, CompressionAlgorithm::None).unwrap();
+    writer.buffer_packet(b"abc").unwrap();
+    assert!(writer.flush().is_err());
+    assert_eq!(writer.get_ref().bytes, b"\x03\x00\x00\x00a");
+    writer.flush().unwrap();
+    assert_eq!(writer.get_ref().bytes, b"\x03\x00\x00\x00a");
+}
+
+#[derive(Default)]
+struct FrameTransport {
+    bytes: Vec<u8>,
+    scalar_writes: usize,
+    vectored_writes: usize,
+    accepts: VecDeque<io::Result<usize>>,
+    failure: Option<(usize, io::ErrorKind)>,
+}
+
+impl FrameTransport {
+    fn accept(&mut self, slices: &[IoSlice<'_>]) -> io::Result<usize> {
+        let available = slices.iter().map(|slice| slice.len()).sum();
+        let mut accepted = self
+            .accepts
+            .pop_front()
+            .unwrap_or(Ok(available))?
+            .min(available);
+        if let Some((limit, kind)) = self.failure {
+            if self.bytes.len() == limit {
+                return if kind == io::ErrorKind::WriteZero {
+                    Ok(0)
+                } else {
+                    Err(kind.into())
+                };
+            }
+            accepted = accepted.min(limit - self.bytes.len());
+        }
+        let mut remaining = accepted;
+        for slice in slices {
+            let count = slice.len().min(remaining);
+            self.bytes.extend_from_slice(&slice[..count]);
+            remaining -= count;
+        }
+        Ok(accepted)
+    }
+}
+
+impl Write for FrameTransport {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.scalar_writes += 1;
+        self.accept(&[IoSlice::new(bytes)])
+    }
+
+    fn write_vectored(&mut self, slices: &[IoSlice<'_>]) -> io::Result<usize> {
+        self.vectored_writes += 1;
+        self.accept(slices)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn each_uncompressed_frame_reaches_transport_as_one_write() {
+    for mode_aware in [false, true] {
+        for length in [3, 0, MAX_PAYLOAD_LEN, MAX_PAYLOAD_LEN + 1] {
+            let payload = vec![b'x'; length];
+            let mut transport = FrameTransport::default();
+            let frame_count = length / MAX_PAYLOAD_LEN + 1;
+            let expected_sequence = 255_u8.wrapping_add(frame_count as u8);
+            if mode_aware {
+                let mut writer =
+                    PacketIoWriter::new(&mut transport, CompressionAlgorithm::None).unwrap();
+                writer.set_sequence(255);
+                writer.write_packet(&payload).unwrap();
+                assert_eq!(writer.sequence(), expected_sequence);
+            } else {
+                let mut writer = PacketWriter::with_sequence(&mut transport, 255);
+                writer.write_packet(&payload).unwrap();
+                assert_eq!(writer.sequence(), expected_sequence);
+            }
+            assert_eq!(transport.scalar_writes, 0, "header/body must stay together");
+            assert_eq!(transport.vectored_writes, frame_count);
+            let mut reader = PacketReader::new(Cursor::new(transport.bytes));
+            reader.set_sequence(255);
+            assert_eq!(reader.read_packet().unwrap(), payload);
+            assert_eq!(reader.sequence(), expected_sequence);
+        }
+    }
+}
+
+#[test]
+fn frame_writes_retry_partial_and_interrupted_transfers_without_changing_bytes() {
+    for mode_aware in [false, true] {
+        let mut transport = FrameTransport {
+            accepts: VecDeque::from([
+                Ok(1),
+                Err(io::ErrorKind::Interrupted.into()),
+                Ok(2),
+                Ok(2),
+                Ok(1),
+            ]),
+            ..Default::default()
+        };
+        if mode_aware {
+            let mut writer =
+                PacketIoWriter::new(&mut transport, CompressionAlgorithm::None).unwrap();
+            writer.set_sequence(255);
+            writer.write_packet(b"abc").unwrap();
+            assert_eq!(writer.sequence(), 0);
+        } else {
+            let mut writer = PacketWriter::with_sequence(&mut transport, 255);
+            writer.write_packet(b"abc").unwrap();
+            assert_eq!(writer.sequence(), 0);
+        }
+        assert_eq!(transport.bytes, [3, 0, 0, 255, b'a', b'b', b'c']);
+    }
+}
+
+#[test]
+fn failed_frame_writes_preserve_only_completed_frame_sequences() {
+    let payload = vec![b'x'; MAX_PAYLOAD_LEN + 8];
+    let mut expected = vec![255, 255, 255, 255];
+    expected.extend_from_slice(&payload[..MAX_PAYLOAD_LEN]);
+    expected.extend_from_slice(&[8, 0, 0, 0]);
+    expected.extend_from_slice(&payload[MAX_PAYLOAD_LEN..]);
+    for mode_aware in [false, true] {
+        for limit in [0, 2, 7, MAX_PAYLOAD_LEN + 4, MAX_PAYLOAD_LEN + 6] {
+            for kind in [io::ErrorKind::WriteZero, io::ErrorKind::BrokenPipe] {
+                let mut transport = FrameTransport {
+                    failure: Some((limit, kind)),
+                    ..Default::default()
+                };
+                let (result, sequence) = if mode_aware {
+                    let mut writer =
+                        PacketIoWriter::new(&mut transport, CompressionAlgorithm::None).unwrap();
+                    writer.set_sequence(255);
+                    let result = writer.write_packet(&payload);
+                    (result, writer.sequence())
+                } else {
+                    let mut writer = PacketWriter::with_sequence(&mut transport, 255);
+                    let result = writer.write_packet(&payload);
+                    (result, writer.sequence())
+                };
+                assert!(matches!(result, Err(PacketError::Io(error)) if error.kind() == kind));
+                assert_eq!(sequence, if limit >= MAX_PAYLOAD_LEN + 4 { 0 } else { 255 });
+                assert_eq!(transport.bytes, expected[..limit]);
+            }
+        }
+    }
+}
+
+#[test]
+fn frame_writes_keep_scalar_only_transports_supported() {
+    struct ScalarOnly(Vec<u8>);
+    impl Write for ScalarOnly {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            let count = bytes.len().min(2);
+            self.0.extend_from_slice(&bytes[..count]);
+            Ok(count)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut writer =
+        PacketIoWriter::new(ScalarOnly(Vec::new()), CompressionAlgorithm::None).unwrap();
+    writer.write_packet(b"abc").unwrap();
+    assert_eq!(writer.sequence(), 1);
+    assert_eq!(writer.into_inner().0, [3, 0, 0, 0, b'a', b'b', b'c']);
 }
 
 #[test]

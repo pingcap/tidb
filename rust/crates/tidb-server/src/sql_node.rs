@@ -21,11 +21,11 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use tidb_ast::Stmt;
 use tidb_exec::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
 use tidb_exec::real_tikv_analyze::ClusterAnalyzeError;
 use tidb_exec::real_tikv_ddl::ClusterDdlError;
 use tidb_exec::real_tikv_dml::ConfiguredWriteError;
-use tidb_ast::Stmt;
 use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
 use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
@@ -557,22 +557,15 @@ impl PreparedWrite {
 
 /// One connection-owned prepared statement of either admitted kind.
 ///
-/// A prepared statement of any shape, held as the SQL its markers will be
-/// bound into.
-///
-/// Go keeps the parsed statement and installs execute-time values on its
-/// markers; this tier binds them into the text before running, which is what
-/// `tidb_session::Session::run_with_params` does.
+/// Ordinary statements retain the session-owned parsed definition and bind
+/// current values per EXECUTE. Routed commands retain only their SQL text.
 #[derive(Clone, Debug)]
 pub struct PreparedGeneral {
     sql: String,
     parameter_count: usize,
     result_columns: Vec<ColumnInfo>,
-    /// The parser-owned statement retained at COM_STMT_PREPARE.  General
-    /// executes clone and bind this tree instead of reparsing `sql`.
-    template: Option<Stmt>,
-    /// A schema-versioned point-get plan compiled at PREPARE time.
-    point_get_plan: Option<std::sync::Arc<tidb_executor::PreparedPointGetPlan>>,
+    /// The session owns the parse, cache candidate and execution readiness.
+    prepared_ast: Option<tidb_session::PreparedAst>,
 }
 
 impl PreparedGeneral {
@@ -583,45 +576,21 @@ impl PreparedGeneral {
             sql,
             parameter_count,
             result_columns,
-            template: None,
-            point_get_plan: None,
+            prepared_ast: None,
         }
     }
 
-    /// Creates a general statement with the parsed tree retained for binary
-    /// prepared executes.
+    /// Retains the session's prepared definition and its cache lifecycle.
     #[must_use]
-    pub fn with_template(
-        sql: String,
-        parameter_count: usize,
+    pub fn with_prepared_ast(
+        prepared_ast: tidb_session::PreparedAst,
         result_columns: Vec<ColumnInfo>,
-        template: Stmt,
     ) -> Self {
         Self {
-            sql,
-            parameter_count,
+            sql: prepared_ast.sql().to_owned(),
+            parameter_count: prepared_ast.parameter_count(),
             result_columns,
-            template: Some(template),
-            point_get_plan: None,
-        }
-    }
-
-    /// Creates a retained template together with its immutable point-get
-    /// cache candidate.
-    #[must_use]
-    pub fn with_template_and_point_get_plan(
-        sql: String,
-        parameter_count: usize,
-        result_columns: Vec<ColumnInfo>,
-        template: Stmt,
-        point_get_plan: Option<std::sync::Arc<tidb_executor::PreparedPointGetPlan>>,
-    ) -> Self {
-        Self {
-            sql,
-            parameter_count,
-            result_columns,
-            template: Some(template),
-            point_get_plan,
+            prepared_ast: Some(prepared_ast),
         }
     }
 
@@ -648,15 +617,15 @@ impl PreparedGeneral {
     /// the binary prepared protocol.
     #[must_use]
     pub fn template(&self) -> Option<&Stmt> {
-        self.template.as_ref()
+        self.prepared_ast
+            .as_ref()
+            .map(tidb_session::PreparedAst::statement)
     }
 
-    /// The immutable point-get cache candidate compiled at PREPARE time.
+    /// The session-owned prepared definition, when this is not a routed command.
     #[must_use]
-    pub fn point_get_plan(
-        &self,
-    ) -> Option<&std::sync::Arc<tidb_executor::PreparedPointGetPlan>> {
-        self.point_get_plan.as_ref()
+    pub fn prepared_ast(&self) -> Option<&tidb_session::PreparedAst> {
+        self.prepared_ast.as_ref()
     }
 }
 
@@ -2090,10 +2059,11 @@ impl std::error::Error for SqlNodeError {
 /// more than one small write and the client's delayed ACK loses that race --
 /// which is precisely what an OLTP pooler's request/response pattern produces
 /// through any proxy or tunnel hop between the peers.
-pub(crate) fn prepare_accepted_stream(stream: &TcpStream, timeout: Duration) -> Result<(), SqlNodeError> {
-    stream
-        .set_nodelay(true)
-        .map_err(SqlNodeError::Listener)?;
+pub(crate) fn prepare_accepted_stream(
+    stream: &TcpStream,
+    timeout: Duration,
+) -> Result<(), SqlNodeError> {
+    stream.set_nodelay(true).map_err(SqlNodeError::Listener)?;
     stream
         .set_nonblocking(false)
         .map_err(SqlNodeError::Listener)?;
@@ -2542,8 +2512,14 @@ mod tests {
         // hop between server and client stalls small responses behind the
         // client's delayed ACK.
         assert_eq!(server.nodelay().unwrap(), true);
-        assert_eq!(server.read_timeout().unwrap(), Some(Duration::from_secs(30)));
-        assert_eq!(server.write_timeout().unwrap(), Some(Duration::from_secs(30)));
+        assert_eq!(
+            server.read_timeout().unwrap(),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            server.write_timeout().unwrap(),
+            Some(Duration::from_secs(30))
+        );
         drop(client);
     }
 }

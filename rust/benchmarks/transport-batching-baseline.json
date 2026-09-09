@@ -1,0 +1,2255 @@
+{
+  "status": "Ready scoped correctness. Final direct pairs: 32-client TPS +2.22%, SQL CPU/transaction -4.30%; 1/8-client TPS -0.42%/-0.58%. No universal speedup or TPC-C completion claim.",
+  "change": "One shared admission queue before four-connection rotation; unique physical retirement and shared request IDs; connection-local I/O workers; bounded immediate drain with obsolete adaptive admission state removed.",
+  "go_source": {
+    "module": "github.com/tikv/client-go/v2@v2.0.8-0.20260724023932-61ecd7c11416",
+    "revision": "61ecd7c114166c08e747d252fb9ae592e54bb599",
+    "flow": "shared pending queue -> drain/adaptive collection -> connection selection",
+    "maximum_commands": 128,
+    "standard_policy_wait_microseconds": 100
+  },
+  "binaries": {
+    "final_clean_shared_owner": {
+      "pid": 88828,
+      "port": 53059,
+      "command": [
+        "/private/tmp/tidb-batching-candidate-52y9d9z2/tidb-server",
+        "--path",
+        "127.0.0.1:43379",
+        "--store",
+        "tikv",
+        "--host",
+        "127.0.0.1",
+        "--cluster-session",
+        "--lease-ms",
+        "2000",
+        "--max-connections",
+        "32",
+        "--load-privileges",
+        "--port",
+        "53059"
+      ],
+      "sha256": "1e94d4e0c0b9a336c2df4b26de8740b8388418d62e1d5b1e36dc99a9301b689a",
+      "grpc_connection_count_env": "4"
+    },
+    "corrected_four_shard_control": {
+      "pid": 70174,
+      "port": 53055,
+      "command": [
+        "/private/tmp/tidb-batching-candidate-c12zi_8m/tidb-server",
+        "--path",
+        "127.0.0.1:43379",
+        "--store",
+        "tikv",
+        "--host",
+        "127.0.0.1",
+        "--cluster-session",
+        "--lease-ms",
+        "2000",
+        "--max-connections",
+        "32",
+        "--load-privileges",
+        "--port",
+        "53055"
+      ],
+      "sha256": "22c5d6af84cd8d5c8017c13919cb022ca5e24013fb679bf265bf76fbb6b2d30e",
+      "grpc_connection_count_env": null
+    },
+    "singleton_four_shards": {
+      "sha256": "65d86bb60b2d1dd8be472fe7cecae8082811c5498364ca81a97f791d5aa1ddfd",
+      "saved_path": "/private/tmp/tidb-batching-before-qy28EC/tidb-server",
+      "port": 53053
+    },
+    "drain_four_shards": {
+      "sha256": "c4e91faf47038a9de023e4abee2e9f44584cf7aa4cd9b58a9de44a084797f493",
+      "saved_path": "/private/tmp/tidb-batching-candidate-287nuw5w/tidb-server",
+      "manifest": "/private/tmp/tidb-batching-candidate-287nuw5w/manifest.json"
+    },
+    "adaptive_probe": {
+      "sha256": "2469893d616d1f54fb3bef7b324a07d8062ae69787340ee40ab4acd47251a8bd",
+      "saved_path": "/private/tmp/tidb-batching-candidate-y5bsxqmr/tidb-server",
+      "four_shard_manifest": "/private/tmp/tidb-batching-candidate-y5bsxqmr/manifest.json",
+      "one_shard_manifest": "/private/tmp/tidb-batching-candidate-clb8_zm_/manifest.json",
+      "note": "The timed probe yielded once even after a collection timeout. Source review removed that extra yield afterward; the latest source is not yet timed."
+    }
+  },
+  "method": {
+    "fixture": "perf_sysbench_locking_v2.sbtest1",
+    "driver": "sysbench /opt/homebrew/share/sysbench/oltp_read_only.lua",
+    "threads": [
+      1,
+      8,
+      32
+    ],
+    "events": {
+      "1": 3000,
+      "8": 12000,
+      "32": 24000
+    },
+    "pairs_per_concurrency": 3,
+    "seed": 1,
+    "prepared_statements": "auto",
+    "writes": 0,
+    "ignored_errors": 0,
+    "reconnects": 0,
+    "fixture_prepare_or_cleanup": false,
+    "go_and_rust_result_queries": 8,
+    "result_sha256": "0fda73a62d34b6456c8f42032f4b2c19a65e8801a5eb33f62417354e7f43dcc9",
+    "fixture_row_count": 100013,
+    "fixture_sum_k": 5011271921,
+    "limitations": [
+      "Shared TiKV metrics include background traffic; batch sizes are command/message ratios, not TCP packets.",
+      "Small-sample alternating trials; host background CPU and region topology can vary.",
+      "One-shard control also changes connections and runtime count; it does not isolate admission queue count alone.",
+      "The one-shard eight-client warmup was slower; no lower-concurrency acceptance from warmup timing.",
+      "Mixed TPC-C benchmark writes remain unapproved; no TPC-C improvement claim."
+    ]
+  },
+  "validation": {
+    "final_shared_owner": {
+      "profile": "Ready scoped correctness; full sysbench/TPC-C performance goal remains active",
+      "distinct_tests_passed": 106,
+      "test_executions_by_filter": {
+        "rpc_unit": 18,
+        "batch": 75,
+        "concurrency": 2,
+        "unary": 8,
+        "cancellation": 1,
+        "command_adapter": 3
+      },
+      "duplicate": "One concurrency test is included by the batch filter.",
+      "release_build_exit": 0,
+      "lint_exit": 0,
+      "log_prefix": "/private/tmp/tidb-batching-clean-final-",
+      "red_regressions": [
+        "Four-connection rotation compiled and failed with 1 unique channel instead of 4 before shared ownership.",
+        "No-deliberate-wait probe compiled and failed on an adaptive collection deadline before switching to immediate draining; the obsolete policy path is now deleted."
+      ],
+      "commands": [
+        "cargo test --offline --locked --release -j12 -p tidb-txnkv --lib rpc::",
+        "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all batch_",
+        "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all transport_authority_concurrency_source",
+        "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all tikv_tonic_coprocessor_source",
+        "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all tikv_active_cancellation_source",
+        "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all tikv_unary_command_source",
+        "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+        "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint"
+      ]
+    },
+    "profile": "Ready correctness checks, WIP performance acceptance",
+    "red": "Prequeued worker regression compiled and failed with batch size 1 instead of 2 before dispatch change.",
+    "commands": [
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --lib rpc::transport_runtime",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all batch_",
+      "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint"
+    ],
+    "scoped_tests_passed_before_final_review": 81,
+    "lint_exit_code": 0,
+    "lint_log": "/private/tmp/tidb-batching-ready-lint.log",
+    "earlier_source_revalidation": "Passed: 7 transport unit tests, 74 batch tests, release build, git diff --check and JSON parsing. Latest release SHA256 22c5d6af84cd8d5c8017c13919cb022ca5e24013fb679bf265bf76fbb6b2d30e is not yet timed."
+  },
+  "measurements": {
+    "final_clean_shared_owner": {
+      "raw_results": "/private/tmp/tidb-batching-clean-final-pairs/results.json",
+      "manifest": "/private/tmp/tidb-batching-candidate-52y9d9z2/manifest.json",
+      "before_sha256": "22c5d6af84cd8d5c8017c13919cb022ca5e24013fb679bf265bf76fbb6b2d30e",
+      "after_sha256": "1e94d4e0c0b9a336c2df4b26de8740b8388418d62e1d5b1e36dc99a9301b689a",
+      "comparison": "Original corrected adaptive four-shard control versus cleaned shared admission, four connection-local I/O runtimes and bounded ready-queue draining.",
+      "acceptance": "Observed 32-client read-only gain, with sub-one-percent measured regressions at 1 and 8 clients. Not a universal throughput improvement or full goal completion.",
+      "medians": [
+        {
+          "threads": 1,
+          "before": {
+            "trials": 3,
+            "tps": 436.57,
+            "commands_per_request_batch": 1.3126479896846794,
+            "commands_per_transaction": 18.663333333333334,
+            "sql_cpu_ms_per_transaction": 1.3099999999999834,
+            "tikv_cpu_ms_per_transaction": 1.1366666666669214
+          },
+          "after": {
+            "trials": 3,
+            "tps": 434.74,
+            "commands_per_request_batch": 1.3112573476031006,
+            "commands_per_transaction": 18.655333333333335,
+            "sql_cpu_ms_per_transaction": 1.3166666666666664,
+            "tikv_cpu_ms_per_transaction": 1.1433333333334303
+          },
+          "tps_change_percent": -0.41917676432187134,
+          "sql_cpu_change_percent": 0.5089058524185619,
+          "tikv_cpu_change_percent": 0.5865102639156072,
+          "paired_tps_changes_percent": [
+            0.09848606307689689,
+            -0.4489543486726033,
+            0.1935929937773695
+          ]
+        },
+        {
+          "threads": 8,
+          "before": {
+            "trials": 3,
+            "tps": 2008.64,
+            "commands_per_request_batch": 1.337296181382816,
+            "commands_per_transaction": 18.569583333333334,
+            "sql_cpu_ms_per_transaction": 2.244166666666662,
+            "tikv_cpu_ms_per_transaction": 1.9833333333333485
+          },
+          "after": {
+            "trials": 3,
+            "tps": 1996.94,
+            "commands_per_request_batch": 1.4948717088713734,
+            "commands_per_transaction": 18.570666666666668,
+            "sql_cpu_ms_per_transaction": 2.2108333333333334,
+            "tikv_cpu_ms_per_transaction": 2.0541666666666365
+          },
+          "tps_change_percent": -0.5824836705432546,
+          "sql_cpu_change_percent": -1.4853323431115673,
+          "tikv_cpu_change_percent": 3.5714285714262495,
+          "paired_tps_changes_percent": [
+            -0.6846114072070586,
+            -0.8791482783553906,
+            -0.5824836705432546
+          ]
+        },
+        {
+          "threads": 32,
+          "before": {
+            "trials": 3,
+            "tps": 3078.59,
+            "commands_per_request_batch": 1.7310231215444927,
+            "commands_per_transaction": 18.563708333333334,
+            "sql_cpu_ms_per_transaction": 2.3045833333333356,
+            "tikv_cpu_ms_per_transaction": 1.829583333333365
+          },
+          "after": {
+            "trials": 3,
+            "tps": 3146.79,
+            "commands_per_request_batch": 2.2744914838867785,
+            "commands_per_transaction": 18.563833333333335,
+            "sql_cpu_ms_per_transaction": 2.2054166666666664,
+            "tikv_cpu_ms_per_transaction": 1.8191666666666986
+          },
+          "tps_change_percent": 2.215299861300135,
+          "sql_cpu_change_percent": -4.303019345507253,
+          "tikv_cpu_change_percent": -0.5693463903438722,
+          "paired_tps_changes_percent": [
+            2.2130260931140455,
+            1.7029184577098455,
+            3.094865567288374
+          ]
+        }
+      ],
+      "trials": [
+        {
+          "label": "0-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 436.61,
+          "sql_cpu_seconds": 3.92999999999995,
+          "tikv_cpu_seconds": 3.399999999999636,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.3126479896846794,
+          "req_multi_batch_percent": 21.291759465478844,
+          "resp_commands_per_batch": 1.0828305097857198,
+          "resp_multi_batch_percent": 8.114798483793606,
+          "post_ready_wait_us": 6.064730710398842
+        },
+        {
+          "label": "0-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 437.04,
+          "sql_cpu_seconds": 3.9400000000000013,
+          "tikv_cpu_seconds": 3.4200000000000728,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.3094185094185093,
+          "req_multi_batch_percent": 21.254241254241258,
+          "resp_commands_per_batch": 1.0800826111293405,
+          "resp_multi_batch_percent": 7.880870119091277,
+          "post_ready_wait_us": 6.092115141843005
+        },
+        {
+          "label": "1-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 434.61,
+          "sql_cpu_seconds": 3.9499999999999993,
+          "tikv_cpu_seconds": 3.430000000000291,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.3124618920313307,
+          "req_multi_batch_percent": 21.293560339571314,
+          "resp_commands_per_batch": 1.0804038532074671,
+          "resp_multi_batch_percent": 7.911044188336136,
+          "post_ready_wait_us": 6.111620594211222
+        },
+        {
+          "label": "1-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 436.57,
+          "sql_cpu_seconds": 3.909999999999968,
+          "tikv_cpu_seconds": 3.410000000000764,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.314471025050524,
+          "req_multi_batch_percent": 21.34229449640457,
+          "resp_commands_per_batch": 1.0828977426723971,
+          "resp_multi_batch_percent": 8.150385255740122,
+          "post_ready_wait_us": 6.077377434852845
+        },
+        {
+          "label": "2-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 433.9,
+          "sql_cpu_seconds": 3.9600000000000364,
+          "tikv_cpu_seconds": 3.430000000000291,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.3120093731693028,
+          "req_multi_batch_percent": 21.267721148213237,
+          "resp_commands_per_batch": 1.0857087453946093,
+          "resp_multi_batch_percent": 8.384719798332362,
+          "post_ready_wait_us": 6.130109076209436
+        },
+        {
+          "label": "2-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 434.74,
+          "sql_cpu_seconds": 3.9499999999999993,
+          "tikv_cpu_seconds": 3.430000000000291,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.3112573476031006,
+          "req_multi_batch_percent": 21.26648087866795,
+          "resp_commands_per_batch": 1.080947508639163,
+          "resp_multi_batch_percent": 7.9364466495492225,
+          "post_ready_wait_us": 6.125813439623659
+        },
+        {
+          "label": "3-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 2011.36,
+          "sql_cpu_seconds": 26.92999999999995,
+          "tikv_cpu_seconds": 23.800000000000182,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.337296181382816,
+          "req_multi_batch_percent": 24.862120493785667,
+          "resp_commands_per_batch": 1.21008645220149,
+          "resp_multi_batch_percent": 18.17559788865478,
+          "post_ready_wait_us": 14.017026854790515
+        },
+        {
+          "label": "3-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1997.59,
+          "sql_cpu_seconds": 26.53,
+          "tikv_cpu_seconds": 24.649999999999636,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.494831599353363,
+          "req_multi_batch_percent": 34.39786958592425,
+          "resp_commands_per_batch": 1.191936372437327,
+          "resp_multi_batch_percent": 17.069152720056913,
+          "post_ready_wait_us": 15.059948293087889
+        },
+        {
+          "label": "4-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1987.72,
+          "sql_cpu_seconds": 26.64999999999999,
+          "tikv_cpu_seconds": 24.779999999999745,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.4948717088713734,
+          "req_multi_batch_percent": 34.522891162166694,
+          "resp_commands_per_batch": 1.1931041867437626,
+          "resp_multi_batch_percent": 17.159224756397904,
+          "post_ready_wait_us": 15.140295166279856
+        },
+        {
+          "label": "4-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 2005.35,
+          "sql_cpu_seconds": 26.960000000000036,
+          "tikv_cpu_seconds": 23.920000000000073,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.337514554249841,
+          "req_multi_batch_percent": 24.91867625346601,
+          "resp_commands_per_batch": 1.210689295493068,
+          "resp_multi_batch_percent": 18.161371637185454,
+          "post_ready_wait_us": 14.110199050633904
+        },
+        {
+          "label": "5-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 2008.64,
+          "sql_cpu_seconds": 26.899999999999977,
+          "tikv_cpu_seconds": 23.779999999999745,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.3366926413158888,
+          "req_multi_batch_percent": 24.8450819131259,
+          "resp_commands_per_batch": 1.211080976786908,
+          "resp_multi_batch_percent": 18.24708817279106,
+          "post_ready_wait_us": 14.093802382296976
+        },
+        {
+          "label": "5-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1996.94,
+          "sql_cpu_seconds": 26.519999999999982,
+          "tikv_cpu_seconds": 24.610000000000582,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.4960063897763578,
+          "req_multi_batch_percent": 34.65312642628936,
+          "resp_commands_per_batch": 1.1941185294716428,
+          "resp_multi_batch_percent": 17.25920687475222,
+          "post_ready_wait_us": 15.095730052722669
+        },
+        {
+          "label": "6-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3078.59,
+          "sql_cpu_seconds": 55.40999999999997,
+          "tikv_cpu_seconds": 44.32999999999993,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.7310231215444927,
+          "req_multi_batch_percent": 41.72251815416176,
+          "resp_commands_per_batch": 1.5563896904191323,
+          "resp_multi_batch_percent": 34.775971326565546,
+          "post_ready_wait_us": 39.583447905958444
+        },
+        {
+          "label": "6-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3146.72,
+          "sql_cpu_seconds": 52.92999999999999,
+          "tikv_cpu_seconds": 43.969999999999345,
+          "profiler_exit": null,
+          "req_commands_per_batch": 2.2744914838867785,
+          "req_multi_batch_percent": 56.70873667442715,
+          "resp_commands_per_batch": 1.6012875258799173,
+          "resp_multi_batch_percent": 35.88214573268921,
+          "post_ready_wait_us": 40.47475551945877
+        },
+        {
+          "label": "7-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3146.79,
+          "sql_cpu_seconds": 53.24000000000001,
+          "tikv_cpu_seconds": 43.660000000000764,
+          "profiler_exit": null,
+          "req_commands_per_batch": 2.2194321295143213,
+          "req_multi_batch_percent": 55.6134495641345,
+          "resp_commands_per_batch": 1.592800863696162,
+          "resp_multi_batch_percent": 35.498412743808274,
+          "post_ready_wait_us": 40.719912495093936
+        },
+        {
+          "label": "7-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3094.1,
+          "sql_cpu_seconds": 55.31000000000006,
+          "tikv_cpu_seconds": 43.910000000000764,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.7080608184264805,
+          "req_multi_batch_percent": 41.14943145659058,
+          "resp_commands_per_batch": 1.590147902806727,
+          "resp_multi_batch_percent": 35.62801587528196,
+          "post_ready_wait_us": 42.501000390603174
+        },
+        {
+          "label": "8-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3055.06,
+          "sql_cpu_seconds": 54.98000000000002,
+          "tikv_cpu_seconds": 43.589999999999236,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.7314483235933387,
+          "req_multi_batch_percent": 41.788270791291936,
+          "resp_commands_per_batch": 1.5800278888561665,
+          "resp_multi_batch_percent": 35.47987638069353,
+          "post_ready_wait_us": 42.48577835833496
+        },
+        {
+          "label": "8-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3149.61,
+          "sql_cpu_seconds": 52.46999999999997,
+          "tikv_cpu_seconds": 42.73999999999978,
+          "profiler_exit": null,
+          "req_commands_per_batch": 2.2817137999201074,
+          "req_multi_batch_percent": 56.97370712171339,
+          "resp_commands_per_batch": 1.5630233822729744,
+          "resp_multi_batch_percent": 34.694171095791894,
+          "post_ready_wait_us": 37.71326279391296
+        }
+      ],
+      "result_checks": {
+        "queries": 10,
+        "all_matched": true,
+        "row_count": 100013,
+        "sum_k": 5011271921,
+        "before_benchmark": "/private/tmp/tidb-batching-clean-final-results.json",
+        "after_benchmark": "/private/tmp/tidb-batching-clean-final-post-results.json",
+        "scope": "Ten ordered or normalized result sets and COUNT/SUM(k), not a full-table hash or TPC-C proof."
+      }
+    },
+    "connection_local_io": {
+      "raw_results": "/private/tmp/tidb-shared-affine-pairs/results.json",
+      "manifest": "/private/tmp/tidb-batching-candidate-244eimc1/manifest.json",
+      "before_sha256": "e62da9d9ac2ee371de8be1f5868cfc63e65ce975044d1258981b19e462420b5c",
+      "after_sha256": "3e09e4478f27f31b68e87ecf700d6b4a6feeb65a0e75125c8f30451e2d19a8ac",
+      "comparison": "Same shared admission, immediate-drain policy, four connections and four I/O threads. Change shared work-stealing runtime to four connection-local single-worker runtimes.",
+      "medians": [
+        {
+          "threads": 1,
+          "before": {
+            "trials": 3,
+            "tps": 435.76,
+            "commands_per_request_batch": 1.3113997046344266,
+            "commands_per_transaction": 18.647666666666666,
+            "sql_cpu_ms_per_transaction": 1.4133333333333364,
+            "tikv_cpu_ms_per_transaction": 1.1266666666665515
+          },
+          "after": {
+            "trials": 3,
+            "tps": 433.17,
+            "commands_per_request_batch": 1.314043373041047,
+            "commands_per_transaction": 18.642333333333333,
+            "sql_cpu_ms_per_transaction": 1.3166666666666664,
+            "tikv_cpu_ms_per_transaction": 1.146666666666685
+          },
+          "tps_change_percent": -0.594363870020187,
+          "paired_tps_changes_percent": [
+            0.6506483245805716,
+            -0.8582806921175523,
+            -0.4360198274279359
+          ]
+        },
+        {
+          "threads": 8,
+          "before": {
+            "trials": 3,
+            "tps": 1961.81,
+            "commands_per_request_batch": 1.5023799571203194,
+            "commands_per_transaction": 18.571166666666667,
+            "sql_cpu_ms_per_transaction": 2.3616666666666646,
+            "tikv_cpu_ms_per_transaction": 2.050833333333306
+          },
+          "after": {
+            "trials": 3,
+            "tps": 1999.41,
+            "commands_per_request_batch": 1.4977683972790579,
+            "commands_per_transaction": 18.568833333333334,
+            "sql_cpu_ms_per_transaction": 2.2091666666666665,
+            "tikv_cpu_ms_per_transaction": 2.048333333333403
+          },
+          "tps_change_percent": 1.9165974278854803,
+          "paired_tps_changes_percent": [
+            1.3476841928405259,
+            2.092150606253984,
+            1.9165974278854803
+          ]
+        },
+        {
+          "threads": 32,
+          "before": {
+            "trials": 3,
+            "tps": 3130.73,
+            "commands_per_request_batch": 2.3153591883828986,
+            "commands_per_transaction": 18.562041666666666,
+            "sql_cpu_ms_per_transaction": 2.254583333333334,
+            "tikv_cpu_ms_per_transaction": 1.800416666666668
+          },
+          "after": {
+            "trials": 3,
+            "tps": 3149.88,
+            "commands_per_request_batch": 2.3111349747356846,
+            "commands_per_transaction": 18.561041666666668,
+            "sql_cpu_ms_per_transaction": 2.2024999999999992,
+            "tikv_cpu_ms_per_transaction": 1.8162500000000061
+          },
+          "tps_change_percent": 0.6116784264372788,
+          "paired_tps_changes_percent": [
+            1.817955223785206,
+            0.34620752650051934,
+            0.6116784264372788
+          ]
+        }
+      ],
+      "trials": [
+        {
+          "label": "0-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 430.34,
+          "sql_cpu_seconds": 4.310000000000002,
+          "tikv_cpu_seconds": 3.4100000000003092,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.3113997046344266,
+          "req_multi_batch_percent": 21.23115872383319,
+          "resp_commands_per_batch": 1.0803352451576773,
+          "resp_multi_batch_percent": 7.9099318309097555,
+          "post_ready_wait_us": 6.128104985187071
+        },
+        {
+          "label": "0-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 433.14,
+          "sql_cpu_seconds": 3.9399999999999977,
+          "tikv_cpu_seconds": 3.4400000000000546,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.3156074260570838,
+          "req_multi_batch_percent": 21.384032565472133,
+          "resp_commands_per_batch": 1.0828733561869348,
+          "resp_multi_batch_percent": 8.142079677725489,
+          "post_ready_wait_us": 6.161620365681248
+        },
+        {
+          "label": "1-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 433.17,
+          "sql_cpu_seconds": 3.960000000000001,
+          "tikv_cpu_seconds": 3.449999999999818,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.3117463885181804,
+          "req_multi_batch_percent": 21.289597527569015,
+          "resp_commands_per_batch": 1.0830063211613925,
+          "resp_multi_batch_percent": 8.126655197077193,
+          "post_ready_wait_us": 6.179962121449734
+        },
+        {
+          "label": "1-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 436.92,
+          "sql_cpu_seconds": 4.240000000000009,
+          "tikv_cpu_seconds": 3.369999999999891,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.3105395085154732,
+          "req_multi_batch_percent": 21.250029282919858,
+          "resp_commands_per_batch": 1.0773185949776614,
+          "resp_multi_batch_percent": 7.656755507625945,
+          "post_ready_wait_us": 6.022654187312914
+        },
+        {
+          "label": "2-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 435.76,
+          "sql_cpu_seconds": 4.240000000000009,
+          "tikv_cpu_seconds": 3.3799999999996544,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.3146759444274665,
+          "req_multi_batch_percent": 21.340417029079195,
+          "resp_commands_per_batch": 1.0776775735152426,
+          "resp_multi_batch_percent": 7.6945311596716355,
+          "post_ready_wait_us": 6.053780280935447
+        },
+        {
+          "label": "2-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 433.86,
+          "sql_cpu_seconds": 3.9499999999999993,
+          "tikv_cpu_seconds": 3.430000000000291,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.314043373041047,
+          "req_multi_batch_percent": 21.371678297032492,
+          "resp_commands_per_batch": 1.0827235064080225,
+          "resp_multi_batch_percent": 8.101986293413866,
+          "post_ready_wait_us": 6.165335364147615
+        },
+        {
+          "label": "3-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1964.11,
+          "sql_cpu_seconds": 28.360000000000014,
+          "tikv_cpu_seconds": 24.559999999999945,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.5006698938268779,
+          "req_multi_batch_percent": 34.79273686974437,
+          "resp_commands_per_batch": 1.1875879118537147,
+          "resp_multi_batch_percent": 16.748007331315804,
+          "post_ready_wait_us": 14.359882964369852
+        },
+        {
+          "label": "3-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1990.58,
+          "sql_cpu_seconds": 26.509999999999998,
+          "tikv_cpu_seconds": 24.659999999999854,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.495212405472687,
+          "req_multi_batch_percent": 34.4874556300367,
+          "resp_commands_per_batch": 1.194277108433735,
+          "resp_multi_batch_percent": 17.262466235046947,
+          "post_ready_wait_us": 15.149736014056955
+        },
+        {
+          "label": "4-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1999.73,
+          "sql_cpu_seconds": 26.509999999999998,
+          "tikv_cpu_seconds": 24.559999999999945,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.497966345539742,
+          "req_multi_batch_percent": 34.703220905295574,
+          "resp_commands_per_batch": 1.1938895794933344,
+          "resp_multi_batch_percent": 17.2510609113121,
+          "post_ready_wait_us": 14.998618878361162
+        },
+        {
+          "label": "4-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1958.75,
+          "sql_cpu_seconds": 28.339999999999975,
+          "tikv_cpu_seconds": 24.61999999999989,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.5028356789782116,
+          "req_multi_batch_percent": 34.916278348360294,
+          "resp_commands_per_batch": 1.189969937579094,
+          "resp_multi_batch_percent": 16.979127175253772,
+          "post_ready_wait_us": 14.441408977188543
+        },
+        {
+          "label": "5-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1961.81,
+          "sql_cpu_seconds": 28.339999999999975,
+          "tikv_cpu_seconds": 24.609999999999673,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.5023799571203194,
+          "req_multi_batch_percent": 34.92401666644193,
+          "resp_commands_per_batch": 1.1886298293620947,
+          "resp_multi_batch_percent": 16.809887290436485,
+          "post_ready_wait_us": 14.410979313022528
+        },
+        {
+          "label": "5-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1999.41,
+          "sql_cpu_seconds": 26.53,
+          "tikv_cpu_seconds": 24.580000000000837,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.4977683972790579,
+          "req_multi_batch_percent": 34.70007797166134,
+          "resp_commands_per_batch": 1.191493684964762,
+          "resp_multi_batch_percent": 17.075192231597637,
+          "post_ready_wait_us": 14.998056107506835
+        },
+        {
+          "label": "6-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3129.34,
+          "sql_cpu_seconds": 54.110000000000014,
+          "tikv_cpu_seconds": 43.210000000000036,
+          "profiler_exit": null,
+          "req_commands_per_batch": 2.2699588770950005,
+          "req_multi_batch_percent": 56.66858607528498,
+          "resp_commands_per_batch": 1.6131285624271219,
+          "resp_multi_batch_percent": 35.96829213531972,
+          "post_ready_wait_us": 42.352603838038924
+        },
+        {
+          "label": "6-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3186.23,
+          "sql_cpu_seconds": 52.249999999999986,
+          "tikv_cpu_seconds": 43.25,
+          "profiler_exit": null,
+          "req_commands_per_batch": 2.3111349747356846,
+          "req_multi_batch_percent": 57.091127919403206,
+          "resp_commands_per_batch": 1.563132447263898,
+          "resp_multi_batch_percent": 34.73424934386886,
+          "post_ready_wait_us": 37.25399257517173
+        },
+        {
+          "label": "7-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3141.91,
+          "sql_cpu_seconds": 52.859999999999985,
+          "tikv_cpu_seconds": 43.590000000000146,
+          "profiler_exit": null,
+          "req_commands_per_batch": 2.3149283828451446,
+          "req_multi_batch_percent": 57.30567740057793,
+          "resp_commands_per_batch": 1.5938082578031911,
+          "resp_multi_batch_percent": 35.57317627357596,
+          "post_ready_wait_us": 40.233396697585
+        },
+        {
+          "label": "7-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3131.07,
+          "sql_cpu_seconds": 53.99000000000001,
+          "tikv_cpu_seconds": 42.75999999999931,
+          "profiler_exit": null,
+          "req_commands_per_batch": 2.3153591883828986,
+          "req_multi_batch_percent": 56.97379499599804,
+          "resp_commands_per_batch": 1.5974561988568314,
+          "resp_multi_batch_percent": 35.35897932399579,
+          "post_ready_wait_us": 41.4498558103689
+        },
+        {
+          "label": "8-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3130.73,
+          "sql_cpu_seconds": 54.139999999999986,
+          "tikv_cpu_seconds": 43.289999999999964,
+          "profiler_exit": null,
+          "req_commands_per_batch": 2.396801144830777,
+          "req_multi_batch_percent": 57.63695737549697,
+          "resp_commands_per_batch": 1.6202607604604222,
+          "resp_multi_batch_percent": 36.06931791318895,
+          "post_ready_wait_us": 42.04912191740942
+        },
+        {
+          "label": "8-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3149.88,
+          "sql_cpu_seconds": 53.29999999999998,
+          "tikv_cpu_seconds": 43.61999999999989,
+          "profiler_exit": null,
+          "req_commands_per_batch": 2.264796050658139,
+          "req_multi_batch_percent": 56.429628198544926,
+          "resp_commands_per_batch": 1.5892096494545247,
+          "resp_multi_batch_percent": 35.56042325173203,
+          "post_ready_wait_us": 39.96904675119043
+        }
+      ],
+      "result_checks": {
+        "queries": 10,
+        "all_matched": true,
+        "row_count": 100013,
+        "sum_k": 5011271921,
+        "artifact": "/private/tmp/tidb-shared-affine-results.json"
+      }
+    },
+    "shared_admission_drain": {
+      "raw_results": "/private/tmp/tidb-shared-drain-pairs/results.json",
+      "manifest": "/private/tmp/tidb-batching-candidate-192brkxz/manifest.json",
+      "before_sha256": "22c5d6af84cd8d5c8017c13919cb022ca5e24013fb679bf265bf76fbb6b2d30e",
+      "after_sha256": "e62da9d9ac2ee371de8be1f5868cfc63e65ce975044d1258981b19e462420b5c",
+      "medians": [
+        {
+          "threads": 1,
+          "before": {
+            "trials": 3,
+            "tps": 437.92,
+            "commands_per_request_batch": 1.3120298108697181,
+            "commands_per_transaction": 18.637,
+            "sql_cpu_ms_per_transaction": 1.306666666666672,
+            "tikv_cpu_ms_per_transaction": 1.133333333333212
+          },
+          "after": {
+            "trials": 3,
+            "tps": 438.27,
+            "commands_per_request_batch": 1.313078622115701,
+            "commands_per_transaction": 18.633,
+            "sql_cpu_ms_per_transaction": 1.4066666666666676,
+            "tikv_cpu_ms_per_transaction": 1.1233333333332969
+          },
+          "tps_change_percent": 0.07992327365728968,
+          "paired_tps_changes_percent": [
+            -0.05700994253398095,
+            0.2671720862257754,
+            -0.8742743064319991
+          ]
+        },
+        {
+          "threads": 8,
+          "before": {
+            "trials": 3,
+            "tps": 2016.98,
+            "commands_per_request_batch": 1.336925929704331,
+            "commands_per_transaction": 18.565083333333334,
+            "sql_cpu_ms_per_transaction": 2.25,
+            "tikv_cpu_ms_per_transaction": 1.9674999999999727
+          },
+          "after": {
+            "trials": 3,
+            "tps": 1971.75,
+            "commands_per_request_batch": 1.5039753783021288,
+            "commands_per_transaction": 18.567416666666666,
+            "sql_cpu_ms_per_transaction": 2.3466666666666662,
+            "tikv_cpu_ms_per_transaction": 2.0441666666666456
+          },
+          "tps_change_percent": -2.242461501849302,
+          "paired_tps_changes_percent": [
+            -1.5779387242091714,
+            -2.9087127683280145,
+            -2.242461501849302
+          ]
+        },
+        {
+          "threads": 32,
+          "before": {
+            "trials": 3,
+            "tps": 3096.35,
+            "commands_per_request_batch": 1.7167262721400933,
+            "commands_per_transaction": 18.5595,
+            "sql_cpu_ms_per_transaction": 2.2837500000000026,
+            "tikv_cpu_ms_per_transaction": 1.8079166666666613
+          },
+          "after": {
+            "trials": 3,
+            "tps": 3147.91,
+            "commands_per_request_batch": 2.253275330062219,
+            "commands_per_transaction": 18.56325,
+            "sql_cpu_ms_per_transaction": 2.2495833333333337,
+            "tikv_cpu_ms_per_transaction": 1.79916666666666
+          },
+          "tps_change_percent": 1.6651864291827412,
+          "paired_tps_changes_percent": [
+            1.6934314115051308,
+            1.1180906551262026,
+            1.7254115150009852
+          ]
+        }
+      ],
+      "trials": [
+        {
+          "label": "0-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 438.52,
+          "sql_cpu_seconds": 3.920000000000016,
+          "tikv_cpu_seconds": 3.400000000000091,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.3120298108697181,
+          "req_multi_batch_percent": 21.29180435444936,
+          "resp_commands_per_batch": 1.0807528957528958,
+          "resp_multi_batch_percent": 7.928571428571429,
+          "post_ready_wait_us": 5.924459890319617
+        },
+        {
+          "label": "0-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 438.27,
+          "sql_cpu_seconds": 4.220000000000002,
+          "tikv_cpu_seconds": 3.369999999999891,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.3113873578046207,
+          "req_multi_batch_percent": 21.292365427465697,
+          "resp_commands_per_batch": 1.0782804906271697,
+          "resp_multi_batch_percent": 7.673763789246313,
+          "post_ready_wait_us": 5.956002540434304
+        },
+        {
+          "label": "1-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 439.09,
+          "sql_cpu_seconds": 4.199999999999999,
+          "tikv_cpu_seconds": 3.369999999999891,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.313078622115701,
+          "req_multi_batch_percent": 21.337938812914135,
+          "resp_commands_per_batch": 1.077825139352325,
+          "resp_multi_batch_percent": 7.674503828572532,
+          "post_ready_wait_us": 5.93361876874148
+        },
+        {
+          "label": "1-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 437.92,
+          "sql_cpu_seconds": 3.919999999999959,
+          "tikv_cpu_seconds": 3.369999999999891,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.3118749119594308,
+          "req_multi_batch_percent": 21.287035732732306,
+          "resp_commands_per_batch": 1.0835369400814427,
+          "resp_multi_batch_percent": 8.18305216210975,
+          "post_ready_wait_us": 5.911452200401979
+        },
+        {
+          "label": "2-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 435.79,
+          "sql_cpu_seconds": 3.9499999999999886,
+          "tikv_cpu_seconds": 3.399999999999636,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.3140379327363745,
+          "req_multi_batch_percent": 21.314249453571176,
+          "resp_commands_per_batch": 1.081325184698101,
+          "resp_multi_batch_percent": 8.03194987042123,
+          "post_ready_wait_us": 5.91979522890748
+        },
+        {
+          "label": "2-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 431.98,
+          "sql_cpu_seconds": 4.289999999999999,
+          "tikv_cpu_seconds": 3.4099999999998545,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.313107822410148,
+          "req_multi_batch_percent": 21.34132017852948,
+          "resp_commands_per_batch": 1.082558679990704,
+          "resp_multi_batch_percent": 8.09706406383144,
+          "post_ready_wait_us": 6.029107802250818
+        },
+        {
+          "label": "3-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 2008.95,
+          "sql_cpu_seconds": 27.05000000000001,
+          "tikv_cpu_seconds": 23.61999999999989,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.337568145248445,
+          "req_multi_batch_percent": 24.93395614688153,
+          "resp_commands_per_batch": 1.2014949924225673,
+          "resp_multi_batch_percent": 17.58395849400547,
+          "post_ready_wait_us": 13.45826037317806
+        },
+        {
+          "label": "3-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1977.25,
+          "sql_cpu_seconds": 28.110000000000007,
+          "tikv_cpu_seconds": 24.529999999999745,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.5039753783021288,
+          "req_multi_batch_percent": 35.087944277210084,
+          "resp_commands_per_batch": 1.1894777298543793,
+          "resp_multi_batch_percent": 16.94335311952855,
+          "post_ready_wait_us": 14.253153999096794
+        },
+        {
+          "label": "4-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1960.71,
+          "sql_cpu_seconds": 28.269999999999996,
+          "tikv_cpu_seconds": 24.73999999999978,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.5038101473436962,
+          "req_multi_batch_percent": 35.11342697273838,
+          "resp_commands_per_batch": 1.1921833864857345,
+          "resp_multi_batch_percent": 17.09402624087669,
+          "post_ready_wait_us": 14.497194909937082
+        },
+        {
+          "label": "4-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 2019.45,
+          "sql_cpu_seconds": 27,
+          "tikv_cpu_seconds": 23.59999999999991,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.336925929704331,
+          "req_multi_batch_percent": 24.824320837258984,
+          "resp_commands_per_batch": 1.1992528355107688,
+          "resp_multi_batch_percent": 17.45070490770796,
+          "post_ready_wait_us": 13.304940758460722
+        },
+        {
+          "label": "5-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 2016.98,
+          "sql_cpu_seconds": 26.99000000000001,
+          "tikv_cpu_seconds": 23.609999999999673,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.3358016992750799,
+          "req_multi_batch_percent": 24.809176325272674,
+          "resp_commands_per_batch": 1.20193469722474,
+          "resp_multi_batch_percent": 17.563878458284776,
+          "post_ready_wait_us": 13.400212782716082
+        },
+        {
+          "label": "5-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1971.75,
+          "sql_cpu_seconds": 28.159999999999997,
+          "tikv_cpu_seconds": 24.5,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.5040840848949615,
+          "req_multi_batch_percent": 34.9705675865421,
+          "resp_commands_per_batch": 1.189545449691948,
+          "resp_multi_batch_percent": 16.896949376955362,
+          "post_ready_wait_us": 14.285041272803685
+        },
+        {
+          "label": "6-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3095.49,
+          "sql_cpu_seconds": 54.80000000000001,
+          "tikv_cpu_seconds": 43.31999999999971,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.7167262721400933,
+          "req_multi_batch_percent": 41.36979544018128,
+          "resp_commands_per_batch": 1.5920821732743862,
+          "resp_multi_batch_percent": 35.51013406052201,
+          "post_ready_wait_us": 42.24833021830763
+        },
+        {
+          "label": "6-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3147.91,
+          "sql_cpu_seconds": 53.889999999999986,
+          "tikv_cpu_seconds": 43.179999999999836,
+          "profiler_exit": null,
+          "req_commands_per_batch": 2.253275330062219,
+          "req_multi_batch_percent": 56.271940917598265,
+          "resp_commands_per_batch": 1.6147917754190593,
+          "resp_multi_batch_percent": 35.88973957427063,
+          "post_ready_wait_us": 43.03761513538346
+        },
+        {
+          "label": "7-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3130.97,
+          "sql_cpu_seconds": 53.99000000000001,
+          "tikv_cpu_seconds": 43.14000000000033,
+          "profiler_exit": null,
+          "req_commands_per_batch": 2.234385813582612,
+          "req_multi_batch_percent": 56.32591448430808,
+          "resp_commands_per_batch": 1.6072907647907648,
+          "resp_multi_batch_percent": 36.00252525252525,
+          "post_ready_wait_us": 42.27098665920044
+        },
+        {
+          "label": "7-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3096.35,
+          "sql_cpu_seconds": 54.99000000000001,
+          "tikv_cpu_seconds": 43.7199999999998,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.7135756936450677,
+          "req_multi_batch_percent": 41.06240206967442,
+          "resp_commands_per_batch": 1.5755969953769584,
+          "resp_multi_batch_percent": 35.18608981302522,
+          "post_ready_wait_us": 40.47796104971197
+        },
+        {
+          "label": "8-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3100.13,
+          "sql_cpu_seconds": 54.81000000000006,
+          "tikv_cpu_seconds": 43.38999999999987,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.742096720574144,
+          "req_multi_batch_percent": 42.185892797778514,
+          "resp_commands_per_batch": 1.5649864205381894,
+          "resp_multi_batch_percent": 34.81928599787085,
+          "post_ready_wait_us": 40.03111244921448
+        },
+        {
+          "label": "8-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3153.62,
+          "sql_cpu_seconds": 54.039999999999964,
+          "tikv_cpu_seconds": 43.340000000000146,
+          "profiler_exit": null,
+          "req_commands_per_batch": 2.2700281767646144,
+          "req_multi_batch_percent": 56.81821655856232,
+          "resp_commands_per_batch": 1.5881260471250846,
+          "resp_multi_batch_percent": 35.28392685274302,
+          "post_ready_wait_us": 40.18359725022956
+        }
+      ],
+      "result_checks": {
+        "queries": 10,
+        "all_matched": true,
+        "row_count": 100013,
+        "sum_k": 5011271921,
+        "artifact": "/private/tmp/tidb-shared-drain-results.json"
+      },
+      "limitations": [
+        "No broad throughput acceptance: the positive 32-client result accompanies an eight-client regression.",
+        "Command volume changed between the adaptive and drain measurement windows: approximately 14.4 versus 18.6 commands/transaction. Only paired controls within each window establish their relative result; this is not a direct adaptive-versus-drain speed ranking."
+      ]
+    },
+    "shared_admission_adaptive": {
+      "raw_results": "/private/tmp/tidb-shared-admission-pairs/results.json",
+      "manifest": "/private/tmp/tidb-batching-candidate-7_5qcuqk/manifest.json",
+      "before_sha256": "22c5d6af84cd8d5c8017c13919cb022ca5e24013fb679bf265bf76fbb6b2d30e",
+      "after_sha256": "70328fd2a5787e4de20198a66be519b054e7bfaecae4be6135a9d3d3c79974d3",
+      "connections_per_side": 4,
+      "medians": [
+        {
+          "threads": 1,
+          "before": {
+            "trials": 3,
+            "tps": 443.33,
+            "commands_per_request_batch": 1.00002363116478,
+            "sql_cpu_ms_per_transaction": 1.2533333333333327,
+            "tikv_cpu_ms_per_transaction": 0.873333333333297
+          },
+          "after": {
+            "trials": 3,
+            "tps": 444.44,
+            "commands_per_request_batch": 1.0000473204779368,
+            "sql_cpu_ms_per_transaction": 1.3399999999999999,
+            "tikv_cpu_ms_per_transaction": 0.8666666666666364
+          },
+          "tps_change_percent": 0.2503778223896358
+        },
+        {
+          "threads": 8,
+          "before": {
+            "trials": 3,
+            "tps": 2146.61,
+            "commands_per_request_batch": 1.0730646851954078,
+            "sql_cpu_ms_per_transaction": 2.1000000000000014,
+            "tikv_cpu_ms_per_transaction": 1.419999999999997
+          },
+          "after": {
+            "trials": 3,
+            "tps": 2007.21,
+            "commands_per_request_batch": 2.3548716413034603,
+            "sql_cpu_ms_per_transaction": 1.936666666666667,
+            "tikv_cpu_ms_per_transaction": 1.2291666666666667
+          },
+          "tps_change_percent": -6.493960244292163
+        },
+        {
+          "threads": 32,
+          "before": {
+            "trials": 3,
+            "tps": 3530.8,
+            "commands_per_request_batch": 1.4945871924246614,
+            "sql_cpu_ms_per_transaction": 2.162083333333333,
+            "tikv_cpu_ms_per_transaction": 1.4220833333333187
+          },
+          "after": {
+            "trials": 3,
+            "tps": 3472.85,
+            "commands_per_request_batch": 7.605077481041873,
+            "sql_cpu_ms_per_transaction": 2.120000000000001,
+            "tikv_cpu_ms_per_transaction": 1.469166666666657
+          },
+          "tps_change_percent": -1.641271100033992
+        }
+      ],
+      "trials": [
+        {
+          "label": "0-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 443.33,
+          "sql_cpu_seconds": 3.7600000000000016,
+          "tikv_cpu_seconds": 2.619999999999891,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.0000236669585592,
+          "req_multi_batch_percent": 0.002366695855915424,
+          "resp_commands_per_batch": 1,
+          "resp_multi_batch_percent": 0,
+          "post_ready_wait_us": 5.959732693083231
+        },
+        {
+          "label": "0-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 443.81,
+          "sql_cpu_seconds": 4.030000000000001,
+          "tikv_cpu_seconds": 2.6099999999996726,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.0000473204779368,
+          "req_multi_batch_percent": 0.004732047793687411,
+          "resp_commands_per_batch": 1,
+          "resp_multi_batch_percent": 0,
+          "post_ready_wait_us": 6.113663118416877
+        },
+        {
+          "label": "1-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 445.57,
+          "sql_cpu_seconds": 4.010000000000002,
+          "tikv_cpu_seconds": 2.5799999999999272,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.0000709790375242,
+          "req_multi_batch_percent": 0.0070979037524288024,
+          "resp_commands_per_batch": 1.000023658559667,
+          "resp_multi_batch_percent": 0.0023658559666905887,
+          "post_ready_wait_us": 6.079071873683351
+        },
+        {
+          "label": "1-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 443.08,
+          "sql_cpu_seconds": 3.759999999999998,
+          "tikv_cpu_seconds": 2.6299999999996544,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.00002363116478,
+          "req_multi_batch_percent": 0.002363116478010241,
+          "resp_commands_per_batch": 1.00002363116478,
+          "resp_multi_batch_percent": 0.002363116478010241,
+          "post_ready_wait_us": 5.9707613549322796
+        },
+        {
+          "label": "2-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 445.36,
+          "sql_cpu_seconds": 3.739999999999995,
+          "tikv_cpu_seconds": 2.619999999999891,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1,
+          "req_multi_batch_percent": 0,
+          "resp_commands_per_batch": 1,
+          "resp_multi_batch_percent": 0,
+          "post_ready_wait_us": 5.9343225765030505
+        },
+        {
+          "label": "2-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 444.44,
+          "sql_cpu_seconds": 4.02,
+          "tikv_cpu_seconds": 2.599999999999909,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1,
+          "req_multi_batch_percent": 0,
+          "resp_commands_per_batch": 1,
+          "resp_multi_batch_percent": 0,
+          "post_ready_wait_us": 6.071357854751101
+        },
+        {
+          "label": "3-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 2146.61,
+          "sql_cpu_seconds": 25.189999999999998,
+          "tikv_cpu_seconds": 16.75,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.0455002982403818,
+          "req_multi_batch_percent": 4.449373695198333,
+          "resp_commands_per_batch": 1.073754068023738,
+          "resp_multi_batch_percent": 7.215238338331953,
+          "post_ready_wait_us": 12.520719358173865
+        },
+        {
+          "label": "3-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1923.09,
+          "sql_cpu_seconds": 24.020000000000003,
+          "tikv_cpu_seconds": 18.700000000000273,
+          "profiler_exit": null,
+          "req_commands_per_batch": 2.260944319534453,
+          "req_multi_batch_percent": 92.41370189128422,
+          "resp_commands_per_batch": 1.2631804511833773,
+          "resp_multi_batch_percent": 24.231340471281946,
+          "post_ready_wait_us": 10.981360023300631
+        },
+        {
+          "label": "4-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 2007.21,
+          "sql_cpu_seconds": 23.240000000000002,
+          "tikv_cpu_seconds": 14.75,
+          "profiler_exit": null,
+          "req_commands_per_batch": 2.3548716413034603,
+          "req_multi_batch_percent": 94.23134511202461,
+          "resp_commands_per_batch": 1.345740377734217,
+          "resp_multi_batch_percent": 30.948380472323343,
+          "post_ready_wait_us": 10.226549481553324
+        },
+        {
+          "label": "4-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 2140.14,
+          "sql_cpu_seconds": 25.36,
+          "tikv_cpu_seconds": 17.179999999999836,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.0731241354927148,
+          "req_multi_batch_percent": 7.151762509381654,
+          "resp_commands_per_batch": 1.084771268057785,
+          "resp_multi_batch_percent": 8.2250702247191,
+          "post_ready_wait_us": 12.456271992785634
+        },
+        {
+          "label": "5-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 2150.87,
+          "sql_cpu_seconds": 25.200000000000017,
+          "tikv_cpu_seconds": 17.039999999999964,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.0730646851954078,
+          "req_multi_batch_percent": 7.107370353600828,
+          "resp_commands_per_batch": 1.0845541910368044,
+          "resp_multi_batch_percent": 8.178963007541418,
+          "post_ready_wait_us": 12.354790458975947
+        },
+        {
+          "label": "5-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 2010.48,
+          "sql_cpu_seconds": 23.17,
+          "tikv_cpu_seconds": 14.63000000000011,
+          "profiler_exit": null,
+          "req_commands_per_batch": 2.3781342791158036,
+          "req_multi_batch_percent": 94.50676344440778,
+          "resp_commands_per_batch": 1.3548682685379532,
+          "resp_multi_batch_percent": 31.60536950596786,
+          "post_ready_wait_us": 10.15846493235797
+        },
+        {
+          "label": "6-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3523.64,
+          "sql_cpu_seconds": 51.889999999999986,
+          "tikv_cpu_seconds": 34.13999999999987,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.4963800709281203,
+          "req_multi_batch_percent": 27.913675287604878,
+          "resp_commands_per_batch": 1.4433857577906637,
+          "resp_multi_batch_percent": 30.486421092153016,
+          "post_ready_wait_us": 33.94933991046774
+        },
+        {
+          "label": "6-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3472.85,
+          "sql_cpu_seconds": 51.05000000000001,
+          "tikv_cpu_seconds": 35.40000000000009,
+          "profiler_exit": null,
+          "req_commands_per_batch": 7.60729910959657,
+          "req_multi_batch_percent": 98.79081015719467,
+          "resp_commands_per_batch": 1.5910363759259514,
+          "resp_multi_batch_percent": 37.67858046064217,
+          "post_ready_wait_us": 23.841043902330473
+        },
+        {
+          "label": "7-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3473.6,
+          "sql_cpu_seconds": 50.77999999999997,
+          "tikv_cpu_seconds": 35.25999999999976,
+          "profiler_exit": null,
+          "req_commands_per_batch": 7.572879500930283,
+          "req_multi_batch_percent": 98.8464485060742,
+          "resp_commands_per_batch": 1.621639230538473,
+          "resp_multi_batch_percent": 38.64838008099595,
+          "post_ready_wait_us": 25.112510138153485
+        },
+        {
+          "label": "7-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3530.8,
+          "sql_cpu_seconds": 52.33000000000001,
+          "tikv_cpu_seconds": 34.11000000000013,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.4889529629470242,
+          "req_multi_batch_percent": 27.87623187158411,
+          "resp_commands_per_batch": 1.4423979655646808,
+          "resp_multi_batch_percent": 30.608663025805647,
+          "post_ready_wait_us": 34.10312224985307
+        },
+        {
+          "label": "8-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3560.5,
+          "sql_cpu_seconds": 51.879999999999995,
+          "tikv_cpu_seconds": 34.129999999999654,
+          "profiler_exit": null,
+          "req_commands_per_batch": 1.4945871924246614,
+          "req_multi_batch_percent": 27.958684683439316,
+          "resp_commands_per_batch": 1.4816707065343075,
+          "resp_multi_batch_percent": 32.341353112982105,
+          "post_ready_wait_us": 35.7309350508802
+        },
+        {
+          "label": "8-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 3466.01,
+          "sql_cpu_seconds": 50.880000000000024,
+          "tikv_cpu_seconds": 34.929999999999836,
+          "profiler_exit": null,
+          "req_commands_per_batch": 7.605077481041873,
+          "req_multi_batch_percent": 98.60644026816134,
+          "resp_commands_per_batch": 1.5982529725335133,
+          "resp_multi_batch_percent": 38.38748718138228,
+          "post_ready_wait_us": 23.19430678068108
+        }
+      ],
+      "result_checks": {
+        "queries": 10,
+        "all_matched": true,
+        "row_count": 100013,
+        "sum_k": 5011271921,
+        "artifact": "/private/tmp/tidb-shared-admission-results.json"
+      },
+      "samples": {
+        "directory": "/private/tmp/tidb-shared-admission-samples-kk4w54ps",
+        "workload_clients": 8,
+        "seconds_each": 6,
+        "profiled_timing_excluded": true,
+        "observation": "Shared admission thread: 3018 samples, 465 under collection timed semaphore wait, 139 under collection cthread_yield. These are all-thread state samples, not CPU utilization or direct transaction latency attribution. Go uses goroutine scheduling; parked Go goroutines cannot be compared with parked Rust OS threads by these stack counts."
+      }
+    },
+    "drain": {
+      "raw_results": "/private/tmp/tidb-batching-drain-pairs/results.json",
+      "medians": [
+        {
+          "threads": 1,
+          "before": {
+            "trials": 3,
+            "tps": 434.62,
+            "commands_per_request_batch": 1,
+            "sql_cpu_ms_per_transaction": 1.363333333333344,
+            "tikv_cpu_ms_per_transaction": 1.2933333333333696
+          },
+          "after": {
+            "trials": 3,
+            "tps": 430.95,
+            "commands_per_request_batch": 1.5549772283669485,
+            "sql_cpu_ms_per_transaction": 1.3699999999999997,
+            "tikv_cpu_ms_per_transaction": 1.3133333333333514
+          },
+          "tps_change_percent": -0.8444158115135103
+        },
+        {
+          "threads": 8,
+          "before": {
+            "trials": 3,
+            "tps": 1883.59,
+            "commands_per_request_batch": 1,
+            "sql_cpu_ms_per_transaction": 2.4191666666666642,
+            "tikv_cpu_ms_per_transaction": 2.4666666666666592
+          },
+          "after": {
+            "trials": 3,
+            "tps": 1879.41,
+            "commands_per_request_batch": 1.4944742129939719,
+            "sql_cpu_ms_per_transaction": 2.3974999999999995,
+            "tikv_cpu_ms_per_transaction": 2.498333333333335
+          },
+          "tps_change_percent": -0.22191665914556014
+        },
+        {
+          "threads": 32,
+          "before": {
+            "trials": 3,
+            "tps": 2789.34,
+            "commands_per_request_batch": 1.0000018673369162,
+            "sql_cpu_ms_per_transaction": 2.452916666666667,
+            "tikv_cpu_ms_per_transaction": 2.117500000000007
+          },
+          "after": {
+            "trials": 3,
+            "tps": 2785.99,
+            "commands_per_request_batch": 1.642716034234179,
+            "sql_cpu_ms_per_transaction": 2.3916666666666675,
+            "tikv_cpu_ms_per_transaction": 2.1379166666666642
+          },
+          "tps_change_percent": -0.12010009536307376
+        }
+      ],
+      "trials": [
+        {
+          "label": "0-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 430.32,
+          "sql_cpu_seconds": 4.1299999999999955,
+          "tikv_cpu_seconds": 3.869999999999891,
+          "req_commands_per_batch": 1,
+          "resp_commands_per_batch": 1.1550609945744204,
+          "post_ready_wait_us": 5.841349808216108
+        },
+        {
+          "label": "0-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 429.43,
+          "sql_cpu_seconds": 4.129999999999999,
+          "tikv_cpu_seconds": 3.9400000000000546,
+          "req_commands_per_batch": 1.5549772283669485,
+          "resp_commands_per_batch": 1.158226314514175,
+          "post_ready_wait_us": 5.731231724160787
+        },
+        {
+          "label": "1-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 430.95,
+          "sql_cpu_seconds": 4.109999999999999,
+          "tikv_cpu_seconds": 3.9200000000000728,
+          "req_commands_per_batch": 1.548134596234455,
+          "resp_commands_per_batch": 1.1610740586355426,
+          "post_ready_wait_us": 5.667016648977186
+        },
+        {
+          "label": "1-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 434.62,
+          "sql_cpu_seconds": 4.090000000000032,
+          "tikv_cpu_seconds": 3.880000000000109,
+          "req_commands_per_batch": 1,
+          "resp_commands_per_batch": 1.1503106017586426,
+          "post_ready_wait_us": 5.6253782459532085
+        },
+        {
+          "label": "2-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 434.66,
+          "sql_cpu_seconds": 4.080000000000041,
+          "tikv_cpu_seconds": 3.880000000000109,
+          "req_commands_per_batch": 1.000014951035359,
+          "resp_commands_per_batch": 1.151182403359609,
+          "post_ready_wait_us": 5.61144949592904
+        },
+        {
+          "label": "2-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 433.28,
+          "sql_cpu_seconds": 4.070000000000004,
+          "tikv_cpu_seconds": 3.9400000000000546,
+          "req_commands_per_batch": 1.5605162434652726,
+          "resp_commands_per_batch": 1.1513560051657339,
+          "post_ready_wait_us": 5.43760400792557
+        },
+        {
+          "label": "3-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1883.7,
+          "sql_cpu_seconds": 29,
+          "tikv_cpu_seconds": 29.590000000000146,
+          "req_commands_per_batch": 1,
+          "resp_commands_per_batch": 1.2384399413497875,
+          "post_ready_wait_us": 13.05928082850083
+        },
+        {
+          "label": "3-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1883.58,
+          "sql_cpu_seconds": 28.699999999999996,
+          "tikv_cpu_seconds": 29.910000000000082,
+          "req_commands_per_batch": 1.4944742129939719,
+          "resp_commands_per_batch": 1.2491194349454866,
+          "post_ready_wait_us": 13.140778046696578
+        },
+        {
+          "label": "4-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1879.41,
+          "sql_cpu_seconds": 28.769999999999996,
+          "tikv_cpu_seconds": 29.980000000000018,
+          "req_commands_per_batch": 1.4938803971884413,
+          "resp_commands_per_batch": 1.2479227926613885,
+          "post_ready_wait_us": 13.143551541737724
+        },
+        {
+          "label": "4-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1883.59,
+          "sql_cpu_seconds": 29.06000000000006,
+          "tikv_cpu_seconds": 29.59999999999991,
+          "req_commands_per_batch": 1,
+          "resp_commands_per_batch": 1.2368182784075685,
+          "post_ready_wait_us": 13.014466995759705
+        },
+        {
+          "label": "5-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1883.46,
+          "sql_cpu_seconds": 29.029999999999973,
+          "tikv_cpu_seconds": 29.649999999999864,
+          "req_commands_per_batch": 1,
+          "resp_commands_per_batch": 1.2374195814538194,
+          "post_ready_wait_us": 13.031678988335022
+        },
+        {
+          "label": "5-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1871.82,
+          "sql_cpu_seconds": 28.900000000000006,
+          "tikv_cpu_seconds": 30.09999999999991,
+          "req_commands_per_batch": 1.4965340423511537,
+          "resp_commands_per_batch": 1.2489336608878467,
+          "post_ready_wait_us": 13.20953541726027
+        },
+        {
+          "label": "6-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2789.34,
+          "sql_cpu_seconds": 58.870000000000005,
+          "tikv_cpu_seconds": 50.820000000000164,
+          "req_commands_per_batch": 1.0000074700590695,
+          "resp_commands_per_batch": 1.5236554642173223,
+          "post_ready_wait_us": 36.83413016663659
+        },
+        {
+          "label": "6-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2794.86,
+          "sql_cpu_seconds": 57.40000000000002,
+          "tikv_cpu_seconds": 51.02999999999997,
+          "req_commands_per_batch": 1.642716034234179,
+          "resp_commands_per_batch": 1.5397481238678512,
+          "post_ready_wait_us": 37.15332642964779
+        },
+        {
+          "label": "7-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2785.99,
+          "sql_cpu_seconds": 57.22,
+          "tikv_cpu_seconds": 51.309999999999945,
+          "req_commands_per_batch": 1.635462941760171,
+          "resp_commands_per_batch": 1.5260174066635328,
+          "post_ready_wait_us": 35.5221624160297
+        },
+        {
+          "label": "7-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2785.12,
+          "sql_cpu_seconds": 58.92000000000007,
+          "tikv_cpu_seconds": 51.289999999999964,
+          "req_commands_per_batch": 1,
+          "resp_commands_per_batch": 1.508282019444374,
+          "post_ready_wait_us": 34.47727402877988
+        },
+        {
+          "label": "8-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2802.68,
+          "sql_cpu_seconds": 58.59000000000003,
+          "tikv_cpu_seconds": 50.72000000000003,
+          "req_commands_per_batch": 1.0000018673369162,
+          "resp_commands_per_batch": 1.532031091314286,
+          "post_ready_wait_us": 36.78055555779232
+        },
+        {
+          "label": "8-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2781.86,
+          "sql_cpu_seconds": 58.079999999999984,
+          "tikv_cpu_seconds": 51.41000000000008,
+          "req_commands_per_batch": 1.6507107719242007,
+          "resp_commands_per_batch": 1.5362042803174814,
+          "post_ready_wait_us": 36.727689788058726
+        }
+      ]
+    },
+    "adaptive": {
+      "raw_results": "/private/tmp/tidb-batching-adaptive-pairs/results.json",
+      "medians": [
+        {
+          "threads": 1,
+          "before": {
+            "trials": 3,
+            "tps": 432.49,
+            "commands_per_request_batch": 1,
+            "sql_cpu_ms_per_transaction": 1.363333333333344,
+            "tikv_cpu_ms_per_transaction": 1.3033333333332848
+          },
+          "after": {
+            "trials": 3,
+            "tps": 433.1,
+            "commands_per_request_batch": 1.5613219666004905,
+            "sql_cpu_ms_per_transaction": 1.3466666666666665,
+            "tikv_cpu_ms_per_transaction": 1.3266666666666727
+          },
+          "tps_change_percent": 0.14104372355430161
+        },
+        {
+          "threads": 8,
+          "before": {
+            "trials": 3,
+            "tps": 1873.1,
+            "commands_per_request_batch": 1,
+            "sql_cpu_ms_per_transaction": 2.4174999999999995,
+            "tikv_cpu_ms_per_transaction": 2.488333333333344
+          },
+          "after": {
+            "trials": 3,
+            "tps": 1873.51,
+            "commands_per_request_batch": 1.510648981364988,
+            "sql_cpu_ms_per_transaction": 2.3874999999999993,
+            "tikv_cpu_ms_per_transaction": 2.514166666666673
+          },
+          "tps_change_percent": 0.021888847365336694
+        },
+        {
+          "threads": 32,
+          "before": {
+            "trials": 3,
+            "tps": 2779.21,
+            "commands_per_request_batch": 1,
+            "sql_cpu_ms_per_transaction": 2.434583333333336,
+            "tikv_cpu_ms_per_transaction": 2.120833333333337
+          },
+          "after": {
+            "trials": 3,
+            "tps": 2757.1,
+            "commands_per_request_batch": 1.869006194921909,
+            "sql_cpu_ms_per_transaction": 2.4258333333333333,
+            "tikv_cpu_ms_per_transaction": 2.192916666666671
+          },
+          "tps_change_percent": -0.7955498145156392
+        }
+      ],
+      "trials": [
+        {
+          "label": "0-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 432.49,
+          "sql_cpu_seconds": 4.090000000000032,
+          "tikv_cpu_seconds": 3.8999999999998636,
+          "req_commands_per_batch": 1,
+          "resp_commands_per_batch": 1.1512866856011705,
+          "post_ready_wait_us": 5.744859399033509
+        },
+        {
+          "label": "0-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 432.53,
+          "sql_cpu_seconds": 4.050000000000001,
+          "tikv_cpu_seconds": 3.980000000000018,
+          "req_commands_per_batch": 1.5612876117556431,
+          "resp_commands_per_batch": 1.152755036969373,
+          "post_ready_wait_us": 5.5642456798040705
+        },
+        {
+          "label": "1-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 433.1,
+          "sql_cpu_seconds": 4.039999999999999,
+          "tikv_cpu_seconds": 3.9700000000000273,
+          "req_commands_per_batch": 1.5627425312076302,
+          "resp_commands_per_batch": 1.1533789962215972,
+          "post_ready_wait_us": 5.588673932189514
+        },
+        {
+          "label": "1-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 429.94,
+          "sql_cpu_seconds": 4.1200000000000045,
+          "tikv_cpu_seconds": 3.9099999999998545,
+          "req_commands_per_batch": 1,
+          "resp_commands_per_batch": 1.155463782139895,
+          "post_ready_wait_us": 5.866943487114384
+        },
+        {
+          "label": "2-1-before",
+          "server": "before",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 432.96,
+          "sql_cpu_seconds": 4.079999999999927,
+          "tikv_cpu_seconds": 3.9099999999998545,
+          "req_commands_per_batch": 1.0000149505883056,
+          "resp_commands_per_batch": 1.152486302077949,
+          "post_ready_wait_us": 5.742358241491288
+        },
+        {
+          "label": "2-1-after",
+          "server": "after",
+          "threads": 1,
+          "transactions": 3000,
+          "tps": 433.33,
+          "sql_cpu_seconds": 4.039999999999999,
+          "tikv_cpu_seconds": 3.980000000000018,
+          "req_commands_per_batch": 1.5613219666004905,
+          "resp_commands_per_batch": 1.1525914686713334,
+          "post_ready_wait_us": 5.539750509504996
+        },
+        {
+          "label": "3-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1865.16,
+          "sql_cpu_seconds": 29.07000000000005,
+          "tikv_cpu_seconds": 29.95999999999981,
+          "req_commands_per_batch": 1.0000112040214968,
+          "resp_commands_per_batch": 1.2456630861055933,
+          "post_ready_wait_us": 13.597366482953513
+        },
+        {
+          "label": "3-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1873.51,
+          "sql_cpu_seconds": 28.619999999999997,
+          "tikv_cpu_seconds": 30.09999999999991,
+          "req_commands_per_batch": 1.5120024394513494,
+          "resp_commands_per_batch": 1.2555354446643097,
+          "post_ready_wait_us": 13.597580441742023
+        },
+        {
+          "label": "4-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1872.33,
+          "sql_cpu_seconds": 28.64999999999999,
+          "tikv_cpu_seconds": 30.170000000000073,
+          "req_commands_per_batch": 1.510648981364988,
+          "resp_commands_per_batch": 1.258166679197053,
+          "post_ready_wait_us": 13.582822880839888
+        },
+        {
+          "label": "4-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1877.74,
+          "sql_cpu_seconds": 28.989999999999895,
+          "tikv_cpu_seconds": 29.809999999999945,
+          "req_commands_per_batch": 1,
+          "resp_commands_per_batch": 1.2478188326093846,
+          "post_ready_wait_us": 13.483771301513093
+        },
+        {
+          "label": "5-8-before",
+          "server": "before",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1873.1,
+          "sql_cpu_seconds": 29.00999999999999,
+          "tikv_cpu_seconds": 29.860000000000127,
+          "req_commands_per_batch": 1,
+          "resp_commands_per_batch": 1.2449145646867372,
+          "post_ready_wait_us": 13.530110031540097
+        },
+        {
+          "label": "5-8-after",
+          "server": "after",
+          "threads": 8,
+          "transactions": 12000,
+          "tps": 1873.72,
+          "sql_cpu_seconds": 28.689999999999998,
+          "tikv_cpu_seconds": 30.210000000000036,
+          "req_commands_per_batch": 1.5098985615932428,
+          "resp_commands_per_batch": 1.2569364582404325,
+          "post_ready_wait_us": 13.599338865106851
+        },
+        {
+          "label": "6-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2779.21,
+          "sql_cpu_seconds": 58.25999999999999,
+          "tikv_cpu_seconds": 50.90000000000009,
+          "req_commands_per_batch": 1,
+          "resp_commands_per_batch": 1.5634130960305503,
+          "post_ready_wait_us": 39.65094308243635
+        },
+        {
+          "label": "6-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2757.1,
+          "sql_cpu_seconds": 58.22,
+          "tikv_cpu_seconds": 52.63000000000011,
+          "req_commands_per_batch": 1.869006194921909,
+          "resp_commands_per_batch": 1.5190635717142607,
+          "post_ready_wait_us": 34.361232181217666
+        },
+        {
+          "label": "7-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2752.65,
+          "sql_cpu_seconds": 58.57000000000002,
+          "tikv_cpu_seconds": 52.809999999999945,
+          "req_commands_per_batch": 1.871896840928152,
+          "resp_commands_per_batch": 1.5203676161714785,
+          "post_ready_wait_us": 35.60231110282752
+        },
+        {
+          "label": "7-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2777.51,
+          "sql_cpu_seconds": 58.61000000000013,
+          "tikv_cpu_seconds": 50.80000000000018,
+          "req_commands_per_batch": 1,
+          "resp_commands_per_batch": 1.5465950804190047,
+          "post_ready_wait_us": 38.570182748229094
+        },
+        {
+          "label": "8-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2787.43,
+          "sql_cpu_seconds": 58.430000000000064,
+          "tikv_cpu_seconds": 51.07999999999993,
+          "req_commands_per_batch": 1,
+          "resp_commands_per_batch": 1.53926880657206,
+          "post_ready_wait_us": 37.3480192751624
+        },
+        {
+          "label": "8-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2759.15,
+          "sql_cpu_seconds": 58.10000000000002,
+          "tikv_cpu_seconds": 52.44999999999982,
+          "req_commands_per_batch": 1.8668337679360785,
+          "resp_commands_per_batch": 1.5318349810059957,
+          "post_ready_wait_us": 35.78481175897592
+        }
+      ]
+    },
+    "shard_control": {
+      "raw_results": "/private/tmp/tidb-batching-shard-control/results.json",
+      "medians": [
+        {
+          "threads": 32,
+          "before": {
+            "trials": 3,
+            "tps": 2625.74,
+            "commands_per_request_batch": 1.7632359044287662,
+            "sql_cpu_ms_per_transaction": 2.708750000000002,
+            "tikv_cpu_ms_per_transaction": 2.319583333333336
+          },
+          "after": {
+            "trials": 3,
+            "tps": 2710.77,
+            "commands_per_request_batch": 9.770687390542907,
+            "sql_cpu_ms_per_transaction": 2.3466666666666662,
+            "tikv_cpu_ms_per_transaction": 2.058749999999994
+          },
+          "tps_change_percent": 3.23832519594478
+        }
+      ],
+      "trials": [
+        {
+          "label": "0-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2625.74,
+          "sql_cpu_seconds": 65.01000000000005,
+          "tikv_cpu_seconds": 55.67000000000007,
+          "req_commands_per_batch": 1.7453338417465951,
+          "resp_commands_per_batch": 1.5745783741826223,
+          "post_ready_wait_us": 41.23436727509587
+        },
+        {
+          "label": "0-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2710.77,
+          "sql_cpu_seconds": 56.260000000000005,
+          "tikv_cpu_seconds": 49.409999999999854,
+          "req_commands_per_batch": 9.770687390542907,
+          "resp_commands_per_batch": 2.414601488641333,
+          "post_ready_wait_us": 27.88849624714058
+        },
+        {
+          "label": "1-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2681.88,
+          "sql_cpu_seconds": 56.55000000000001,
+          "tikv_cpu_seconds": 49.559999999999945,
+          "req_commands_per_batch": 9.643278960066256,
+          "resp_commands_per_batch": 2.417195440062821,
+          "post_ready_wait_us": 28.57386755767348
+        },
+        {
+          "label": "1-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2612.39,
+          "sql_cpu_seconds": 65.05000000000001,
+          "tikv_cpu_seconds": 55.929999999999836,
+          "req_commands_per_batch": 1.7632359044287662,
+          "resp_commands_per_batch": 1.547596195542193,
+          "post_ready_wait_us": 39.69589379980592
+        },
+        {
+          "label": "2-32-before",
+          "server": "before",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2656.45,
+          "sql_cpu_seconds": 63.60000000000002,
+          "tikv_cpu_seconds": 54.91999999999962,
+          "req_commands_per_batch": 1.7695100597971523,
+          "resp_commands_per_batch": 1.5448889529852898,
+          "post_ready_wait_us": 39.09126525297708
+        },
+        {
+          "label": "2-32-after",
+          "server": "after",
+          "threads": 32,
+          "transactions": 24000,
+          "tps": 2712.68,
+          "sql_cpu_seconds": 56.31999999999999,
+          "tikv_cpu_seconds": 49.35999999999967,
+          "req_commands_per_batch": 9.955739380983363,
+          "resp_commands_per_batch": 2.3672918222925516,
+          "post_ready_wait_us": 26.465016937160495
+        }
+      ]
+    }
+  }
+}

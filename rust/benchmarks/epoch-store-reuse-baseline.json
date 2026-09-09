@@ -1,0 +1,253 @@
+{
+  "status": "WIP: 106 scoped tests pass; release and live comparisons pass; mixed measurements and postchecks are terminal. Sysbench median is 2.28% slower; TPC-C is -2.97%/+12.70% at two/eight clients, with all eight-client pairs faster. No broad speedup or rare-stall-resolution claim.",
+  "before": {
+    "port": 53048,
+    "pid": 42413,
+    "sha256": "7592762e6ef218bfeca8d1520748c841a8a6da0373e10fe602d19c09bb24f79b",
+    "saved": "/private/tmp/tidb-epoch-store-before-I7hBr7/tidb-server"
+  },
+  "source": [
+    "client-go/internal/locate/region_cache.go: newRegion and OnRegionEpochNotMatch",
+    "client-go/internal/locate/store_cache.go: Store.initResolve",
+    "rust/crates/tidb-txnkv/src/pd_loader.rs: RegionRecoveryLoader::hydrate_region",
+    "rust/crates/tidb-txnkv/src/region/recovery.rs: EpochNotMatchRecoveryPlan",
+    "rust/crates/tidb-txnkv/src/region/cache/mod.rs: replace_regions_atomically"
+  ],
+  "change": "Carry a recovery-scoped snapshot from the canonical store owner, resolving absent stores once across all split children. Epoch publication preserves known store state instead of treating reused metadata as a refresh. No second persistent cache or timeout change.",
+  "validation": {
+    "profile": "WIP",
+    "runtime_red": "/private/tmp/tidb-epoch-store-reuse-red-v4.log",
+    "runtime_red_requests": [
+      101,
+      102,
+      101,
+      102
+    ],
+    "expected_requests": [],
+    "known_stores_after_requests": [],
+    "one_new_shared_store_after_requests": [
+      105
+    ],
+    "state_regression_red": "/private/tmp/tidb-epoch-store-state-red.log",
+    "state_regression": "First implementation reset NeedCheck to Resolved without refreshing; preserving known store state at epoch publication corrects it.",
+    "fixture_corrections": [
+      "red.log: nonexistent standalone test target; aggregate test target is all",
+      "red-v2.log: private owned_leader_route used by fixture; replaced with public cached location/store state",
+      "red-v3.log: sandbox denied mock PD loopback listener; escalated repeat gives valid runtime red"
+    ],
+    "passed_scopes": {
+      "pd_region_loader_source": 14,
+      "unlocked_region_lookup_source": 3,
+      "region_epoch_bucket_inheritance_source": 2,
+      "store_failure_state_source": 7,
+      "background_store_maintenance_source": 8,
+      "region_error_recovery_source": 25,
+      "lock_resolver_source": 31,
+      "dist_sql_lock_recovery": 4,
+      "dist_sql_cancellation": 6,
+      "exec_table_index_reader": 4,
+      "unistore_region_loader": 2
+    },
+    "commands": [
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all pd_region_loader_source::",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all unlocked_region_lookup_source::",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all region_epoch_bucket_inheritance_source::",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all store_failure_state_source::",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all background_store_maintenance_source::",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test region_error_recovery_source",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test lock_resolver_source",
+      "cargo test --offline --locked --release -j12 -p tidb-distsql --test all lock_recovery_source::",
+      "cargo test --offline --locked --release -j12 -p tidb-distsql --test all active_cancellation_source::",
+      "cargo test --offline --locked --release -j12 -p tidb-exec --test all direct_unary_table_index_reader_source::",
+      "cargo test --offline --locked --release -j12 -p tidb-unistore --lib region_loader::",
+      "cargo test --offline --locked --release -j12 -p difftest-transaction-tests --test all --no-run"
+    ],
+    "passed": 106,
+    "differential_wrappers_compile": true
+  },
+  "diagnostic": {
+    "command": "python3 /private/tmp/tidb-split-stall-probe.py --port 53048 --pid 42413 --stem /private/tmp/tidb-range-point-split-stall --splits 50226 50167 50286",
+    "transactions": 36324,
+    "max_latency_ms": 33.57,
+    "seconds": 90.0046,
+    "ignored_errors": 0,
+    "reconnects": 0,
+    "splits_succeeded": 3,
+    "stall_reproduced": false,
+    "stack_capture_triggered": false,
+    "log_prefix": "/private/tmp/tidb-range-point-split-stall",
+    "interpretation": "Diagnostic only, not throughput evidence. Three explicit split boundaries remain in the benchmark table. The prior 20-second event is not explained or resolved."
+  },
+  "remaining": "Mixed sysbench 71596, TPC-C 22409, profiles 52862/84398 and postchecks 35375 are terminal. Retain both servers and the Go/PD/TiKV cluster. The rare 20-second event, existing estimate/extra-Sort failures and broader goal remain open. No Ready/lint, package completion, commit or push.",
+  "profiles": {
+    "tpcc": "/private/tmp/tidb-epoch-store-tpcc-profile.json",
+    "sysbench": "/private/tmp/tidb-epoch-store-sysbench-profile.json",
+    "sample_seconds_each": 15,
+    "sampler_exits": [0, 0],
+    "workload_exits": [0, 0],
+    "tpcc_transactions": 20000,
+    "interpretation": "Separate diagnostics, never throughput baselines. Samples include idle and blocked threads. TPC-C SQL execution includes 23518 sampled frames under pessimistic-statement locking out of 60154 execute_general frames. Non-wait classification shows Catalog::clone 260 frames and database-map clone 201. The sysbench profile used default TLS unlike the timing helper's --mysql-ssl=off; do not treat its transport proportions as representative of that baseline. The diagnostic helper was corrected afterward. Counts are not CPU-time percentages or proof of the rare stall's cause."
+  },
+  "tpcc_postcheck": {
+    "commands": [
+      "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc tpcc check -H 127.0.0.1 -P 45000 -U root -D perf_tpcc_locking_v1 --warehouses 1 -T 1",
+      "mysql --protocol=tcp -h127.0.0.1 -P45000 -uroot --plugin-dir=/opt/homebrew/opt/mysql-client/lib/plugin perf_tpcc_locking_v1 < /private/tmp/tidb-tpcc-locking-balance-check.sql"
+    ],
+    "conditions_passed": 11,
+    "customers_checked": 30000,
+    "bad_balances": 0,
+    "bad_delivery_counts": 0,
+    "logs": ["/private/tmp/tidb-epoch-store-tpcc-check.log", "/private/tmp/tidb-epoch-store-balances.tsv"]
+  },
+  "sysbench": {
+    "command": "python3 rust/scripts/compare-sysbench.py --server before:53048 --server after:53049 --server go:45000 --database perf_sysbench_locking_v2 --workload oltp_read_write --threads 2 --seconds 20 --rounds 3 --table-size 100000 --output /private/tmp/tidb-epoch-store-sysbench",
+    "results": "/private/tmp/tidb-epoch-store-sysbench/results.json",
+    "samples": 9,
+    "errors": 0,
+    "reconnects": 0,
+    "median_tps": {
+      "before": 442.17534074040753,
+      "after": 432.10061685812263,
+      "go": 436.8039031413089
+    },
+    "round_tps": {
+      "before": [445.8719724048292, 442.17534074040753, 433.33300008997566],
+      "after": [430.7035607893317, 435.593372861528, 432.10061685812263],
+      "go": [436.8039031413089, 375.57325127139393, 438.65394133615973]
+    },
+    "median_change_percent": -2.2784454387291486,
+    "interpretation": "All three paired rounds are slower; no speedup. No 20-second stall occurred. Rotating short samples on a shared evolving dataset do not alone attribute this difference to epoch recovery."
+  },
+  "build": {
+    "session": 77587,
+    "command": "cargo build --offline --locked --release -j12 -p tidb-server",
+    "log": "/private/tmp/tidb-epoch-store-build.log",
+    "exit": 0,
+    "seconds": 91
+  },
+  "after": {
+    "port": 53049,
+    "pid": 43140,
+    "server_session": 32065,
+    "sha256": "8e153009837e963a8fd89a6847eb640f3a04eeb57ba573e2852b0da866d9ba92",
+    "server_log": "/private/tmp/tidb-epoch-store-server.log"
+  },
+  "live": {
+    "ports": [
+      45000,
+      53049
+    ],
+    "affected_rows_match_go": true,
+    "overlay_cases": 11,
+    "distinct_having_cases": 48,
+    "all_results_match_go": true,
+    "mutations_rolled_back": true,
+    "commands": [
+      "python3 /private/tmp/tidb-dirty-order-live.py --ports 45000 53049 --report-mutations",
+      "python3 /private/tmp/tidb-distinct-live.py --ports 45000 53049"
+    ],
+    "logs_prefix": "/private/tmp/tidb-epoch-store-"
+  },
+  "after_diagnostic": {
+    "command": "python3 /private/tmp/tidb-split-stall-probe.py --port 53049 --pid 43140 --stem /private/tmp/tidb-epoch-store-split-live --splits 50137 50197 50256",
+    "transactions": 39360,
+    "max_latency_ms": 25.78,
+    "seconds": 90.0029,
+    "ignored_errors": 0,
+    "reconnects": 0,
+    "splits_succeeded": 3,
+    "stall_reproduced": false,
+    "stack_capture_triggered": false,
+    "log_prefix": "/private/tmp/tidb-epoch-store-split-live",
+    "interpretation": "Diagnostic only; before also did not reproduce the rare stall, so this is not speedup or stall-resolution evidence. Boundaries 50137,50197,50256 remain in the benchmark table."
+  },
+  "tpcc": {
+    "command": "python3 /private/tmp/tidb-agg-tpcc-compare.py --server before:53048 --server after:53049 --server go:45000 --output /private/tmp/tidb-epoch-store-tpcc",
+    "results": "/private/tmp/tidb-epoch-store-tpcc/results.json",
+    "measured_transactions": 180000,
+    "warmup_transactions": 6000,
+    "errors": 0,
+    "groups": [
+      {
+        "threads": 2,
+        "round_tps": {
+          "before": [
+            517.517051934476,
+            518.2250161642141,
+            454.8251099671379
+          ],
+          "after": [
+            537.4502945444195,
+            489.37707552438786,
+            502.1568389475169
+          ],
+          "go": [
+            533.4209115463726,
+            475.1302644998044,
+            531.4003386132354
+          ]
+        },
+        "medians": {
+          "before": 517.517051934476,
+          "after": 502.1568389475169,
+          "go": 531.4003386132354
+        },
+        "median_change_percent": -2.9680592996004007,
+        "paired_change_percent": [
+          3.851707404699667,
+          -5.566682375419141,
+          10.4065778126891
+        ]
+      },
+      {
+        "threads": 8,
+        "round_tps": {
+          "before": [
+            668.9235068378779,
+            510.9356374273266,
+            622.8870584030826
+          ],
+          "after": [
+            737.6855590578156,
+            702.0147533837564,
+            651.2270148211346
+          ],
+          "go": [
+            692.3989025806757,
+            659.0676984843489,
+            653.7873839283327
+          ]
+        },
+        "medians": {
+          "before": 622.8870584030826,
+          "after": 702.0147533837564,
+          "go": 659.0676984843489
+        },
+        "median_change_percent": 12.70337758879374,
+        "paired_change_percent": [
+          10.279509019646849,
+          37.397883795805534,
+          4.549774479294544
+        ]
+      }
+    ],
+    "interpretation": "Eight-client throughput improves in all paired rounds; two-client median falls with mixed paired directions. All five transaction kinds complete in every sample. Shared evolving data and time-seeded transaction mix limit attribution; no broad speedup claim."
+  },
+  "postcheck": {
+    "sql": "SELECT COUNT(*),MIN(id),MAX(id),SUM(id),SUM(k) FROM sbtest1",
+    "ports": [
+      45000,
+      53049
+    ],
+    "rows": [
+      100013,
+      1,
+      100278,
+      5019975119,
+      5010898461
+    ],
+    "matches_go": true,
+    "log": "/private/tmp/tidb-epoch-store-postcheck.jsonl",
+    "fixture_note": "The earlier Go-only preparation recorded 100000 rows with 278 original IDs above 100000; sysbench DELETE/INSERT can fill the original gaps and grow count. See select-lock-execplan.md's initial sysbench-locking comparison. This checks Go/Rust agreement, not a fixed 100000-row invariant."
+  }
+}

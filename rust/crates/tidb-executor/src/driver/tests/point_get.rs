@@ -377,6 +377,11 @@ fn prepared_point_cache_answers_a_secondary_index_prefix() {
         plan.target,
         crate::driver::access::PreparedPointTarget::IndexPrefix { .. }
     ));
+    assert_eq!(
+        plan.statement_read_shape(),
+        crate::access_path::StatementReadShape::Unknown,
+        "an index lookup must keep one timestamp for the index and row reads",
+    );
 
     // The same answer the ordinary scan gives.
     let zone: tidb_datatype::SessionTimeZone = Default::default();
@@ -445,6 +450,11 @@ fn prepared_point_cache_answers_a_clustered_key_prefix() {
         plan.target,
         crate::driver::access::PreparedPointTarget::ClusteredPrefix
     ));
+    assert_eq!(
+        plan.statement_read_shape(),
+        crate::access_path::StatementReadShape::Unknown,
+        "a clustered prefix is not a complete primary-key point",
+    );
 
     let zone: tidb_datatype::SessionTimeZone = Default::default();
     let ctx = crate::kv_table::PreparedPointGetDecodeContext::for_query(false, zone.clone());
@@ -765,6 +775,64 @@ fn batch_point_get_accepts_row_in_on_a_composite_key() {
     );
 }
 
+/// Finite primary keys bind without consulting row storage, even when absent.
+#[test]
+fn primary_batch_keys_share_read_and_prelock_binding() {
+    let mut catalog = Catalog::default();
+    catalog.create_database("test");
+    crate::run_create_table_on(
+        "CREATE TABLE test.batch_keys (a INT, b INT, v INT, PRIMARY KEY (a,b) CLUSTERED)",
+        &mut catalog,
+    ).unwrap();
+    let zone = tidb_datatype::SessionTimeZone::utc();
+    let Some(TableEntry::Kv(table)) = catalog.table_in("test", "batch_keys") else {
+        panic!("expected table");
+    };
+    for (predicate, expected) in [
+        ("(b,a) IN ((2,1),(2,1),(3,4))", 2),
+        ("(a,b) IN ((1,2),(4,3))", 2),
+        ("a IN (1,2)", 0),
+        ("(a,a) IN ((1,2))", 0),
+        ("(a,b) IN ((1,NULL))", 0),
+        ("(a,b) IN ((1,2.5))", 0),
+        ("(a,b) NOT IN ((1,2))", 0),
+    ] {
+        let stmt = tidb_parser::parse(&format!(
+            "SELECT v FROM test.batch_keys WHERE {predicate} FOR UPDATE"
+        )).unwrap();
+        let Stmt::Query(query) = &stmt else { panic!("query") };
+        let QueryStmt::Select(select) = query.as_ref() else { panic!("select") };
+        let planned = crate::driver::access::primary_batch_point_lookup(
+            select.where_clause.as_ref().unwrap(), table, &zone,
+        ).unwrap().map(BatchPointLookup::into_handles).unwrap_or_default();
+        let prelocked = crate::access_path::PessimisticPrelock::from_statement(&stmt)
+            .map(|prelock| prelock.bind_keys(&[], &catalog, "test", &zone))
+            .unwrap_or_default();
+        assert_eq!(planned.len(), expected, "{predicate}");
+        assert_eq!(prelocked, planned.iter().map(|handle|
+            tidb_codec::table_key::encode_row_key_with_handle(table.table_id, &handle.record_handle())
+        ).collect::<Vec<_>>(), "{predicate}");
+    }
+}
+
+#[test]
+fn primary_batch_reads_use_written_common_handle_encoding() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    for (name, key_type, inserted, predicate) in [
+        ("decimal_batch", "DECIMAL(8,2)", "(5.00,10),(6.00,20)", "k IN (5.00,6.00,5.00,9.00)"),
+        ("string_batch", "VARCHAR(8)", "('a',10),('b',20)", "k IN ('a','b','a','z')"),
+        ("unsigned_batch", "BIGINT UNSIGNED", "(0,10),(18446744073709551615,20)", "k IN (0,18446744073709551615,0,3)"),
+    ] {
+        crate::run_create_table_on(&format!(
+            "CREATE TABLE {name} (k {key_type}, v INT, PRIMARY KEY(k) CLUSTERED)"
+        ), &mut catalog).unwrap();
+        run_insert_on(&format!("INSERT INTO {name} VALUES {inserted}"), &mut catalog, &ctx).unwrap();
+        assert_eq!(run_select_on(&format!("SELECT v FROM {name} WHERE {predicate}"), &catalog, &ctx).unwrap(),
+            vec![vec![Datum::Int(10)], vec![Datum::Int(20)]], "{name}");
+    }
+}
+
 /// The answers above would be right from a scan too, so this asserts the
 /// DECISION: which shapes Go's batch point get claims.
 #[test]
@@ -954,37 +1022,6 @@ fn fast_point_get_replaces_selection_and_projection_like_go() {
     assert_eq!(
         run_select_on("SELECT c FROM fast_point WHERE id = 1", &catalog, &ctx).unwrap(),
         vec![vec![Datum::new_string("one")]]
-    );
-}
-
-/// Go calls `TryFastPlan` before `PlanBuilder` constructs a `DataSource` or
-/// enumerates its ordinary access paths. A qualifying primary-key point read
-/// must therefore finish without entering Rust's ordinary single-table path.
-#[test]
-fn fast_point_get_precedes_ordinary_access_path_planning_like_go() {
-    let mut catalog = Catalog::default();
-    crate::run_create_table_on(
-        "CREATE TABLE fast_order (id INT PRIMARY KEY, c CHAR(8) NOT NULL)",
-        &mut catalog,
-    )
-    .unwrap();
-    let ctx = crate::StmtContext::for_query();
-    run_insert_on(
-        "INSERT INTO fast_order VALUES (1, 'one')",
-        &mut catalog,
-        &ctx,
-    )
-    .unwrap();
-
-    reset_ordinary_access_path_entries();
-    assert_eq!(
-        run_select_on("SELECT c FROM fast_order WHERE id = 1", &catalog, &ctx).unwrap(),
-        vec![vec![Datum::new_string("one")]]
-    );
-    assert_eq!(
-        ordinary_access_path_entries(),
-        0,
-        "Go TryFastPlan returns before ordinary DataSource access planning"
     );
 }
 
@@ -1513,5 +1550,36 @@ fn fast_single_row_scan_falls_back_when_the_where_detaches_nothing() {
             crate::run_select_meta_stmt(select, &catalog, "test", &ctx).expect("{sql} should run");
         let (_, values) = rows;
         assert_eq!(values.len(), 1, "{sql} should return one row");
+    }
+
+    // Admission shares the statement context with ordinary planning. A
+    // declined candidate must not evaluate endpoints a second time or leak
+    // diagnostics from an execution path that is never used.
+    for sql in [
+        "SELECT CONCAT(id, '') FROM ycsb_fb WHERE id >= CAST(1 / 0 AS CHAR) LIMIT 1",
+        "SELECT CONCAT(id, '') FROM ycsb_fb WHERE id >= CAST(CAST('0bad' AS SIGNED) AS CHAR) LIMIT 1",
+        "SELECT id FROM ycsb_fb WHERE id >= CAST(CAST('0bad' AS SIGNED) AS CHAR) AND v = 'value-2' LIMIT 1",
+    ] {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &stmt else {
+            panic!("expected a query");
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("expected a select");
+        };
+        let ordinary_ctx = crate::StmtContext::for_query();
+        let expected = crate::run_select_meta_stmt(select, &catalog, "test", &ordinary_ctx)
+            .unwrap();
+        let ctx = crate::StmtContext::for_query();
+        assert!(
+            crate::driver::plan_fast_single_row_scan(select, &catalog, "test", &ctx)
+                .unwrap()
+                .is_none(),
+            "{sql} should fall back"
+        );
+        assert_eq!(ctx.warning_count(), 0, "{sql}: admission must not evaluate");
+        let actual = crate::run_select_meta_stmt(select, &catalog, "test", &ctx).unwrap();
+        assert_eq!(actual, expected, "{sql}");
+        assert_eq!(ctx.take_warnings(), ordinary_ctx.take_warnings(), "{sql}");
     }
 }

@@ -254,6 +254,53 @@ fn seed_rows(environment: &BootstrapEnvironment) -> Result<Vec<SeedRow>, Bootstr
         ),
     ];
     rows.extend(global_variable_rows()?);
+    // Go insertBuiltinBindInfoRow: every binding writer locks this record.
+    let lock_sql = "builtin_pseudo_sql_for_bind_lock";
+    let zero = Datum::Time(
+        Time::new(tidb_datatype::CoreTime::default(), TimeType::Timestamp, 6)
+            .map_err(|error| BootstrapError::Encode(error.to_string()))?,
+    );
+    rows.push(SeedRow {
+        table: "bind_info",
+        values: vec![
+            SeedValue {
+                column: "original_sql",
+                value: text(lock_sql),
+            },
+            SeedValue {
+                column: "bind_sql",
+                value: text(lock_sql),
+            },
+            SeedValue {
+                column: "default_db",
+                value: text("mysql"),
+            },
+            SeedValue {
+                column: "status",
+                value: text("builtin"),
+            },
+            SeedValue {
+                column: "create_time",
+                value: zero.clone(),
+            },
+            SeedValue {
+                column: "update_time",
+                value: zero,
+            },
+            SeedValue {
+                column: "charset",
+                value: text(""),
+            },
+            SeedValue {
+                column: "collation",
+                value: text(""),
+            },
+            SeedValue {
+                column: "source",
+                value: text("builtin"),
+            },
+        ],
+    });
     Ok(rows)
 }
 

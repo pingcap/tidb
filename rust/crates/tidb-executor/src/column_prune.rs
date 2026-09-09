@@ -37,35 +37,24 @@
 //!
 //! # The gate
 //!
-//! [`prunable_columns`] is the single answer to "is this statement in the
-//! narrow slice?". It returns `None` -- take the unchanged full-width path --
-//! for every shape below, and `None` is also what any expression form it does
-//! not explicitly understand produces:
+//! [`prunable_columns`] determines both the single-table scan's physical
+//! input schema and the columns used to cost covering access. It uses
+//! [`crate::driver::leaf_demand::LeafDemand`], the same conservative name walk
+//! that already narrows join leaves before expressions are built. Inline
+//! windows and nested references contribute their inputs; output aliases can
+//! over-count a same-named table column but cannot hide a required input.
+//! Keeping an extra column is safe for both pruning and covering checks.
 //!
-//! * a `FROM` that is not exactly one base KV table (derived table, lateral,
-//!   view, memory table, no `FROM` at all) -- with the single widening of
-//!   [`prunable_join_columns`] below;
-//! * `SELECT *` or `SELECT t.*` (a wildcard names every column);
-//! * a `WITH` clause, `WITH ROLLUP`, a `WINDOW` clause, `VALUES`,
-//!   `INTO OUTFILE`, or a locking clause;
-//! * any subquery, `EXISTS`, `IN (subquery)`, or quantified comparison
-//!   anywhere in the statement -- which is also how a correlated reference is
-//!   refused, since a correlated reference can only occur inside one;
-//! * any window function call;
-//! * `DEFAULT(col)`, `MATCH ... AGAINST`, an unbound `?` marker, or an inline
-//!   `@v := ...` assignment;
-//! * a column reference the scope cannot resolve (unknown or ambiguous): the
-//!   full-width path raises the proper MySQL error for it.
-//!
-//! [`collect_expr_columns`] matches [`tidb_ast::Expr`] **exhaustively, with no
-//! wildcard arm**, so a new expression variant is a compile error here rather
-//! than a silently unvisited subtree.
+//! A non-base-table shape, WITH/ROLLUP/WINDOW/VALUES, INTO OUTFILE or locking
+//! clause retains the full-width path. Costing must retain that same schema,
+//! including the preferred key column used for an otherwise empty row.
 //!
 //! # The join widening
 //!
-//! [`prunable_join_columns`] adds exactly one shape: a `FROM` of **two base
+//! [`prunable_join_columns`] handles a `FROM` of **two base
 //! tables**, joined by an ordinary `ON` (or by nothing, with the predicate in
-//! the `WHERE`). Every statement-level refusal above still applies, and the
+//! the `WHERE`). This secondary pass uses the stricter resolved-column walk
+//! and refuses wildcards, windows and subqueries. The
 //! join's own `ON` is walked alongside the statement's clauses -- an `ON`
 //! column dropped from a side would be a silently wrong join.
 //!
@@ -132,7 +121,11 @@ pub(crate) fn expr_column_offsets(
 /// The returned offsets are sorted and unique, so they preserve the table's
 /// column order -- the pruned row is the full row with holes removed, never
 /// reordered.
-pub(crate) fn prunable_columns(select: &SelectStmt, scope: &FromScope) -> Option<Vec<usize>> {
+pub(crate) fn prunable_columns(
+    select: &SelectStmt,
+    scope: &FromScope,
+    demand: &crate::driver::leaf_demand::LeafDemand,
+) -> Option<Vec<usize>> {
     // One base table, and nothing whose meaning depends on the columns the
     // scope does not name. Each of these is a *shape* refusal, listed here
     // rather than discovered halfway through the walk.
@@ -158,9 +151,7 @@ pub(crate) fn prunable_columns(select: &SelectStmt, scope: &FromScope) -> Option
         return None;
     }
 
-    let resolver = crate::driver::scope_resolver(scope);
-    let mut wanted = BTreeSet::new();
-    collect_statement_columns(select, &resolver, &mut wanted)?;
+    let mut wanted = demand.needed(&scope.tables[0].name, &scope.tables[0].columns);
     // Go `DataSource.PruneColumns`: when nothing the statement reads leaves
     // the DataSource schema EMPTY (`select count(*) from t`,
     // `select 1 from t`), TiKV would answer an empty response, so one key
@@ -179,12 +170,12 @@ pub(crate) fn prunable_columns(select: &SelectStmt, scope: &FromScope) -> Option
             .copied();
         match preferred_key {
             Some(offset) => {
-                wanted.insert(offset);
+                wanted.push(offset);
             }
             None => return None,
         }
     }
-    Some(wanted.into_iter().collect())
+    Some(wanted)
 }
 
 /// The scope offsets a two-base-table join reads, when the join is in the

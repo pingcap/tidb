@@ -122,10 +122,11 @@ impl RegionRecoveryLoader for SharedPrimedLoader {
         &mut self,
         metadata: &RegionMetadata,
         leader_store_id: u64,
+        resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
     ) -> Result<RegionLocation, RegionLoadError> {
         self.shared
             .borrow_mut()
-            .hydrate_region(metadata, leader_store_id)
+            .hydrate_region(metadata, leader_store_id, resolved_stores)
     }
 }
 

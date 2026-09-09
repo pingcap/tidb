@@ -15,10 +15,8 @@
 //! Dependency-closed physical-property classifications from
 //! `pkg/planner/property/physical_property.go`.
 //!
-//! This leaf ports only the integer classification and boolean matching
-//! contracts. The source's expression columns, protobuf exchange enum,
-//! functional-dependency sets, and physical-property construction remain
-//! owned by future planner layers.
+//! Classification, ordering and lookup requirements used by native task search.
+//! The complete MPP/vector/partial-order property machinery remains separate.
 
 /// MPP exchange partitioning requirement.
 ///
@@ -152,6 +150,41 @@ pub enum CteProducerStatus {
     AllCteCanMpp,
 }
 
+/// Go `property.SortItem` for operators that evaluate the ordering column.
+#[derive(Clone, Debug)]
+pub struct ColumnSortItem {
+    pub col: tidb_expr::column::Column,
+    pub desc: bool,
+}
+
+impl ColumnSortItem {
+    #[must_use]
+    pub const fn new(col: tidb_expr::column::Column, desc: bool) -> Self {
+        Self { col, desc }
+    }
+
+    /// Expand identity-only search properties using the logical input schema.
+    pub fn from_property(
+        items: &[SortItem],
+        schema: Option<&tidb_expr::schema::Schema>,
+    ) -> Result<Vec<Self>, crate::plan_base::PlanError> {
+        items
+            .iter()
+            .map(|item| {
+                let col = schema
+                    .and_then(|schema| schema.columns.iter().find(|col| col.unique_id == item.col))
+                    .ok_or_else(|| {
+                        crate::plan_base::PlanError::internal(format!(
+                            "sort column {} is not in input schema",
+                            item.col
+                        ))
+                    })?;
+                Ok(Self::new(col.clone(), item.desc))
+            })
+            .collect()
+    }
+}
+
 /// One column of a required order, and the direction it is required in.
 ///
 /// `property.SortItem`.  Go holds an `*expression.Column` and compares it with
@@ -184,15 +217,84 @@ impl std::fmt::Display for SortItem {
 
 /// The physical property a parent requires of a child.
 ///
-/// `property.PhysicalProperty`.  This port carries the three fields that
-/// decide a plan's SHAPE -- the required order, the task type, and the row
-/// cap -- because those are the ones a required-order flow reads.  The
-/// source's MPP partitioning, CTE producer status, vector-search, index-join
-/// runtime, partial-order and advisory-order fields belong to planner layers
-/// that are not built here, and are deliberately absent rather than stubbed:
-/// an absent field cannot be read as a wrong answer.
+/// Go's immutable inner lookup requirement. Its cached hash covers expressions,
+/// columns, average row count and table/index choice. Private fields prevent
+/// the memo key drifting after construction.
+#[derive(Clone, Debug)]
+pub struct IndexJoinRuntimeProp {
+    other_conditions: Vec<tidb_expr::expression::Expression>,
+    outer_join_keys: Vec<tidb_expr::column::Column>,
+    inner_join_keys: Vec<tidb_expr::column::Column>,
+    avg_inner_row_count: f64,
+    table_range_scan: bool,
+    hash_code: Vec<u8>,
+}
+
+impl IndexJoinRuntimeProp {
+    /// Go `enumerateIndexJoinByOuterIdx` constructs this definition once.
+    #[must_use]
+    pub fn new(
+        mut other_conditions: Vec<tidb_expr::expression::Expression>,
+        mut outer_join_keys: Vec<tidb_expr::column::Column>,
+        mut inner_join_keys: Vec<tidb_expr::column::Column>,
+        avg_inner_row_count: f64,
+        table_range_scan: bool,
+    ) -> Self {
+        let mut hash_code = Vec::new();
+        for expression in &mut other_conditions {
+            hash_code.extend_from_slice(expression.hash_code());
+        }
+        for column in outer_join_keys.iter_mut().chain(&mut inner_join_keys) {
+            hash_code.extend_from_slice(column.hash_code());
+        }
+        tidb_codec::encode_float(&mut hash_code, avg_inner_row_count);
+        tidb_codec::encode_int(&mut hash_code, i64::from(table_range_scan));
+        Self {
+            other_conditions,
+            outer_join_keys,
+            inner_join_keys,
+            avg_inner_row_count,
+            table_range_scan,
+            hash_code,
+        }
+    }
+    /// Residual join expressions used to derive a final-column bound.
+    pub fn other_conditions(&self) -> &[tidb_expr::expression::Expression] {
+        &self.other_conditions
+    }
+    /// Outer lookup columns in equality order.
+    pub fn outer_join_keys(&self) -> &[tidb_expr::column::Column] {
+        &self.outer_join_keys
+    }
+    /// Corresponding inner columns before path selection.
+    pub fn inner_join_keys(&self) -> &[tidb_expr::column::Column] {
+        &self.inner_join_keys
+    }
+    /// Equal-condition output count divided by outer rows.
+    pub fn avg_inner_row_count(&self) -> f64 {
+        self.avg_inner_row_count
+    }
+    /// Whether this candidate requires the clustered-handle path.
+    pub fn table_range_scan(&self) -> bool {
+        self.table_range_scan
+    }
+    /// Go PhysicalProperty.HashCode's IndexJoinProp suffix.
+    pub fn hash_code(&self) -> &[u8] {
+        &self.hash_code
+    }
+}
+
+impl PartialEq for IndexJoinRuntimeProp {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash_code == other.hash_code
+    }
+}
+
+/// Required order, placement and row cap, including an optional inner lookup.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PhysicalProperty {
+    /// Go IndexJoinProp. Inherited explicitly, not by CloneEssentialFields.
+    pub index_join: Option<std::sync::Arc<IndexJoinRuntimeProp>>,
     /// The required sort attributes, outermost first.
     pub sort_items: Vec<SortItem>,
     /// The task type the parent requires.
@@ -201,6 +303,8 @@ pub struct PhysicalProperty {
     pub expected_cnt: f64,
     /// Whether a sort enforcer may be added to satisfy this property.
     pub can_add_enforcer: bool,
+    /// Go NoCopPushDown: aggregates in this subtree must stay at root.
+    pub no_cop_push_down: bool,
     /// Go `SortItemsForPartition`: "these sort only need to sort the data of
     /// one partition, instead of global" — the MPP window paths fill it;
     /// everywhere else it stays empty, which is exactly Go's zero value.
@@ -218,10 +322,12 @@ impl Default for PhysicalProperty {
     /// at every entry point, so the cap defaults to "no cap" rather than zero.
     fn default() -> Self {
         Self {
+            index_join: None,
             sort_items: Vec::new(),
             task_tp: TaskType::Root,
             expected_cnt: f64::MAX,
             can_add_enforcer: false,
+            no_cop_push_down: false,
             sort_items_for_partition: Vec::new(),
             cte_producer_status: CteProducerStatus::default(),
         }
@@ -240,10 +346,12 @@ impl PhysicalProperty {
         enforced: bool,
     ) -> Self {
         Self {
+            index_join: None,
             sort_items: cols.iter().map(|&col| SortItem::new(col, desc)).collect(),
             task_tp,
             expected_cnt,
             can_add_enforcer: enforced,
+            no_cop_push_down: false,
             sort_items_for_partition: Vec::new(),
             cte_producer_status: CteProducerStatus::default(),
         }
@@ -253,15 +361,17 @@ impl PhysicalProperty {
     /// field set. Two absences are Go's own: `CanAddEnforcer` is NOT copied
     /// (the clone defaults to false — an enforcer admission never rides
     /// down to a child property), and `indexJoinProp` is "default not to
-    /// clone" (unported here anyway).
+    /// clone".
     #[must_use]
     pub fn clone_essential_fields(&self) -> Self {
         Self {
+            index_join: None,
             sort_items: self.sort_items.clone(),
             sort_items_for_partition: self.sort_items_for_partition.clone(),
             task_tp: self.task_tp,
             expected_cnt: self.expected_cnt,
             can_add_enforcer: false,
+            no_cop_push_down: self.no_cop_push_down,
             cte_producer_status: self.cte_producer_status,
         }
     }

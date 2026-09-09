@@ -50,6 +50,41 @@ pub(crate) struct IndexEntryForCheck {
 }
 
 impl KvTable {
+    /// Record and unique-index writes share Go's Get/GetLocal duplicate check.
+    /// A local miss defers the assertion; a tombstone is an observed deletion
+    /// and adds no new assertion. Storage errors are never evidence of absence.
+    pub(super) fn check_insert_key(
+        &mut self,
+        key: &Key,
+        duplicate_value: &str,
+        duplicate_key: &str,
+        lazy: bool,
+    ) -> Result<(), KvTableError> {
+        let value = if lazy {
+            self.store.get_local(key)
+        } else {
+            self.store.get(key)
+        };
+        match value {
+            Ok(value) if !value.is_empty() => Err(KvTableError::DuplicateEntry {
+                value: duplicate_value.to_owned(),
+                key: duplicate_key.to_owned(),
+            }),
+            Ok(_) => Ok(()),
+            Err(StorageError::NotFound) => {
+                if lazy {
+                    self.store.mark_presume_key_not_exists_with_hint(
+                        key,
+                        duplicate_value,
+                        duplicate_key,
+                    );
+                }
+                Ok(())
+            }
+            Err(error) => Err(KvTableError::Storage(format!("{error:?}"))),
+        }
+    }
+
     /// Moves a stored raw value to a different key, constructing an index
     /// entry whose value still names the same row but whose indexed datum is
     /// wrong. Ordinary writes cannot create this corruption.
@@ -414,6 +449,7 @@ impl KvTable {
         handle: &TableHandle,
         physical_id: i64,
         zone: &SessionTimeZone,
+        lazy_dup_check: bool,
     ) -> Result<(), KvTableError> {
         let indexes = self.indexes.clone();
         for index in indexes.iter() {
@@ -425,11 +461,13 @@ impl KvTable {
             let (key, distinct) = self.index_key(index, row, handle, physical_id, zone)?;
             let value = self.index_entry_value(index, row, handle, distinct, zone)?;
             let key = Key::from_bytes(key);
-            if distinct && self.store.get(&key).is_ok() {
-                return Err(KvTableError::DuplicateEntry {
-                    value: duplicate_value_text(&self.index_values(index, row)),
-                    key: self.qualified_key(&index.name),
-                });
+            if distinct {
+                self.check_insert_key(
+                    &key,
+                    &duplicate_value_text(&self.index_values(index, row)),
+                    &self.qualified_key(&index.name),
+                    lazy_dup_check,
+                )?;
             }
             self.store
                 .set(key, value)

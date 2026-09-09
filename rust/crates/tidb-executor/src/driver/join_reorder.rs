@@ -254,7 +254,7 @@ use tidb_ast::{
 };
 use tidb_datatype::FieldType;
 use tidb_expr::Columns as _;
-use tidb_planner::cardinality::derive_stats::{ColumnId, DISTINCT_FACTOR};
+use tidb_planner::cardinality::derive_stats::ColumnId;
 
 use crate::driver::catalog::{Catalog, TableEntry};
 use crate::kv_table::KvTable;
@@ -789,7 +789,7 @@ fn strip(expr: &Expr) -> &Expr {
 ///
 /// Collected through the generated AST visitor rather than a hand-written
 /// match, so a new [`Expr`] variant cannot introduce a subtree this misses.
-fn column_paths(expr: &Expr) -> Vec<Vec<String>> {
+pub(super) fn column_paths(expr: &Expr) -> Vec<Vec<String>> {
     struct Collect(Vec<Vec<String>>);
     impl tidb_ast::Visitor for Collect {
         fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
@@ -1340,44 +1340,21 @@ fn emit(
                 selectivity *= crate::plan_trace::SELECTIVITY_FACTOR;
             }
             let (full_loaded_columns, full_loaded_indexes) = full_loaded_statistics(table, demand);
+            let ids = table
+                .ids
+                .iter()
+                .enumerate()
+                .map(|(offset, id)| (offset, *id))
+                .collect::<Vec<_>>();
+            let profile = crate::access_cost::table_stats_profile(
+                table.table,
+                table.stats,
+                &ids,
+                &full_loaded_columns,
+                &full_loaded_indexes,
+            );
             Some(LogicalNode::DataSource {
-                realtime_count: table.realtime,
-                column_ndvs: table
-                    .ids
-                    .iter()
-                    .zip(table.table.visible_columns())
-                    .map(|(id, column)| {
-                        let analyzed =
-                            table.stats.filter(|stats| !stats.pseudo).and_then(|stats| {
-                                stats.estimate_column_ndv(
-                                    column.id,
-                                    &full_loaded_columns,
-                                    &full_loaded_indexes,
-                                )
-                            });
-                        (*id, analyzed.unwrap_or(table.realtime * DISTINCT_FACTOR))
-                    })
-                    .collect(),
-                group_ndvs: table
-                    .stats
-                    .filter(|stats| !stats.pseudo)
-                    .into_iter()
-                    .flat_map(|stats| {
-                        table.table.indexes().iter().filter_map(move |index| {
-                            let index_stats = stats.indexes.get(&index.id)?;
-                            let mut columns = index
-                                .column_offsets
-                                .iter()
-                                .map(|offset| table.ids.get(*offset).map(|id| *id as i64))
-                                .collect::<Option<Vec<_>>>()?;
-                            columns.sort_unstable();
-                            Some(tidb_planner::cardinality::ndv::GroupNdv {
-                                columns,
-                                ndv: index_stats.histogram.ndv as f64,
-                            })
-                        })
-                    })
-                    .collect(),
+                table_stats: profile,
                 selectivity,
             })
         }
@@ -1531,34 +1508,15 @@ fn full_loaded_statistics(table: &TableRel<'_>, demand: &Demand) -> (BTreeSet<i6
         }
     }
 
-    let full_loaded_columns = full_offsets
-        .iter()
-        .filter_map(|offset| table.table.visible_columns().get(*offset))
-        .map(|column| column.id)
-        .filter(|id| stats.columns.contains_key(id))
-        .collect::<BTreeSet<_>>();
-    let mut needed_offsets = full_offsets;
+    let mut needed_offsets = full_offsets.clone();
     needed_offsets.extend(demand.not_null.iter().copied());
     needed_offsets.extend(demand.expression.iter().copied());
-    let full_loaded_indexes = table
-        .table
-        .plan_indexes()
-        .filter(|index| {
-            index
-                .column_offsets
-                .iter()
-                .any(|offset| needed_offsets.contains(offset))
-        })
-        .map(|index| index.id)
-        .filter(|id| stats.indexes.contains_key(id))
-        .collect::<BTreeSet<_>>();
-    let fallback_column = table
-        .table
-        .visible_columns()
-        .iter()
-        .find(|column| stats.columns.contains_key(&column.id))
-        .map(|column| column.id);
-    stats.mark_loaded_statistics(full_loaded_columns, full_loaded_indexes, fallback_column)
+    crate::access_cost::load_statistics_for_columns(
+        table.table,
+        Some(stats),
+        &full_offsets,
+        &needed_offsets,
+    )
 }
 
 /// `cardinality.Selectivity` over the conjuncts pushed into one base table.

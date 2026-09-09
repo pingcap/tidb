@@ -99,7 +99,7 @@ fn numeric_context_result_type(expr: &Expression) -> EvalType {
 
 /// Go `newReturnFieldTypeForBaseBuiltinFunc`, restricted to the numeric arms
 /// this module (and the sibling `builtin_compare`/`builtin_op` modules) needs:
-/// the base result type for an Int/Real/Decimal signature. The Go function's
+/// the base result type for an Int/Real/Decimal/Vector signature. The Go function's
 /// trailing `booleanFunctions` check is applied by the callers that need it
 /// (none of the arithmetic classes are boolean functions).
 pub(crate) fn new_return_field_type(ret: EvalType) -> FieldType {
@@ -120,12 +120,30 @@ pub(crate) fn new_return_field_type(ret: EvalType) -> FieldType {
             .add_flags(FieldTypeFlags::BINARY)
             .flen_set(11)
             .build(),
+        EvalType::VectorFloat32 => FieldTypeBuilder::new()
+            .with_code(FieldTypeCode::VectorFloat32)
+            .add_flags(FieldTypeFlags::BINARY)
+            .flen_set(UNSPECIFIED_LENGTH)
+            .build(),
         other => unreachable!("arithmetic result type is never {other:?}"),
     };
     // A binary-flagged non-JSON result carries the binary charset/collation.
     ft.set_charset_name("binary");
     ft.set_collation_name("binary");
     ft
+}
+
+/// Go `WrapWithCastAsReal`: a non-real argument gets the cast signature's
+/// type before an arithmetic class derives its result width and scale.
+pub(crate) fn real_argument_type(source: &FieldType) -> std::borrow::Cow<'_, FieldType> {
+    if source.eval_type() == EvalType::Real {
+        return std::borrow::Cow::Borrowed(source);
+    }
+    std::borrow::Cow::Owned(
+        new_return_field_type(EvalType::Real).with_added_flags(
+            source.flags() & (FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL),
+        ),
+    )
 }
 
 /// Go `setFlenDecimal4RealOrDecimal`.
@@ -297,11 +315,7 @@ pub fn infer_arithmetic_type_with_context(
         return match name {
             // Go's function classes select `ETVectorFloat32` for BOTH
             // arguments and the result as soon as either operand is vector.
-            "plus" | "minus" | "mul" => Some(
-                FieldTypeBuilder::new()
-                    .with_code(FieldTypeCode::VectorFloat32)
-                    .build(),
-            ),
+            "plus" | "minus" | "mul" => Some(new_return_field_type(EvalType::VectorFloat32)),
             _ => None,
         };
     }
@@ -309,7 +323,9 @@ pub fn infer_arithmetic_type_with_context(
         if lhs_tp == EvalType::Real || rhs_tp == EvalType::Real {
             let mut ret = new_return_field_type(EvalType::Real);
             if let (Some(a), Some(b)) = (a, b) {
-                set_flen_decimal4_real_or_decimal(&mut ret, a, b, true, is_multiply);
+                let a = real_argument_type(a);
+                let b = real_argument_type(b);
+                set_flen_decimal4_real_or_decimal(&mut ret, &a, &b, true, is_multiply);
             }
             ret
         } else {
@@ -457,14 +473,14 @@ mod tests {
     #[test]
     fn vector_arithmetic_keeps_the_vector_return_type() {
         for name in ["plus", "minus", "mul"] {
-            assert_eq!(
-                infer_arithmetic_type(name, &vector_expr(vec![1.0]), &int_expr(1))
-                    .expect("vector signature"),
-                FieldTypeBuilder::new()
-                    .with_code(FieldTypeCode::VectorFloat32)
-                    .build(),
-                "{name}"
-            );
+            let result = infer_arithmetic_type(name, &vector_expr(vec![1.0]), &int_expr(1))
+                .expect("vector signature");
+            // Go newReturnFieldTypeForBaseBuiltinFunc(ETVectorFloat32),
+            // not the zero-value FieldTypeBuilder used to construct it.
+            assert_eq!(result.code(), FieldTypeCode::VectorFloat32, "{name}");
+            assert_eq!((result.flen(), result.decimal()), (-1, 0), "{name}");
+            assert_eq!(result.flags(), FieldTypeFlags::BINARY, "{name}");
+            assert_eq!((result.charset_name(), result.collation_name()), ("binary", "binary"));
         }
         assert!(infer_arithmetic_type("div", &vector_expr(vec![1.0]), &int_expr(1)).is_none());
     }

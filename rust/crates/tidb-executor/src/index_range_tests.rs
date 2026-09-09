@@ -73,7 +73,7 @@ mod tests {
         match detach_cond_and_build_range_for_index(
             index,
             where_clause,
-            &tidb_datatype::SessionTimeZone::utc(),
+            &tidb_expr::rewriter::ZonedNoResolver::new(tidb_datatype::SessionTimeZone::utc()),
         ) {
             Some(built) => render(&built.ranges),
             None => "<no range>".to_owned(),
@@ -687,7 +687,7 @@ mod tests {
                 panic!("not a select")
             };
             let where_clause = select.where_clause.as_ref().expect("has a WHERE");
-            where_is_unsatisfiable(&table, where_clause, &tidb_datatype::SessionTimeZone::utc())
+            where_is_unsatisfiable(&table, where_clause, &tidb_expr::rewriter::ZonedNoResolver::new(tidb_datatype::SessionTimeZone::utc()))
         };
 
         // Contradictory: an equality no other comparison on the column admits.

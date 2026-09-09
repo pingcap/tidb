@@ -149,7 +149,7 @@ impl<R: QueryResponse> QuerySelectResult<R> {
         intermediate_output_types: Vec<Vec<FieldType>>,
     ) -> SelectResponseIter
     where
-        R: 'static,
+        R: Send + 'static,
     {
         let response = self
             .response

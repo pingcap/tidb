@@ -388,13 +388,10 @@ impl QuerySession for PipelineServerSession {
     /// marker bound to NULL, which is side-effect free for a query; a
     /// statement that answers with an OK packet reports none.
     fn prepare_general(&mut self, sql: &str) -> Result<PreparedGeneral, SqlQueryError> {
-        let parameter_count = self.session.parameter_count(sql).map_err(map_error)?;
-        let template = self.session.parse_statement(sql).map_err(map_error)?;
-        let result_columns = match self.session.statement_kind(sql).map_err(map_error)? {
+        let prepared = self.session.prepare_ast(sql).map_err(map_error)?;
+        let result_columns = match prepared.statement_kind(&self.session) {
             StmtKind::Query => {
-                let probe: Vec<tidb_datatype::Datum> =
-                    std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
-                match self.session.run_with_params(sql, &probe) {
+                match self.session.probe_prepared(&prepared) {
                     Ok(StmtOutput::Rows { columns, .. }) => select_columns(&columns),
                     Err(error @ tidb_executor::DriverError::Var(_)) => {
                         return Err(map_error(error));
@@ -413,12 +410,7 @@ impl QuerySession for PipelineServerSession {
             }
             StmtKind::Write => Vec::new(),
         };
-        Ok(PreparedGeneral::with_template(
-            sql.to_owned(),
-            parameter_count,
-            result_columns,
-            template,
-        ))
+        Ok(PreparedGeneral::with_prepared_ast(prepared, result_columns))
     }
 
     fn execute_general<'a>(
@@ -427,10 +419,16 @@ impl QuerySession for PipelineServerSession {
         values: &[tidb_protocol::PreparedValue],
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
         let params = prepared_parameters(values);
-        let (output, result_authority) = self
-            .session
-            .run_with_params_and_result_authority(statement.sql(), &params)
-            .map_err(map_error)?;
+        let (output, result_authority) = if let Some(prepared) = statement.prepared_ast() {
+            let bound = prepared
+                .bind_for_execution(&self.session, &params)
+                .map_err(map_error)?;
+            self.session.run_bound_prepared_with_result_authority(bound)
+        } else {
+            self.session
+                .run_with_params_and_result_authority(statement.sql(), &params)
+        }
+        .map_err(map_error)?;
         Ok(match output {
             StmtOutput::Rows { columns, rows } => {
                 let field_types = columns.iter().map(|(_, field)| field.clone()).collect();
@@ -735,6 +733,25 @@ mod tests {
             .unwrap();
         session.session.run("SELECT 1").unwrap();
 
+        // A declined fast-read candidate, metadata probe and ordinary
+        // prepared execution must each own one statement context. A second
+        // live context attempts to restart this connection's active root pool.
+        let prepared = session.session.prepare_ast("SELECT ?").unwrap();
+        session.session.probe_prepared(&prepared).unwrap();
+        for value in [1, 2] {
+            let bound = prepared
+                .bind_for_execution(&session.session, &[Datum::Int(value)])
+                .unwrap();
+            let (StmtOutput::Rows { rows, .. }, _) = session
+                .session
+                .run_bound_prepared_with_result_authority(bound)
+                .unwrap()
+            else {
+                panic!("expected rows");
+            };
+            assert_eq!(rows, vec![vec![Datum::Int(value)]]);
+        }
+
         assert!(
             arbitrator.find_root_pool(117).entry.is_some(),
             "the listener-created session must create its statement root through the process arbitrator"
@@ -904,6 +921,61 @@ mod tests {
     }
 
     /// A whole CREATE/INSERT/SELECT lifecycle through the QuerySession seam.
+    #[test]
+    fn prepared_execution_retains_ast_and_reuses_current_handles() {
+        use tidb_protocol::PreparedValue;
+
+        let mut session = open_session();
+        session
+            .execute_write("CREATE TABLE t (id BIGINT PRIMARY KEY, v BIGINT)")
+            .unwrap();
+        session
+            .execute_write("INSERT INTO t VALUES (1, 10), (2, 20)")
+            .unwrap();
+        let prepared = session
+            .prepare_general("SELECT id, v, v FROM t WHERE id = ?")
+            .unwrap();
+        for (id, expected_hit) in [(1, 0), (2, 1)] {
+            let GeneralExecuteOutcome::Rows(mut result) = session
+                .execute_general(&prepared, &[PreparedValue::SignedLongLong(id)])
+                .unwrap()
+            else {
+                panic!("expected rows")
+            };
+            assert_eq!(
+                drain(&mut result, 8).1,
+                vec![vec![
+                    Datum::Int(id),
+                    Datum::Int(id * 10),
+                    Datum::Int(id * 10)
+                ]]
+            );
+            drop(result);
+            let mut status = session.execute("SELECT @@last_plan_from_cache").unwrap();
+            assert_eq!(
+                drain(&mut status, 8).1,
+                vec![vec![Datum::Int(expected_hit)]]
+            );
+        }
+
+        session.execute_write("SET sql_mode = ''").unwrap();
+        let literal = session
+            .prepare_general("SELECT \"v\" FROM t WHERE id = ?")
+            .unwrap();
+        session
+            .execute_write("SET sql_mode = 'ANSI_QUOTES'")
+            .unwrap();
+        let GeneralExecuteOutcome::Rows(mut result) = session
+            .execute_general(&literal, &[PreparedValue::SignedLongLong(1)])
+            .unwrap()
+        else {
+            panic!("expected rows")
+        };
+        let answer = drain(&mut result, 8).1;
+        assert_eq!(answer.len(), 1);
+        assert_eq!(answer[0][0].as_raw_bytes(), Some(b"v".as_slice()));
+    }
+
     #[test]
     fn text_path_serves_the_pipeline_lifecycle() {
         let mut session = open_session();

@@ -33,7 +33,7 @@ use crate::{Session, StmtKind, StoredStateChange};
 #[derive(Clone, Debug)]
 pub struct PreparedAst {
     sql: String,
-    statement: Stmt,
+    statement: Arc<Stmt>,
     parameter_count: usize,
     point_get_plan: Option<Arc<PreparedPointGetPlan>>,
     point_get_cache_ready: Arc<AtomicBool>,
@@ -48,7 +48,7 @@ impl PreparedAst {
     ) -> Self {
         Self {
             sql,
-            statement,
+            statement: Arc::new(statement),
             parameter_count,
             point_get_plan: point_get_plan.map(Arc::new),
             point_get_cache_ready: Arc::new(AtomicBool::new(false)),
@@ -59,6 +59,12 @@ impl PreparedAst {
     #[must_use]
     pub fn sql(&self) -> &str {
         &self.sql
+    }
+
+    /// The immutable parse retained under PREPARE's SQL mode.
+    #[must_use]
+    pub fn statement(&self) -> &Stmt {
+        &self.statement
     }
 
     /// The number of execute-time values this statement requires.
@@ -107,7 +113,7 @@ impl PreparedAst {
         };
         Ok(BoundPreparedAst {
             execution_sql,
-            statement: Some(statement),
+            input: PreparedStatementInput::Bound(statement),
             point_get,
             point_get_cache_hit,
             point_get_cache_ready: Arc::clone(&self.point_get_cache_ready),
@@ -136,7 +142,10 @@ impl PreparedAst {
             {
                 return Ok(BoundPreparedAst {
                     execution_sql: self.sql.clone(),
-                    statement: None,
+                    input: PreparedStatementInput::Unbound {
+                        statement: Arc::clone(&self.statement),
+                        values: values.to_vec(),
+                    },
                     point_get: Some(execution),
                     point_get_cache_hit: true,
                     point_get_cache_ready: Arc::clone(&self.point_get_cache_ready),
@@ -152,11 +161,43 @@ impl PreparedAst {
 #[derive(Debug)]
 pub struct BoundPreparedAst {
     pub(crate) execution_sql: String,
-    pub(crate) statement: Option<Stmt>,
+    input: PreparedStatementInput,
     point_get: Option<PreparedPointGetExecution>,
     point_get_cache_hit: bool,
     point_get_cache_ready: Arc<AtomicBool>,
     use_cached_point_get: bool,
+}
+
+/// Retain the original parse on a hit, but clone and bind it only if the
+/// current catalog or session policy requires ordinary planning.
+#[derive(Debug)]
+pub(crate) enum PreparedStatementInput {
+    Bound(Stmt),
+    Unbound {
+        statement: Arc<Stmt>,
+        values: Vec<Datum>,
+    },
+}
+
+impl PreparedStatementInput {
+    pub(crate) fn into_statement(self) -> Result<Stmt, DriverError> {
+        match self {
+            Self::Bound(statement) => Ok(statement),
+            Self::Unbound { statement, values } => {
+                tidb_executor::bind_prepared_statement(&statement, &values)
+            }
+        }
+    }
+
+    fn statement(&mut self) -> Result<&Stmt, DriverError> {
+        if let Self::Unbound { statement, values } = self {
+            *self = Self::Bound(tidb_executor::bind_prepared_statement(statement, values)?);
+        }
+        let Self::Bound(statement) = self else {
+            unreachable!()
+        };
+        Ok(statement)
+    }
 }
 
 impl BoundPreparedAst {
@@ -164,7 +205,7 @@ impl BoundPreparedAst {
         self,
     ) -> (
         String,
-        Option<Stmt>,
+        PreparedStatementInput,
         Option<PreparedPointGetExecution>,
         Option<PreparedPointGetExecution>,
         Arc<AtomicBool>,
@@ -178,7 +219,7 @@ impl BoundPreparedAst {
             .flatten();
         (
             self.execution_sql,
-            self.statement,
+            self.input,
             cached,
             cache_candidate,
             self.point_get_cache_ready,
@@ -188,22 +229,24 @@ impl BoundPreparedAst {
     /// The read policy chosen from the same bound tree execution will plan.
     #[must_use]
     pub fn statement_read_shape(&mut self, session: &Session) -> StatementReadShape {
-        if self.use_cached_point_get {
-            return StatementReadShape::AutocommitPointGet;
-        }
         self.use_cached_point_get = self.point_get_cache_hit
             && self
                 .point_get
                 .as_ref()
                 .is_some_and(|execution| session.can_reuse_prepared_point_get(execution.plan()));
         if self.use_cached_point_get {
-            return StatementReadShape::AutocommitPointGet;
-        }
-        session.statement_read_shape_bound(
-            self.statement
+            return self
+                .point_get
                 .as_ref()
-                .expect("the ordinary prepared path retains its bound AST"),
-        )
+                .expect("a cache hit retains its physical read")
+                .plan()
+                .statement_read_shape();
+        }
+        self.input
+            .statement()
+            .map_or(StatementReadShape::Unknown, |statement| {
+                session.statement_read_shape_bound(statement)
+            })
     }
 }
 
@@ -273,24 +316,167 @@ impl Session {
         }
         matched
     }
+}
 
-    /// Binds a retained point-get plan for a binary EXECUTE after applying
-    /// the same autocommit, snapshot, session-binding, and schema gates used
-    /// by the Go point-get cache.
-    pub fn bind_cached_prepared_point_get(
-        &self,
-        plan: &Arc<PreparedPointGetPlan>,
-        values: &[Datum],
-    ) -> Option<PreparedPointGetExecution> {
-        if !self.can_reuse_prepared_point_get(plan) {
-            return None;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_bound_cache_hit_replans_after_catalog_identity_changes() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (id BIGINT PRIMARY KEY, v BIGINT)")
+            .unwrap();
+        session.run("INSERT INTO t VALUES (1, 10)").unwrap();
+        let prepared = session.prepare_ast("SELECT v FROM t WHERE id = ?").unwrap();
+        let first = prepared
+            .bind_for_execution(&session, &[Datum::Int(1)])
+            .unwrap();
+        session.run_bound_prepared(first).unwrap();
+        let bounds = [false, true].map(|classify| {
+            (
+                classify,
+                prepared
+                    .bind_for_execution(&session, &[Datum::Int(2)])
+                    .unwrap(),
+            )
+        });
+        session.run("DROP TABLE t").unwrap();
+        session.run("CREATE TABLE t (id BIGINT, v BIGINT)").unwrap();
+        session.run("INSERT INTO t VALUES (2, 20)").unwrap();
+        for (classify, mut bound) in bounds {
+            // The cached execution was bound before a schema refresh at the
+            // cluster statement boundary. Both callers must replan safely.
+            assert!(bound.use_cached_point_get);
+            if classify {
+                assert_eq!(
+                    bound.statement_read_shape(&session),
+                    StatementReadShape::Unknown
+                );
+            }
+            let crate::StmtOutput::Rows { rows, .. } = session.run_bound_prepared(bound).unwrap()
+            else {
+                panic!("expected rows");
+            };
+            assert_eq!(rows, vec![vec![Datum::Int(20)]]);
         }
-        let bound = plan.bind(values, &self.session_time_zone());
-        if bound.is_none()
-            && std::env::var("TIDB_RS_TRACE").is_ok_and(|v| v.contains("decline"))
-        {
-            eprintln!("[pg-bind-none] {}.{}", plan.names().0, plan.names().1);
+    }
+
+    #[test]
+    fn prepared_execution_warms_cache_without_cursor_materialization() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (id BIGINT PRIMARY KEY, v BIGINT)")
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1, 10), (2, 20)")
+            .unwrap();
+        let prepared = session.prepare_ast("SELECT v FROM t WHERE id = ?").unwrap();
+        session.probe_prepared(&prepared).unwrap();
+        assert!(!prepared.point_get_cache_ready.load(Ordering::Acquire));
+        let first = prepared
+            .bind_for_execution(&session, &[Datum::Int(1)])
+            .unwrap();
+        assert!(
+            matches!(first.input, PreparedStatementInput::Bound(_)),
+            "PREPARE is not a cache hit"
+        );
+        session.run_bound_prepared(first).unwrap();
+        let second = prepared
+            .bind_for_execution(&session, &[Datum::Int(2)])
+            .unwrap();
+        assert!(
+            matches!(second.input, PreparedStatementInput::Unbound { .. }),
+            "real execution must publish independently of cursor capture"
+        );
+        let crate::StmtOutput::Rows { rows, .. } = session.run_bound_prepared(second).unwrap()
+        else {
+            panic!("expected rows");
+        };
+        assert_eq!(rows, vec![vec![Datum::Int(20)]]);
+    }
+
+    #[test]
+    fn cached_index_lookup_keeps_timestamped_read_shape() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (id BIGINT PRIMARY KEY, a BIGINT, v BIGINT, INDEX ia(a))")
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (1, 7, 10), (2, 7, 20)")
+            .unwrap();
+        let prepared = session
+            .prepare_ast("SELECT id, v FROM t WHERE a = ?")
+            .unwrap();
+        assert!(
+            prepared.point_get_plan().is_some(),
+            "exercise a reusable index lookup"
+        );
+        let values = [Datum::Int(7)];
+        let bound = prepared.bind_for_execution(&session, &values).unwrap();
+        let (expected, _) = session
+            .run_bound_prepared_with_result_authority(bound)
+            .unwrap();
+        for direct_bind in [false, true] {
+            let mut bound = if direct_bind {
+                prepared.bind_for_execution(&session, &values).unwrap()
+            } else {
+                prepared
+                    .bind(&values, &session.session_time_zone())
+                    .unwrap()
+            };
+            assert_eq!(
+                bound.statement_read_shape(&session),
+                StatementReadShape::Unknown
+            );
+            assert!(
+                bound.use_cached_point_get,
+                "timestamp policy must not disable reuse"
+            );
+            assert_eq!(session.run_bound_prepared(bound).unwrap(), expected);
         }
-        bound
+    }
+
+    #[test]
+    fn cached_read_shape_revalidates_catalog_identity() {
+        let mut session = Session::new();
+        session
+            .run("CREATE TABLE t (id BIGINT PRIMARY KEY, a BIGINT, v BIGINT, INDEX ia(a))")
+            .unwrap();
+        let prepared = session
+            .prepare_ast("SELECT id, v FROM t WHERE a = ?")
+            .unwrap();
+        let plan = prepared.point_get_plan().expect("retained index lookup");
+        let warm = prepared
+            .bind_for_execution(&session, &[Datum::Int(7)])
+            .unwrap();
+        session.run_bound_prepared(warm).unwrap();
+        for (ddl, expected) in [
+            (None, StatementReadShape::Unknown),
+            (
+                Some("CREATE TABLE t (id BIGINT, a BIGINT PRIMARY KEY, v BIGINT)"),
+                StatementReadShape::AutocommitPointGet,
+            ),
+            (
+                Some("CREATE TABLE t (id BIGINT PRIMARY KEY, a BIGINT, v BIGINT)"),
+                StatementReadShape::Unknown,
+            ),
+        ] {
+            if let Some(ddl) = ddl {
+                session.run("DROP TABLE t").unwrap();
+                session.run(ddl).unwrap();
+                assert!(!session.can_reuse_prepared_point_get(&plan));
+            }
+            let mut bound = prepared
+                .bind_for_execution(&session, &[Datum::Int(7)])
+                .unwrap();
+            assert_eq!(
+                bound.statement_read_shape(&session),
+                expected,
+                "a stale plan must not choose the current table's read policy"
+            );
+            assert_eq!(bound.use_cached_point_get, ddl.is_none());
+        }
     }
 }

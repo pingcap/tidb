@@ -14,15 +14,14 @@
 
 //! First deployable read-only SQL-to-real-TiKV execution path.
 //!
-//! # Bounded path — closed to new features
+//! # Configured read path
 //!
 //! Despite the name, this is not the deployed read tier. It serves only the
 //! `--read-table` / `--load-table` node modes, which exist as scripted
 //! real-TiKV wire proofs; `--cluster-session` is what is deployed and what
 //! every sysbench run measures, and it reaches none of this module. New read
-//! capability belongs at the cluster seam
-//! (`tidb-executor::cluster_storage` / `remote_scan`); this path may consume
-//! it afterwards, never the reverse. See
+//! capability belongs in the shared planner/executor path
+//! (`tidb-executor::cluster_storage` / `remote_scan`). See
 //! `rust/docs/architecture/read-tier-boundary.md`.
 //!
 //! This module composes existing source-shaped owners. SQL admission and
@@ -416,7 +415,7 @@ impl<F, S> RealTiKvReadSessionOpener<F, S>
 where
     F: RealTiKvSessionTransportFactory,
     F::Transport: QueryTransport,
-    <F::Transport as QueryTransport>::Response: 'static,
+    <F::Transport as QueryTransport>::Response: Send + 'static,
     S: TimestampSource + Clone,
 {
     /// Opens one connection-local session inside the calling server worker.
@@ -1181,7 +1180,7 @@ impl<T: TransportEvidenceSource, S> RealTiKvReadSession<T, S> {
 impl<T, S> RealTiKvReadSession<T, S>
 where
     T: QueryTransport,
-    T::Response: 'static,
+    T::Response: Send + 'static,
     S: TimestampSource,
 {
     /// Injects an already-built transport and timestamp source for focused
@@ -1567,7 +1566,7 @@ fn protocol_columns(table: &ConfiguredTable, plan: &ReadOnlyScanPlan) -> Vec<Col
 impl<T, S> RealTiKvMultiReadSession<T, S>
 where
     T: QueryTransport,
-    T::Response: 'static,
+    T::Response: Send + 'static,
     S: TimestampSource,
 {
     /// Starts one prepared single-relation plan on the matching reader while

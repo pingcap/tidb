@@ -655,19 +655,12 @@ pub fn current_process_memory_usage() -> io::Result<u64> {
 /// Returns the current resident memory of this TiDB process.
 #[cfg(target_os = "macos")]
 pub fn current_process_memory_usage() -> io::Result<u64> {
-    let pid = std::process::id().to_string();
-    let output = Command::new("ps")
-        .args(["-o", "rss=", "-p", &pid])
-        .output()?;
-    if !output.status.success() {
-        return Err(io::Error::other("ps failed to read process memory"));
-    }
-    std::str::from_utf8(&output.stdout)
-        .ok()
-        .map(str::trim)
-        .and_then(|value| value.parse::<u64>().ok())
-        .and_then(|kib| kib.checked_mul(1024))
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid process RSS"))
+    let pid = i32::try_from(std::process::id()).map_err(io::Error::other)?;
+    // Match gopsutil's Darwin MemoryInfo: current resident bytes, not peak RSS
+    // or allocator-owned memory. The runtime samples this every 100 ms.
+    libproc::proc_pid::pidinfo::<libproc::task_info::TaskInfo>(pid, 0)
+        .map(|info| info.pti_resident_size)
+        .map_err(io::Error::other)
 }
 
 /// Reports that process-memory discovery is unavailable on this platform.
@@ -748,6 +741,94 @@ mod tests {
             1234 << 10
         );
         assert!(parse_process_rss_kib("Name:\ttidb-server\n").is_err());
+    }
+
+    /// The 100-ms runtime sampler must not spawn a command to read its RSS.
+    /// Isolate PATH in a child rather than mutating the test process environment.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn process_rss_sampling_needs_no_external_command() {
+        const CHILD: &str = "TIDB_RSS_NATIVE_TEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let before = current_process_memory_usage().expect("native RSS without PATH");
+            assert!(before > 0);
+            let resident = vec![0xa5_u8; 16 * 1024 * 1024];
+            std::hint::black_box(&resident);
+            let after = current_process_memory_usage().expect("RSS after touching pages");
+            assert!(
+                after >= before + 8 * 1024 * 1024,
+                "RSS must measure current resident bytes: {before} -> {after}"
+            );
+            return;
+        }
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "cgroup::tests::process_rss_sampling_needs_no_external_command",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("PATH", "/nonexistent-tidb-rss-test-path")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "child failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "manual comparison with the former subprocess sampler"]
+    fn process_rss_sampling_cost() {
+        use std::time::Instant;
+
+        let pid = std::process::id().to_string();
+        let command_rss = || {
+            let output = Command::new("ps")
+                .args(["-o", "rss=", "-p", &pid])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            std::str::from_utf8(&output.stdout)
+                .unwrap()
+                .trim()
+                .parse::<u64>()
+                .unwrap()
+                * 1024
+        };
+        // Touch pages before checking units against the independent command.
+        let resident = vec![0xa5_u8; 16 * 1024 * 1024];
+        std::hint::black_box(&resident);
+        let command_bytes = command_rss();
+        let native_bytes = current_process_memory_usage().unwrap();
+        assert!(
+            native_bytes.abs_diff(command_bytes) <= 1024 * 1024,
+            "resident bytes differ: command={command_bytes}, native={native_bytes}"
+        );
+        println!("rss_bytes command={command_bytes} native={native_bytes}");
+        for round in 0..5 {
+            for native in if round % 2 == 0 {
+                [false, true]
+            } else {
+                [true, false]
+            } {
+                let started = Instant::now();
+                for _ in 0..100 {
+                    std::hint::black_box(if native {
+                        current_process_memory_usage().unwrap()
+                    } else {
+                        command_rss()
+                    });
+                }
+                println!(
+                    "rss_sampling round={round} native={native} ns_per_call={}",
+                    started.elapsed().as_nanos() / 100
+                );
+            }
+        }
     }
 
     fn v1_mount(controller: &str, namespace_root: &str, mount: &str) -> String {

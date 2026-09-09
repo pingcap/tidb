@@ -921,38 +921,86 @@ pub fn build_call(name: &str, args: Vec<PbScalar>) -> Option<PbScalar> {
 /// used by scan predicates. Returning `None` is the Rust equivalent of Go's
 /// `CanExprsPushDownWithExtraInfo` / `AggFuncToPBExpr` refusal: the aggregate
 /// stays wholly in the root task.
+/// This context-free entry point accepts strict literals only. Execution-time
+/// parameter and correlated values belong to [`from_expression_in`].
 #[must_use]
 pub fn from_expression(expression: &Expression) -> Option<PbScalar> {
+    from_expression_with_context(expression, &crate::NoColumns, false)
+        .ok()
+        .flatten()
+}
+
+/// Go `PbConverter.ExprToPB`: read constants and correlated columns from the
+/// current evaluation context, without cloning or rewriting the expression.
+pub fn from_expression_in(
+    expression: &Expression,
+    context: &impl crate::Columns,
+) -> Result<Option<PbScalar>, crate::EvalError> {
+    from_expression_with_context(expression, context, true)
+}
+
+fn from_expression_with_context(
+    expression: &Expression,
+    context: &impl crate::Columns,
+    bind_values: bool,
+) -> Result<Option<PbScalar>, crate::EvalError> {
     match expression {
-        Expression::Column(column) => Some(PbScalar::Column {
-            offset: u32::try_from(column.index).ok()?,
-            field_type: column.get_static_type()?.clone(),
-        }),
-        Expression::Constant(constant) => match &constant.value {
-            Datum::Int(value) => Some(PbScalar::IntLiteral(*value)),
-            Datum::Decimal(value) => Some(PbScalar::DecimalLiteral {
-                value: value.clone(),
-                field_type: constant.ret_type.clone()?,
-            }),
-            Datum::Real(value) | Datum::Float32(value)
-                if !(*value == 0.0 && value.is_sign_negative()) =>
-            {
-                Some(PbScalar::RealLiteral {
-                    value: *value,
-                    field_type: constant.ret_type.clone()?,
-                })
-            }
-            _ => None,
-        },
-        Expression::ScalarFunction(function) => {
-            let args = function
-                .args
-                .iter()
-                .map(from_expression)
-                .collect::<Option<Vec<_>>>()?;
-            build_call(function.func_name.lowercase(), args)
+        Expression::Column(column) => Ok(u32::try_from(column.index)
+            .ok()
+            .zip(column.get_static_type())
+            .map(|(offset, field_type)| PbScalar::Column {
+                offset,
+                field_type: field_type.clone(),
+            })),
+        Expression::Constant(constant) => {
+            let value = if bind_values {
+                constant.eval_in(context)?
+            } else if let Some(value) = constant.literal_value() {
+                value.clone()
+            } else {
+                return Ok(None);
+            };
+            // Go Constant.GetType(ctx) infers a marker's type from the current
+            // datum, independently of its planning-time RetType.
+            let parameter_type = (bind_values && constant.param_marker.is_some())
+                .then(|| tidb_datatype::infer_param_type_from_datum(&value));
+            Ok(describe_literal(value, parameter_type.as_ref().or(constant.ret_type.as_ref())))
         }
-        Expression::CorrelatedColumn(_) => None,
+        Expression::CorrelatedColumn(column) if bind_values => Ok(describe_literal(
+            column.eval(),
+            column.column.ret_type.as_ref(),
+        )),
+        Expression::ScalarFunction(function) => {
+            let mut args = Vec::with_capacity(function.args.len());
+            for argument in &function.args {
+                let Some(argument) = from_expression_with_context(argument, context, bind_values)?
+                else {
+                    return Ok(None);
+                };
+                args.push(argument);
+            }
+            Ok(build_call(function.func_name.lowercase(), args))
+        }
+        Expression::CorrelatedColumn(_) => Ok(None),
+    }
+}
+
+fn describe_literal(value: Datum, field_type: Option<&FieldType>) -> Option<PbScalar> {
+    match value {
+        Datum::Int(value) => Some(PbScalar::IntLiteral(value)),
+        Datum::Decimal(value) => Some(PbScalar::DecimalLiteral {
+            value,
+            field_type: field_type?.clone(),
+        }),
+        Datum::Real(value) | Datum::Float32(value)
+            if !(value == 0.0 && value.is_sign_negative()) =>
+        {
+            Some(PbScalar::RealLiteral {
+                value,
+                field_type: field_type?.clone(),
+            })
+        }
+        _ => None,
     }
 }
 

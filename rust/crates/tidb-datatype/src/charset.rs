@@ -26,6 +26,95 @@ pub const PAD_SPACE: &str = "PAD SPACE";
 /// Trailing spaces are significant.
 pub const PAD_NONE: &str = "NO PAD";
 
+/// Immutable charset/collation spelling. Go's built-in names point at static
+/// string data; other names retain shared backing across metadata clones.
+/// This is storage only: aliases, case and unknown spellings stay unchanged.
+#[derive(Clone)]
+pub struct CharsetName(NameBacking);
+
+#[derive(Clone)]
+enum NameBacking {
+    Static(&'static str),
+    Shared(std::sync::Arc<str>),
+}
+
+impl CharsetName {
+    /// Retains a name whose source already has a static lifetime.
+    pub const fn from_static(name: &'static str) -> Self {
+        Self(NameBacking::Static(name))
+    }
+}
+
+impl Default for CharsetName {
+    fn default() -> Self {
+        Self::from_static("")
+    }
+}
+
+impl From<&str> for CharsetName {
+    fn from(name: &str) -> Self {
+        if name.is_empty() {
+            return Self::default();
+        }
+        let canonical = Charset::from_name(name)
+            .map(Charset::name)
+            .or_else(|| Collation::from_name(name).map(Collation::name));
+        match canonical {
+            Some(canonical) if canonical == name => Self::from_static(canonical),
+            _ => Self(NameBacking::Shared(name.into())),
+        }
+    }
+}
+
+impl From<String> for CharsetName {
+    fn from(name: String) -> Self {
+        Self::from(name.as_str())
+    }
+}
+
+impl std::ops::Deref for CharsetName {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        match &self.0 {
+            NameBacking::Static(name) => name,
+            NameBacking::Shared(name) => name,
+        }
+    }
+}
+
+impl AsRef<str> for CharsetName {
+    fn as_ref(&self) -> &str {
+        self
+    }
+}
+
+impl PartialEq for CharsetName {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_ref() == other.as_ref()
+    }
+}
+
+impl Eq for CharsetName {}
+
+impl std::hash::Hash for CharsetName {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(self.as_ref(), state);
+    }
+}
+
+impl fmt::Debug for CharsetName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_ref(), f)
+    }
+}
+
+impl fmt::Display for CharsetName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.as_ref(), f)
+    }
+}
+
 /// A charset fully supported by TiDB's parser charset package.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Charset {

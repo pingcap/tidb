@@ -335,7 +335,9 @@ enum StatementRoute {
 }
 
 /// Opens one cluster-backed wide-SQL [`Session`] per authenticated connection.
+#[derive(Clone)]
 pub struct ClusterSessionFactory {
+    bindings: Option<Arc<dyn crate::cluster_binding_seam::ClusterBindings>>,
     /// The write/read capability every connection's statements open their
     /// snapshots and publish their commits through.
     transactions: Arc<dyn ClusterTransactions>,
@@ -403,6 +405,12 @@ pub struct ClusterSessionFactory {
 }
 
 impl ClusterSessionFactory {
+    /// Install the node-owned global-binding authority before opening sessions.
+    pub fn with_bindings(mut self, bindings: Arc<dyn crate::cluster_binding_seam::ClusterBindings>) -> Self {
+        self.bindings = Some(bindings);
+        self
+    }
+
     /// Binds the factory to an authority that has already read the cluster's
     /// catalog and accounts.
     #[must_use]
@@ -428,6 +436,7 @@ impl ClusterSessionFactory {
         .skipped;
         Self {
             transactions,
+            bindings: None,
             ddl,
             accounts,
             sysvars,
@@ -531,6 +540,44 @@ impl QuerySessionFactory for ClusterSessionFactory {
     type Session = ClusterServerSession;
 
     fn open_session(&self, context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        let mut opened = self.open_storage_session(context.connection_id)?;
+        let session = &mut opened.session;
+        session.set_version_info(context.version_info.clone());
+        let identity = &context.identity;
+        session.set_user(
+            format!("{}@{}", identity.username(), identity.host()),
+            format!("{}@{}", identity.username(), context.peer_addr.ip()),
+        );
+        session.set_connection_id(context.connection_id);
+        session.set_secure_transport(context.secure_transport);
+        session.set_tls_status(context.tls_status.clone());
+        if identity.in_sandbox_mode() {
+            session.enable_sandbox_mode();
+        }
+        if identity.privilege_bypassed() {
+            session.enable_privilege_bypass();
+        }
+        let guard = self.processes.register(
+            context.connection_id,
+            identity.username().to_owned(),
+            context.peer_addr.to_string(),
+            session.current_database().to_owned(),
+            Some(Arc::new(ConnectionKillTarget::new(
+                context.cancellation.clone(),
+                context.close.clone(),
+            ))),
+        );
+        session.attach_process(context.connection_id, guard);
+        session.attach_privileges(self.privileges.clone());
+        Ok(opened)
+    }
+}
+
+impl ClusterSessionFactory {
+    // No authentication identity, process-list entry, or user transaction is
+    // copied into internal storage work. Its MDL holds nest in the caller's
+    // connection scope, while its storage and transaction are independent.
+    fn open_storage_session(&self, connection_id: u64) -> Result<ClusterServerSession, SqlQueryError> {
         // The connection's own snapshot slot and staged writes: one session,
         // one transaction, exactly as Go's session owns one `kv.Transaction`.
         let slot = Arc::new(Mutex::new(SwappableSnapshot::new()));
@@ -568,10 +615,19 @@ impl QuerySessionFactory for ClusterSessionFactory {
             Some(&mut kv_templates),
         );
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
+        if let Some(bindings) = &self.bindings {
+            session.set_global_binding_cache(bindings.cache());
+            let mut storage_factory = self.clone();
+            storage_factory.bindings = None;
+            session.set_global_binding_writer(Arc::new(InternalBindingWriter {
+                factory: storage_factory,
+                bindings: Arc::clone(bindings),
+                connection_id,
+            }));
+        }
         session.set_advisory_lock_service(Arc::new(transactions::ClusterAdvisoryLockService::new(
             Arc::clone(&self.transactions),
         )));
-        session.set_version_info(context.version_info.clone());
         if let Some(syncer) = self.server_info.as_ref() {
             session.set_server_info_syncer(Arc::clone(syncer));
         }
@@ -589,7 +645,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
         // (`RemoveLockDDLJobs`'s check, in `schema_sync.rs`).
         session.set_mdl_related_table_sink(Arc::new(schema_sync::ConnectionMdlSink::new(
             Arc::clone(&self.schema_pins),
-            context.connection_id,
+            connection_id,
         )));
         session.set_server_start_timestamp(crate::real_tikv_node::server_start_unix_timestamp());
         if let Some(spill_storage) = self.spill_storage.as_ref() {
@@ -599,38 +655,13 @@ impl QuerySessionFactory for ClusterSessionFactory {
             session.set_mem_arbitrator(Arc::clone(arbitrator));
         }
 
-        let identity = &context.identity;
-        session.set_user(
-            format!("{}@{}", identity.username(), identity.host()),
-            format!("{}@{}", identity.username(), context.peer_addr.ip()),
-        );
-        session.set_connection_id(context.connection_id);
-        session.set_secure_transport(context.secure_transport);
-        session.set_tls_status(context.tls_status.clone());
-        if identity.in_sandbox_mode() {
-            session.enable_sandbox_mode();
-        }
-        if identity.privilege_bypassed() {
-            session.enable_privilege_bypass();
-        }
-        let guard = self.processes.register(
-            context.connection_id,
-            identity.username().to_owned(),
-            context.peer_addr.to_string(),
-            session.current_database().to_owned(),
-            Some(Arc::new(ConnectionKillTarget::new(
-                context.cancellation.clone(),
-                context.close.clone(),
-            ))),
-        );
-        session.attach_process(context.connection_id, guard);
-        session.attach_privileges(self.privileges.clone());
         session
             .attach_globals(self.global_vars.clone())
             .map_err(map_error)?;
 
         Ok(ClusterServerSession {
             session,
+            bindings: self.bindings.clone(),
             buffer,
             slot,
             storage,
@@ -648,15 +679,71 @@ impl QuerySessionFactory for ClusterSessionFactory {
             skipped: built.skipped,
             auto_ids: Arc::clone(&self.auto_ids),
             schema_pins: Arc::clone(&self.schema_pins),
-            connection_id: context.connection_id,
+            connection_id: connection_id,
             transaction_pin: None,
         })
+    }
+}
+
+struct InternalBindingWriter {
+    factory: ClusterSessionFactory,
+    bindings: Arc<dyn crate::cluster_binding_seam::ClusterBindings>,
+    connection_id: u64,
+}
+
+impl tidb_session::binding::GlobalBindingWriter for InternalBindingWriter {
+    fn execute(
+        &self,
+        operation: &mut dyn FnMut(&mut Session) -> Result<u64, tidb_executor::DriverError>,
+    ) -> Result<u64, tidb_executor::DriverError> {
+        let to_driver = |error: SqlQueryError| {
+            tidb_executor::DriverError::Mysql(tidb_executor::MysqlError {
+                code: error.code,
+                state: error.state,
+                message: error.message,
+            })
+        };
+        let mut internal = self
+            .factory
+            .open_storage_session(self.connection_id)
+            .map_err(to_driver)?;
+        internal
+            .session
+            .set_global_binding_cache(self.bindings.cache());
+        internal.session.enable_privilege_bypass();
+        internal
+            .control_transaction("BEGIN PESSIMISTIC")
+            .map_err(to_driver)?;
+        let result = (|| {
+            // Use Go's shared record-lock statement so binding writers on
+            // different nodes serialize through the same storage transaction.
+            internal.execute_write(tidb_session::binding_utils::LOCK_BIND_INFO_SQL)?;
+            let changed = internal.with_statement(StatementReadShape::LockingRead, |session| {
+                operation(session).map_err(map_error)
+            })?;
+            internal.control_transaction("COMMIT")?;
+            Ok(changed)
+        })();
+        match result {
+            Ok(changed) => {
+                // Do not replay a successful commit if cache refresh fails.
+                if let Err(error) = self.bindings.reload() {
+                    eprintln!("committed binding cache reload failed: {error}");
+                }
+                Ok(changed)
+            }
+            Err(error) => {
+                let _ = internal.control_transaction("ROLLBACK");
+                Err(to_driver(error))
+            }
+        }
     }
 }
 
 /// One connection's wide-SQL session over cluster storage.
 pub struct ClusterServerSession {
     session: Session,
+    bindings: Option<Arc<dyn crate::cluster_binding_seam::ClusterBindings>>,
     /// This connection's staged writes, published by `COMMIT` (or by the end
     /// of an autocommit statement).
     buffer: MutationBuffer,
@@ -741,6 +828,22 @@ enum PessimisticStep {
 }
 
 impl ClusterServerSession {
+    fn binding_records_changed(&self) -> bool {
+        self.bindings.as_ref().is_some_and(|bindings| bindings.has_changes(&self.buffer))
+    }
+
+    fn refresh_committed_bindings(&self, changed: bool) {
+        if changed {
+            if let Some(bindings) = &self.bindings {
+                if let Err(error) = bindings.reload() {
+                    // The commit succeeded. Retain the last image and let the
+                    // lease worker retry; never replay a committed statement.
+                    eprintln!("committed binding cache reload failed: {error}");
+                }
+            }
+        }
+    }
+
     /// The tables this connection's catalog left out, with their reasons.
     #[must_use]
     pub fn skipped_tables(&self) -> &[SkippedTable] {
@@ -776,24 +879,42 @@ impl ClusterServerSession {
         shape: StatementReadShape,
         run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
-        self.with_prelocked_statement(shape, Vec::new(), run)
+        self.with_prelocked_statement(shape, |_| Vec::new(), run)
     }
 
-    /// [`Self::with_statement`] for a statement whose point-write keys are
-    /// already known: they are locked WITH their rows before the snapshot is
-    /// bound, so the statement's own read answers from the lock response
-    /// instead of storage (Go's `InitReturnValues`/
-    /// `SetPessimisticLockCache` fold, `pkg/executor/point_get.go:612-624`).
-    /// An empty key set is the ordinary lifecycle.
+    /// Bind finite primary keys after refreshing the catalog and opening any
+    /// implicit transaction, then lock them with returned row values before
+    /// execution. The statement reads from those lock responses, including
+    /// absent-key results (Go's `InitReturnValues`/`SetPessimisticLockCache`).
+    /// An empty key set keeps the ordinary lifecycle.
     fn with_prelocked_statement<T>(
         &mut self,
         shape: StatementReadShape,
-        prelock_keys: Vec<Vec<u8>>,
+        bind_prelock_keys: impl FnOnce(&Session) -> Vec<Vec<u8>>,
         run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
-        self.rebuild_catalog_if_stale();
-        self.begin_if_autocommit_off()?;
+        self.prepare_statement_context()?;
+        let prelock_keys = self.bind_statement_prelocks(bind_prelock_keys);
         self.with_bound_statement(shape, &prelock_keys, run)
+    }
+
+    fn prepare_statement_context(&mut self) -> Result<(), SqlQueryError> {
+        self.rebuild_catalog_if_stale();
+        self.begin_if_autocommit_off()
+    }
+
+    fn bind_statement_prelocks(
+        &self,
+        bind_prelock_keys: impl FnOnce(&Session) -> Vec<Vec<u8>>,
+    ) -> Vec<Vec<u8>> {
+        // Bind against the statement's refreshed catalog and transaction,
+        // including a transaction opened lazily by autocommit=0. Computing
+        // keys at the protocol door used to miss that first statement.
+        if self.explicit.as_ref().is_some_and(|txn| txn.is_pessimistic()) {
+            bind_prelock_keys(&self.session)
+        } else {
+            Vec::new()
+        }
     }
 
     /// [`Self::with_statement`] for work the CLIENT did not ask to run: the
@@ -837,6 +958,12 @@ impl ClusterServerSession {
             .schema_pins
             .hold(self.connection_id, self.schema_version);
         let savepoint = self.buffer.checkpoint();
+        self.session.set_selected_lock_keys(
+            self.explicit
+                .as_ref()
+                .filter(|transaction| transaction.is_pessimistic())
+                .map(|_| tidb_executor::select_lock::SelectedLockKeys::default()),
+        );
         let mut retried: u32 = 0;
         let outcome = loop {
             match self.attempt_statement(shape, savepoint.clone(), &prelock_keys, &mut run) {
@@ -865,6 +992,7 @@ impl ClusterServerSession {
                 }
             }
         };
+        self.session.set_selected_lock_keys(None);
         // Go's `cleanRetryInfo` (`pkg/session/session.go:329-336`, deferred
         // from `doCommitWithRetry`): the ids belong to the statement that is
         // now over, however it ended. The next statement's rows are not these
@@ -927,12 +1055,15 @@ impl ClusterServerSession {
         let mut retry_read_ts: Option<u64> = None;
         // The keys THIS statement's rounds fair-locked and retained; released
         // if the statement ultimately fails (Go `OnPessimisticStmtEnd`).
-        let mut statement_locked: Vec<Vec<u8>> = Vec::new();
+        let mut statement_locked = std::collections::BTreeSet::new();
         // Go `PessimisticTxn.MaxRetryCount` (`pkg/config/config.go`, default
         // 256): the safety valve on the statement retry, with Go's own error.
         let mut retries: u32 = 0;
         const MAX_PESSIMISTIC_STATEMENT_RETRIES: u32 = 256;
         let result = loop {
+            // Selected rows belong to this execution attempt, not an earlier
+            // plan or a partially executed failed read.
+            self.session.take_selected_lock_keys();
             // Go's pessimistic point write takes its row lock DURING execution
             // (`PointGetExecutor.getAndLock`, `pkg/executor/point_get.go:549`),
             // asking TiKV to answer the row WITH the lock (`InitReturnValues`,
@@ -1001,30 +1132,26 @@ impl ClusterServerSession {
                 Some(transaction) => {
                     // Go's `e.lock`: the pessimistic lock cache may answer a
                     // read only when the statement itself takes locks
-                    // (`pkg/executor/point_get.go:677`). A statement takes
-                    // locks exactly when it produced prelock keys --
-                    // `pessimistic_statement_prelock_keys` yields them for a
-                    // point write and for `SELECT ... FOR UPDATE`, and
-                    // nothing else (`access_path.rs`, `select.lock.is_none()`
-                    // refuses the plain read). Without this gate the cached
-                    // row -- captured at the LOCK's `for_update_ts` -- is
-                    // served to a later plain `SELECT` that must read at
-                    // `start_ts`, which silently breaks repeatable read.
-                    let locking = !prelock_keys.is_empty();
+                    // (`pkg/executor/point_get.go:677`). Locking SELECTs are
+                    // identified independently of the point-prelock fold;
+                    // plain SELECTs must keep their BEGIN snapshot.
+                    let locking =
+                        shape == StatementReadShape::LockingRead || !prelock_keys.is_empty();
                     match retry_read_ts {
                         Some(for_update_ts) => transaction
                             .snapshot_at_for(for_update_ts, locking)
+                            .map_err(SqlQueryError::unknown)?,
+                        None if shape == StatementReadShape::LockingRead
+                            && prelock_keys.is_empty()
+                            && transaction.is_pessimistic() => transaction
+                            .fresh_locking_snapshot()
                             .map_err(SqlQueryError::unknown)?,
                         None => transaction
                             .snapshot_for(locking)
                             .map_err(SqlQueryError::unknown)?,
                     }
                 }
-                None if matches!(
-                    shape,
-                    StatementReadShape::AutocommitPointGet
-                        | StatementReadShape::AutocommitSingleRowRead
-                ) =>
+                None if shape == StatementReadShape::AutocommitPointGet =>
                 {
                     // Go's clustered-handle point-get optimisation reads
                     // directly at MaxTS. Keep this on the connection worker:
@@ -1117,13 +1244,11 @@ impl ClusterServerSession {
         };
         if result.is_err() {
             Self::rollback_prefetched_write(write_transaction);
-            // Go `OnPessimisticStmtEnd(isSuccessful=false)`: the locks a
-            // FAILED statement's rounds accumulated go back, or a contender
-            // blocks on them for the transaction's remaining lifetime. Best
-            // effort -- a dead transaction thread has already released
-            // everything by rolling the whole transaction back.
+            // Release the keys tracked here as statement-owned; earlier
+            // statements' locks remain transaction-owned. Best effort: a
+            // dead worker has already rolled the whole transaction back.
             if let Some(transaction) = self.explicit.as_ref() {
-                let _ = transaction.release_statement_locks(std::mem::take(&mut statement_locked));
+                let _ = transaction.release_statement_locks(statement_locked.into_iter().collect());
             }
         }
         result
@@ -1134,7 +1259,7 @@ impl ClusterServerSession {
     fn lock_pessimistic_statement_keys(
         &mut self,
         savepoint: &BufferCheckpoint,
-        statement_locked: &mut Vec<Vec<u8>>,
+        statement_locked: &mut std::collections::BTreeSet<Vec<u8>>,
     ) -> Result<PessimisticStep, SqlQueryError> {
         let Some(transaction) = self.explicit.as_ref() else {
             return Ok(PessimisticStep::Done);
@@ -1143,7 +1268,13 @@ impl ClusterServerSession {
             return Ok(PessimisticStep::Done);
         }
         let (before, after) = self.buffer.delta_since(*savepoint);
-        let keys = tidb_exec::cluster_table_storage::pessimistic_lock_delta(&before, &after);
+        let mut keys = tidb_exec::cluster_table_storage::pessimistic_lock_delta(&before, &after);
+        let selected = self.session.take_selected_lock_keys();
+        if !selected.is_empty() {
+            keys.extend(selected);
+            keys.sort_unstable();
+            keys.dedup();
+        }
         if keys.is_empty() {
             return Ok(PessimisticStep::Done);
         }
@@ -1158,13 +1289,19 @@ impl ClusterServerSession {
         let key_set: std::collections::BTreeSet<Vec<u8>> = keys.iter().cloned().collect();
         let presume_not_exists = if check_in_lock {
             self.buffer
-                .presume_not_exists_keys()
+                .presume_not_exists_since(*savepoint)
                 .into_iter()
                 .filter(|key| key_set.contains(key))
                 .collect()
         } else {
             std::collections::BTreeSet::new()
         };
+        // Ownership removes a repeated acquisition, not a NEW absence check.
+        // Go KVTxn.LockKeys verifies NeedCheckExists even on a held key.
+        keys.retain(|key| !statement_locked.contains(key) || presume_not_exists.contains(key));
+        if keys.is_empty() {
+            return Ok(PessimisticStep::Done);
+        }
         let duplicate_hints = presume_not_exists
             .iter()
             .filter_map(|key| {
@@ -1286,10 +1423,7 @@ impl ClusterServerSession {
     /// inheriting the trait default, which is `IsAutoCommitTxn`'s `!InTxn`
     /// half made structural rather than re-asked here.
     fn declare_read_shape(&self, shape: StatementReadShape) {
-        if !matches!(
-            shape,
-            StatementReadShape::AutocommitPointGet | StatementReadShape::AutocommitSingleRowRead
-        ) {
+        if shape != StatementReadShape::AutocommitPointGet {
             return;
         }
         self.slot
@@ -1424,8 +1558,12 @@ impl ClusterServerSession {
                 .unwrap_or_else(|poison| poison.into_inner())
                 .take();
             if let Some(transaction) = transaction {
+                let bindings_changed = self.binding_records_changed();
                 return match transaction.commit(&self.buffer) {
-                    Ok(()) => Ok(()),
+                    Ok(()) => {
+                        self.refresh_committed_bindings(bindings_changed);
+                        Ok(())
+                    },
                     Err(error) => {
                         self.buffer.reset();
                         Err(error)
@@ -1457,8 +1595,12 @@ impl ClusterServerSession {
     /// now a 9007 the client is told about, where publishing at a fresh
     /// timestamp made it a silent overwrite.
     fn commit_autocommit_buffer(&mut self, read_ts: Option<u64>) -> Result<(), SqlQueryError> {
+        let bindings_changed = self.binding_records_changed();
         match self.transactions.commit(&self.buffer, read_ts) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                self.refresh_committed_bindings(bindings_changed);
+                Ok(())
+            },
             Err(error) => {
                 self.buffer.reset();
                 Err(error)
@@ -1482,8 +1624,12 @@ impl ClusterServerSession {
             // to publish and no timestamp to publish it at.
             return self.commit_autocommit_buffer(None);
         };
+        let bindings_changed = self.binding_records_changed();
         match transaction.commit(&self.buffer) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                self.refresh_committed_bindings(bindings_changed);
+                Ok(())
+            },
             Err(error) => {
                 self.buffer.reset();
                 Err(error)
@@ -2006,15 +2152,9 @@ impl QuerySession for ClusterServerSession {
         // classified keys are locked WITH their rows before any read exists;
         // the statement's read then answers from the lock response exactly as
         // in [`Self::execute_general`]'s prepared arm.
-        let prelock_keys = match self.explicit.as_ref() {
-            Some(transaction) if transaction.is_pessimistic() => {
-                self.session.text_statement_prelock_keys(sql)
-            }
-            _ => Vec::new(),
-        };
         let affected_rows = self.with_prelocked_statement(
             StatementReadShape::Unknown,
-            prelock_keys,
+            |session| session.text_statement_prelock_keys(sql),
             move |session| match session.run(&owned).map_err(map_error)? {
                 StmtResult::Affected(count) => Ok(count),
                 StmtResult::Done(_) => Ok(0),
@@ -2054,7 +2194,6 @@ impl QuerySession for ClusterServerSession {
         }
         let prepared_ast = self.session.prepare_ast(sql).map_err(map_error)?;
         let parameter_count = prepared_ast.parameter_count();
-        let point_get_plan = prepared_ast.point_get_plan();
         let kind = prepared_ast.statement_kind(&self.session);
         if kind == StmtKind::Write {
             // A prepared DDL is admitted here and executed at EXECUTE, so a
@@ -2069,39 +2208,27 @@ impl QuerySession for ClusterServerSession {
             // work.  Routed schema/account/ANALYZE statements still use their
             // dedicated SQL route at EXECUTE and must not be run through the
             // ordinary statement driver.
-            let template = self.session.parse_statement(sql).map_err(map_error)?;
-            if !matches!(template, tidb_ast::Stmt::Dml(_)) {
+            if !matches!(prepared_ast.statement(), tidb_ast::Stmt::Dml(_)) {
                 return Ok(PreparedGeneral::new(
                     sql.to_owned(),
                     parameter_count,
                     Vec::new(),
                 ));
             }
-            return Ok(PreparedGeneral::with_template(
-                sql.to_owned(),
-                parameter_count,
+            return Ok(PreparedGeneral::with_prepared_ast(
+                prepared_ast,
                 Vec::new(),
-                template,
             ));
         }
         // Go reports a query's result columns at PREPARE time, which it gets
         // by planning the statement with every marker bound to NULL. Planning
         // reads the catalog and may read rows, so it takes a snapshot like any
         // other statement.
-        let template = self.session.parse_statement(sql).map_err(map_error)?;
         // The PREPARE probe runs the statement with every marker NULL, which
         // is not the statement the client will execute; it declares nothing,
         // and -- see `probe_statement` -- it opens no transaction either.
-        let probe: Vec<tidb_datatype::Datum> =
-            std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
-        let zone = self.session.session_time_zone();
-        let mut bound_probe = Some(prepared_ast.bind(&probe, &zone).map_err(map_error)?);
         let result_columns = self.probe_statement(StatementReadShape::Unknown, |session| {
-            let bound = match bound_probe.take() {
-                Some(bound) => bound,
-                None => prepared_ast.bind(&probe, &zone).map_err(map_error)?,
-            };
-            match session.run_bound_prepared(bound) {
+            match session.probe_prepared(&prepared_ast) {
                 Ok(StmtOutput::Rows { columns, .. }) => {
                     Ok(crate::pipeline_session::select_columns(&columns))
                 }
@@ -2114,12 +2241,9 @@ impl QuerySession for ClusterServerSession {
                 _ => Ok(Vec::new()),
             }
         })?;
-        Ok(PreparedGeneral::with_template_and_point_get_plan(
-            sql.to_owned(),
-            parameter_count,
+        Ok(PreparedGeneral::with_prepared_ast(
+            prepared_ast,
             result_columns,
-            template,
-            point_get_plan,
         ))
     }
 
@@ -2178,23 +2302,14 @@ impl QuerySession for ClusterServerSession {
             }
             StatementRoute::Ordinary => {}
         }
+        // Bind and classify against the catalog and transaction that this
+        // execution will use, not the state preceding the statement refresh.
+        self.prepare_statement_context()?;
         let params = crate::pipeline_session::prepared_parameters(values);
         let sql = statement.sql().to_owned();
         let retained = statement.template();
-        let cached_point_get_plan = statement.point_get_plan().cloned();
-        // YCSB's prepared point reads are a retained SELECT template whose
-        // only changing value is the clustered key.  Resolve that key directly
-        // from the template and execute values; cloning/binding the complete
-        // AST is deferred to the refusal path.
-        let fast_shape = retained
-            .filter(|_| !self.session.has_session_bindings())
-            .map(|template| {
-                self.session
-                    .fast_prepared_statement_read_shape(template, &params)
-            });
-        let fast = fast_shape == Some(StatementReadShape::AutocommitPointGet);
         let fast_dml = retained
-            .filter(|_| !self.session.has_session_bindings())
+            .filter(|_| !self.session.has_plan_bindings())
             .map(|template| match template {
                 tidb_ast::Stmt::Dml(dml) => matches!(
                     dml.as_ref(),
@@ -2203,18 +2318,15 @@ impl QuerySession for ClusterServerSession {
                 _ => false,
             })
             .unwrap_or(false);
-        let direct = fast || fast_dml;
-        let bound_template = if direct {
+        let mut bound_prepared = if fast_dml {
             None
         } else {
-            retained
-                .map(|template| tidb_executor::bind_statement(template.clone(), &params))
+            statement.prepared_ast()
+                .map(|prepared| prepared.bind_for_execution(&self.session, &params))
                 .transpose()
                 .map_err(map_error)?
         };
-        let shape = if fast {
-            StatementReadShape::AutocommitPointGet
-        } else if fast_dml {
+        let shape = if fast_dml {
             match retained {
                 Some(tidb_ast::Stmt::Dml(dml))
                     if matches!(dml.as_ref(), tidb_ast::DmlStmt::Update(_)) =>
@@ -2224,9 +2336,9 @@ impl QuerySession for ClusterServerSession {
                 _ => StatementReadShape::Unknown,
             }
         } else {
-            bound_template.as_ref().map_or_else(
+            bound_prepared.as_mut().map_or_else(
                 || self.session.statement_read_shape(&sql, &params),
-                |bound| self.session.statement_read_shape_bound(bound),
+                |bound| bound.statement_read_shape(&self.session),
             )
         };
         // Go's pessimistic point write folds its row read INTO its lock
@@ -2243,62 +2355,15 @@ impl QuerySession for ClusterServerSession {
         // (go's `SelectLockExec` locks the rows as they are read), while a
         // plain point SELECT must NOT lock -- the read arm's own guards
         // (LockKind::Update, default wait, no ORDER BY/LIMIT) draw that line.
-        let prelock_keys = match self.explicit.as_ref() {
-            Some(transaction) if transaction.is_pessimistic() => {
-                if let Some(bound) = bound_template.as_ref() {
-                    self.session.statement_prelock_keys(bound)
-                } else if let Some(template) = retained {
-                    self.session.prepared_statement_prelock_keys(template, &params)
-                } else {
-                    Vec::new()
-                }
+        let bind_prelock_keys = |session: &Session| {
+            if let Some(template) = retained {
+                session.prepared_statement_prelock_keys(template, &params)
+            } else {
+                Vec::new()
             }
-            _ => Vec::new(),
         };
-        let output = self.with_prelocked_statement(shape, prelock_keys, move |session| {
-            if fast {
-                if let Some(cached) = cached_point_get_plan
-                    .as_ref()
-                    .and_then(|plan| session.bind_cached_prepared_point_get(plan, &params))
-                {
-                    match session.execute_cached_prepared_point_get(cached) {
-                        Ok(output) => return Ok(output),
-                        // The cached plan's identity moved under it (a DDL
-                        // between PREPARE and this EXECUTE). That is a cache
-                        // MISS, not a statement failure: fall through and
-                        // re-plan, exactly as Go's `GetPlanFromPlanCache`
-                        // does.
-                        Err(error)
-                            if error.to_string().contains(
-                                "prepared point-get cache was invalidated",
-                            ) => {}
-                        Err(error) => return Err(map_error(error)),
-                    }
-                }
-                if let Some(output) = session
-                    .execute_fast_prepared_point_get(
-                        retained.expect("fast prepared point read has a retained template"),
-                        &params,
-                    )
-                    .map_err(map_error)?
-                {
-                    return Ok(output);
-                }
-                // A defensive refusal falls through to the ordinary path. It
-                // is not expected after the pure shape check, but preserves
-                // correctness if the catalog changes between classification
-                // and execution.
-                let bound = tidb_executor::bind_statement(
-                    retained
-                        .expect("fast prepared point read has a retained template")
-                        .clone(),
-                    &params,
-                )
-                .map_err(map_error)?;
-                return session
-                    .run_parsed_bound_owned_with_sql(bound, &sql)
-                    .map_err(map_error);
-            }
+        let prelock_keys = self.bind_statement_prelocks(bind_prelock_keys);
+        let (output, result_authority) = self.with_bound_statement(shape, &prelock_keys, |session| {
             if fast_dml {
                 let template = retained.expect("fast prepared DML has a retained template");
                 let output = match template {
@@ -2319,24 +2384,27 @@ impl QuerySession for ClusterServerSession {
                     _ => None,
                 };
                 if let Some(output) = output {
-                    return Ok(output);
+                    return Ok((output, None));
                 }
                 let bound =
                     tidb_executor::bind_statement(template.clone(), &params).map_err(map_error)?;
                 return session
                     .run_parsed_bound_owned_with_sql(bound, &sql)
+                    .map(|output| (output, None))
                     .map_err(map_error);
             }
-            if let Some(bound) = bound_template.as_ref().cloned() {
+            if let Some(prepared) = statement.prepared_ast() {
+                let bound = match bound_prepared.take() {
+                    Some(bound) => bound,
+                    None => prepared.bind_for_execution(session, &params).map_err(map_error)?,
+                };
                 session
-                    .run_parsed_bound_owned_with_sql(bound, &sql)
+                    .run_bound_prepared_with_result_authority(bound)
                     .map_err(map_error)
             } else {
-                session.run_with_params(&sql, &params).map_err(map_error)
+                session.run_with_params_and_result_authority(&sql, &params).map_err(map_error)
             }
         })?;
-        let result_authority = matches!(&output, StmtOutput::Rows { .. })
-            .then(|| self.session.result_materialization_authority());
         Ok(match output {
             StmtOutput::Rows { columns, rows } => {
                 let field_types = columns.iter().map(|(_, field)| field.clone()).collect();
@@ -2407,16 +2475,11 @@ impl QuerySession for ClusterServerSession {
         // statement's read answer from the lock response. Empty output (a
         // scan-shaped WHERE, FOR SHARE, NOWAIT, or no pessimistic transaction)
         // keeps today's read-then-lock order untouched.
-        let prelock_keys = match self.explicit.as_ref() {
-            Some(transaction) if transaction.is_pessimistic() => {
-                self.session.text_statement_prelock_keys(sql)
-            }
-            _ => Vec::new(),
-        };
+        let bind_prelock_keys = |session: &Session| session.text_statement_prelock_keys(sql);
         // The rows are materialized inside the statement's snapshot, because
         // the snapshot's read transaction ends when the statement does; a lazy
         // source would be reading through a finished transaction.
-        let source = self.with_prelocked_statement(shape, prelock_keys, move |session| {
+        let source = self.with_prelocked_statement(shape, bind_prelock_keys, move |session| {
             let output = session.run_with_columns(&owned).map_err(map_error)?;
             Ok(match output {
                 StmtOutput::Rows { columns, rows } => MaterializedResultSetSource::new(

@@ -197,7 +197,7 @@ mod tests {
         let ranges = crate::index_range::detach_cond_and_build_range_for_index(
             &[column],
             planned.where_clause.as_ref().expect("combined predicate"),
-            &SessionTimeZone::utc(),
+            &tidb_expr::rewriter::ZonedNoResolver::new(SessionTimeZone::utc()),
         )
         .expect("the grouped key constrains the clustered index");
         assert_eq!(ranges.ranges.len(), 1, "{:?}", ranges.ranges);

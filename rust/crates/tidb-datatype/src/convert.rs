@@ -643,8 +643,25 @@ pub(crate) fn str_to_int_with_truncate_policy(
     is_function_cast: bool,
     truncate_as_warning: bool,
 ) -> Converted<i64> {
+    str_to_int_reported(
+        input,
+        is_function_cast,
+        truncate_as_warning,
+        &mut crate::datum_convert::diagnostics::Diagnostics::new(None),
+    )
+}
+
+pub(crate) fn str_to_int_reported(
+    input: &str,
+    is_function_cast: bool,
+    truncate_as_warning: bool,
+    diagnostics: &mut crate::datum_convert::diagnostics::Diagnostics<'_, '_>,
+) -> Converted<i64> {
     let input = input.trim();
     let float = valid_float_prefix(input, is_function_cast);
+    if float.truncated() {
+        diagnostics.truncated_numeric_input(input);
+    }
     let mut function_cast_consumed_all = true;
     let integer = if is_function_cast {
         let (prefix, consumed_all) = function_cast_integer_prefix(input);
@@ -656,6 +673,8 @@ pub(crate) fn str_to_int_with_truncate_policy(
         match float_string_to_integer_string(float.value(), input) {
             Ok(value) => value,
             Err((value, error)) => {
+                let event = Some(ScalarConversionEvent::Overflow(error));
+                diagnostics.parsed_integer(event.as_ref());
                 return Converted {
                     value: value.parse().unwrap_or_else(|_| {
                         if value.starts_with('-') {
@@ -664,7 +683,7 @@ pub(crate) fn str_to_int_with_truncate_policy(
                             i64::MAX
                         }
                     }),
-                    event: Some(ScalarConversionEvent::Overflow(error)),
+                    event,
                 };
             }
         }
@@ -680,13 +699,12 @@ pub(crate) fn str_to_int_with_truncate_policy(
                 std::num::IntErrorKind::NegOverflow => i64::MIN,
                 _ => 0,
             };
-            Converted {
-                value,
-                event: Some(ScalarConversionEvent::Overflow(overflow(
-                    &integer,
-                    FieldTypeCode::LongLong,
-                ))),
-            }
+            let event = Some(ScalarConversionEvent::Overflow(overflow(
+                &integer,
+                FieldTypeCode::LongLong,
+            )));
+            diagnostics.parsed_integer(event.as_ref());
+            Converted { value, event }
         }
     }
 }
@@ -762,17 +780,40 @@ pub(crate) fn str_to_uint_with_truncate_policy(
 
 /// `StrToFloat`.
 pub fn str_to_float(input: &str, is_function_cast: bool) -> Converted<f64> {
+    str_to_float_reported(
+        input,
+        is_function_cast,
+        &mut crate::datum_convert::diagnostics::Diagnostics::new(None),
+    )
+}
+
+pub(crate) fn str_to_float_reported(
+    input: &str,
+    is_function_cast: bool,
+    diagnostics: &mut crate::datum_convert::diagnostics::Diagnostics<'_, '_>,
+) -> Converted<f64> {
     let input = input.trim();
     let prefix = valid_float_prefix(input, is_function_cast);
+    if prefix.truncated() {
+        diagnostics.truncated_numeric_input(input);
+    }
     match prefix.value().parse::<f64>() {
-        Ok(value) if value.is_infinite() => Converted::truncated(if value.is_sign_positive() {
-            f64::MAX
-        } else {
-            -f64::MAX
-        }),
+        Ok(value) if value.is_infinite() => {
+            // StrToFloat routes its range error independently of the prefix
+            // error. Warning mode must retain both in their original order.
+            diagnostics.truncated_numeric_input(input);
+            Converted::truncated(if value.is_sign_positive() {
+                f64::MAX
+            } else {
+                -f64::MAX
+            })
+        }
         Ok(value) if prefix.truncated() => Converted::truncated(value),
         Ok(value) => Converted::exact(value),
-        Err(_) => Converted::truncated(0.0),
+        Err(_) => {
+            diagnostics.unhandled(Some(&ScalarConversionEvent::Truncated));
+            Converted::truncated(0.0)
+        }
     }
 }
 

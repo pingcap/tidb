@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! 6c's seam tests. WRITTEN, not transcreated, for the reason
-//! [`super::tests`]' header gives: Go's builder tests need a live session and
-//! a `testkit` cluster.
+//! Aggregation seam tests. WRITTEN, not transcreated: Go's builder tests need
+//! a live session and a `testkit` cluster.
 //!
 //! What each group proves is named on the group.
 

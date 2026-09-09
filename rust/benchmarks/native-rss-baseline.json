@@ -1,0 +1,97 @@
+{
+  "scope": "macOS resident-memory sampler overhead reduction; mixed SQL results and no broad throughput win",
+  "base_commit": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "change": "Replace ps subprocess polling with libproc proc_pidinfo TaskInfo resident bytes; keep 100-ms interval and memory checks unchanged",
+  "before_binary_sha256": "6d46115d6502712cb626775f2e9315d57d7197ede611f8408f22130526b326e2",
+  "after_binary_sha256": "08f5f2597f221e5e7a33a1d547084817a7b84686780c5104736d988ba7258981",
+  "platform": "aarch64-apple-darwin",
+  "live_profile": {
+    "artifact": "/private/tmp/tidb-native-rss-profile.sample.txt",
+    "workload_log": "/private/tmp/tidb-native-rss-profile-workload.log",
+    "duration_seconds": 10,
+    "load": "18-second two-client prepared oltp_read_write sysbench run, profiling starts two seconds into load; excluded from throughput comparisons",
+    "result": "Memory sampler still reaches handle_runtime_stats; no Command::output or posix_spawn frames. Thread-state samples outside sleep: before 175/6302, after 4/6321. Not a CPU-time or throughput measurement."
+  },
+  "microbenchmark": {
+    "command": "cd rust && cargo test --offline --locked --release -j12 -p tidb-util --lib process_rss_sampling_cost -- --ignored --nocapture",
+    "artifact": "/private/tmp/tidb-native-rss-micro-authorized.log",
+    "calls_per_sample": 100,
+    "rounds": 5,
+    "order": "alternate command/native then native/command",
+    "command_ns_per_call": [1213772, 1237771, 1237784, 1192105, 1183961],
+    "native_ns_per_call": [259, 238, 261, 247, 259],
+    "median_command_ns_per_call": 1213772,
+    "median_native_ns_per_call": 259,
+    "rss_command_bytes": 22740992,
+    "rss_native_bytes": 22839296,
+    "conclusion": "All five native samples are cheaper; approximately 4686x lower median wall time per RSS read. This is not an end-to-end throughput claim."
+  },
+  "correctness": {
+    "red_artifact": "/private/tmp/tidb-native-rss-red.log",
+    "red_result": "PATH-isolated child fails with NotFound under the old subprocess implementation",
+    "green_command": "cd rust && cargo test --offline --locked --release -j12 -p tidb-util --lib cgroup::tests",
+    "green_artifact": "/private/tmp/tidb-native-rss-green.log",
+    "green_result": "12 tests passed; manual microbenchmark ignored and then passed separately with process-inspection permission",
+    "coverage": "No command dependency, touched-page resident-byte growth, existing cgroup parsers and platform-independent limit logic; manual native-versus-ps byte comparison",
+    "live_sql_command": "python3 /private/tmp/tidb-batch-locking-verified.py --ports 53011",
+    "live_sql_result": "Seven live locking cases passed on the new release server",
+    "not_verified": "Linux execution, Ready/lint"
+  },
+  "tpcc": {
+    "command": "python3 /private/tmp/tidb-agg-tpcc-compare.py --server before:53010 --server after:53011 --server go:45000 --output /private/tmp/tidb-native-rss-tpcc-comparison",
+    "artifact": "/private/tmp/tidb-native-rss-tpcc-comparison/results.json",
+    "database": "perf_tpcc_locking_v1",
+    "warehouses": 1,
+    "transactions_per_sample": 10000,
+    "warmup_transactions_per_endpoint_and_concurrency": 1000,
+    "valid_samples": 18,
+    "measured_transactions": 180000,
+    "errors": 0,
+    "two_clients": {
+      "before_seconds": [22.614331500022672, 19.61362683295738, 20.324835084029473],
+      "after_seconds": [20.102376625000034, 19.179134084028192, 20.731938167009503],
+      "go_seconds": [15.602972624998074, 16.337369957996998, 16.870933083991986],
+      "median_tps_before_after_go": [492.0089121833831, 497.45361887030026, 612.0936249659381]
+    },
+    "eight_clients": {
+      "before_seconds": [14.065844999975525, 14.664569332962856, 16.41882700001588],
+      "after_seconds": [13.540450665983371, 15.518709374999162, 15.961792541958857],
+      "go_seconds": [12.236811375012621, 12.277474083006382, 13.582778958021663],
+      "median_tps_before_after_go": [681.9156957799034, 644.3834830820485, 814.4997849224783]
+    },
+    "postcheck_command": "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc tpcc check -H 127.0.0.1 -P 45000 -U root -D perf_tpcc_locking_v1 --warehouses 1 -T 1",
+    "postcheck_artifact": "/private/tmp/tidb-native-rss-tpcc-check.log",
+    "standard_postchecks_passed": 11,
+    "balance_check_command": "mysql --protocol=tcp -h127.0.0.1 -P45000 -uroot --plugin-dir=/opt/homebrew/opt/mysql-client/lib/plugin perf_tpcc_locking_v1 < /private/tmp/tidb-tpcc-locking-balance-check.sql",
+    "balance_check_artifact": "/private/tmp/tidb-native-rss-tpcc-balances.tsv",
+    "customers_checked": 30000,
+    "bad_balances": 0,
+    "bad_delivery_counts": 0,
+    "conclusion": "Mixed paired results at both concurrencies. Two-client median increases 1.11 percent, eight-client median declines 5.50 percent; Rust remains behind Go. No broad workload speedup. Shared evolving data and time-seeded TPC-C inputs remain measurement limitations. No builds, profiles, or other workloads overlapped."
+  },
+  "sysbench_paired": {
+    "command": "python3 rust/scripts/compare-sysbench.py --server before:53010 --server after:53011 --database perf_sysbench_locking_v2 --workload oltp_read_write --threads 2 --seconds 20 --rounds 3 --table-size 100000 --output /private/tmp/tidb-native-rss-sysbench-paired",
+    "artifact": "/private/tmp/tidb-native-rss-sysbench-paired/results.json",
+    "before_transactions": [8349, 8540, 8546],
+    "before_seconds": [20.0087, 20.0026, 20.0042],
+    "after_transactions": [8447, 8382, 8469],
+    "after_seconds": [20.0035, 20.0047, 20.0012],
+    "median_tps_before_after": [426.944497215362, 422.27610168220565],
+    "errors": 0,
+    "reconnects": 0,
+    "conclusion": "After wins one pair and loses two; median is 1.09 percent lower. No sysbench throughput win. No builds, profiles, or other workloads overlapped."
+  },
+  "sysbench_three_endpoints": {
+    "status": "Rejected; incomplete",
+    "artifact": "/private/tmp/tidb-native-rss-sysbench-comparison/results.json",
+    "before_transactions": 8394,
+    "before_seconds": 20.0033,
+    "after_transactions": 8606,
+    "after_seconds": 20.0055,
+    "go_rejected_transactions": 9398,
+    "go_rejected_seconds": 20.0022,
+    "go_rejected_errors": 1,
+    "diagnosis": "Go tidb.log at 2026-09-07 03:25:36 and INFORMATION_SCHEMA.DEADLOCKS confirm error 1213 between transactions 468902933068513322 and 468902933068513323 on UPDATE sbtest1 SET c=? WHERE id=?",
+    "conclusion": "One error-free Rust pair is insufficient. Preserve the Go error and do not claim a complete throughput result. A separately declared three-round paired Rust experiment isolates sampler impact, not Go-relative performance."
+  }
+}

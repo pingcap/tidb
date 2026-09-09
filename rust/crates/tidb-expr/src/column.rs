@@ -18,8 +18,8 @@
 //! column identity/equality, lazily-cached hash code, correlation/const-level).
 //! DEFERRED (need `EvalContext`/`chunk.Row`, or reproduce Go struct byte sizes):
 //! all `Eval*`, `StringWithCtx`/`ExplainInfo`, `ResolveIndices`, `RemapColumn`,
-//! `Decorrelate`, and `MemoryUsage`. `CorrelatedColumn` is deferred with the
-//! other node variants.
+//! `MemoryUsage`. Correlated columns share an execution-owned datum cell,
+//! matching Go's pointer-sharing Clone contract.
 
 use std::hash::{Hash, Hasher};
 
@@ -111,9 +111,15 @@ impl Column {
         let Expression::Column(other) = expr else {
             return false;
         };
-        let is_virtual_expr_matched = self.ret_type == other.ret_type
-            && crate::constant::optional_expression_equals(&self.virtual_expr, &other.virtual_expr);
-        other.unique_id == self.unique_id || is_virtual_expr_matched
+        other.unique_id == self.unique_id || self.same_virtual_expression(other)
+    }
+
+    fn same_virtual_expression(&self, other: &Column) -> bool {
+        matches!(
+            self.virtual_expr.as_deref(),
+            Some(Expression::ScalarFunction(_))
+        ) && self.ret_type == other.ret_type
+            && crate::constant::optional_expression_equals(&self.virtual_expr, &other.virtual_expr)
     }
 
     /// Go `HashCode`: `[columnFlag, EncodeInt(UniqueID)]`, cached on first call.
@@ -196,12 +202,11 @@ impl Column {
     fn resolve_indices_by_virtual_expr_in_place(&mut self, schema: &Schema) -> bool {
         let mut fallback_idx = None;
         for (idx, schema_column) in schema.columns.iter().enumerate() {
-            let target = Expression::Column(self.clone());
-            if schema_column.equal_column(&target) {
+            if schema_column.unique_id == self.unique_id {
                 self.index = idx as i64;
                 return true;
             }
-            if fallback_idx.is_none() && schema_column.equal_by_expr_and_id(&target) {
+            if fallback_idx.is_none() && schema_column.same_virtual_expression(self) {
                 fallback_idx = Some(idx as i64);
             }
         }
@@ -358,8 +363,32 @@ pub fn gc_column_expr_is_tidb_shard(virtual_expr: Option<&Expression>) -> bool {
 pub struct CorrelatedColumn {
     /// Go embedded `Column`.
     pub column: Column,
-    /// Go `Data` (a `*types.Datum`): the current bound value, if any.
-    pub data: Option<Datum>,
+    /// Go `Data`: clones share the current outer value. A new execution must
+    /// rebind its physical inner tree to fresh cells before construction.
+    pub data: CorrelatedDatum,
+}
+
+/// Go's shared `*types.Datum`. Synchronization keeps expression clones Send
+/// and Sync; each parallel Apply worker must still own distinct binding cells.
+#[derive(Clone, Debug, Default)]
+pub struct CorrelatedDatum(std::sync::Arc<std::sync::RwLock<Option<Datum>>>);
+
+impl From<Option<Datum>> for CorrelatedDatum {
+    fn from(value: Option<Datum>) -> Self {
+        Self(std::sync::Arc::new(std::sync::RwLock::new(value)))
+    }
+}
+
+impl CorrelatedDatum {
+    /// Read the current bound outer value.
+    pub fn get(&self) -> Datum {
+        self.0.read().expect("correlated datum lock poisoned").clone().unwrap_or(Datum::Null)
+    }
+
+    /// Bind the next outer row without replacing the shared cell.
+    pub fn set(&self, value: Datum) {
+        *self.0.write().expect("correlated datum lock poisoned") = Some(value);
+    }
 }
 
 impl CorrelatedColumn {
@@ -411,7 +440,7 @@ impl CorrelatedColumn {
     /// Go dereferences the `Data` pointer; a not-yet-bound column yields NULL.
     #[must_use]
     pub fn eval(&self) -> Datum {
-        self.data.clone().unwrap_or(Datum::Null)
+        self.data.get()
     }
 }
 
@@ -727,7 +756,7 @@ mod tests {
     fn correlated_column_decorrelates_and_is_correlated() {
         let mut cc = CorrelatedColumn {
             column: col(5),
-            data: Some(Datum::Int(3)),
+            data: Some(Datum::Int(3)).into(),
         };
         assert!(cc.is_correlated());
         assert_eq!(cc.const_level(), ConstLevel::NONE);
@@ -735,14 +764,14 @@ mod tests {
         assert!(
             cc.equal_column(&Expression::CorrelatedColumn(CorrelatedColumn {
                 column: col(5),
-                data: None,
+                data: Default::default(),
             }))
         );
         assert!(!cc.equal_column(&Expression::Column(col(5))));
         assert!(
             !cc.equal_column(&Expression::CorrelatedColumn(CorrelatedColumn {
                 column: col(6),
-                data: None,
+                data: Default::default(),
             }))
         );
         let contained = Schema::new(vec![col(5)]);
@@ -786,7 +815,7 @@ mod tests {
         for (code, datum) in cases {
             let correlated = CorrelatedColumn {
                 column: Column::new(1, FieldType::new(code)),
-                data: Some(datum.clone()),
+                data: Some(datum.clone()).into(),
             };
             assert_eq!(correlated.eval(), datum, "{code:?}");
         }

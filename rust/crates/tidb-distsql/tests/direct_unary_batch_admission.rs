@@ -21,9 +21,28 @@
 use crate::direct_unary_client_fixture::*;
 
 #[test]
+fn unobserved_query_collects_late_publication_once_without_an_admission_barrier() {
+    let transport = batch_first_transport(
+        Rc::new(RefCell::new(Vec::new())),
+        [Ok(response(b"deferred-publication"))],
+        [location(1, "a", "z", "tikv-1:20160")],
+        [false],
+    );
+    let evidence = transport.evidence_handle();
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
+    assert_eq!(result.next_raw().unwrap(), Some(b"deferred-publication".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), None);
+    let evidence = evidence.snapshot();
+    assert_eq!(evidence.batch_attempts, 1);
+    assert_eq!(evidence.published_attempts.len(), 1);
+    assert_eq!(evidence.published_attempts[0].publication.batch_stream_generation(), 11);
+}
+
+#[test]
 fn publication_observer_runs_before_pending_completion_and_resets_per_query() {
     let calls = Rc::new(RefCell::new(Vec::new()));
-    let completion_gate = Rc::new(Cell::new(false));
+    let completion_gate = Arc::new(AtomicBool::new(false));
     let transport = DirectUnaryQueryTransport::new_injected_batch_first(
         ScriptedClient {
             calls: Rc::clone(&calls),
@@ -35,7 +54,7 @@ fn publication_observer_runs_before_pending_completion_and_resets_per_query() {
             liveness: RefCell::new(VecDeque::new()),
             batch_errors: RefCell::new(VecDeque::new()),
             batch_ready_immediately: RefCell::new(VecDeque::new()),
-            batch_completion_gate: Some(Rc::clone(&completion_gate)),
+            batch_completion_gate: Some(Arc::clone(&completion_gate)),
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
@@ -50,13 +69,13 @@ fn publication_observer_runs_before_pending_completion_and_resets_per_query() {
     let mut runtime = InjectedQueryRuntime::new(transport);
 
     let mut first = select_result(&mut runtime, &transport_request(metadata("a", "z")));
-    let observed = Rc::new(RefCell::new(Vec::new()));
-    let first_observed = Rc::clone(&observed);
-    let first_gate = Rc::clone(&completion_gate);
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let first_observed = Arc::clone(&observed);
+    let first_gate = Arc::clone(&completion_gate);
     evidence
         .set_publication_observer(move |publication| {
-            first_observed.borrow_mut().push(publication.clone());
-            first_gate.set(true);
+            first_observed.lock().unwrap().push(publication.clone());
+            first_gate.store(true, Ordering::SeqCst);
         })
         .unwrap();
     assert!(evidence.set_publication_observer(|_| {}).is_err());
@@ -64,7 +83,7 @@ fn publication_observer_runs_before_pending_completion_and_resets_per_query() {
     assert_eq!(first.next_raw().unwrap(), None);
     drop(first);
 
-    let first_publication = observed.borrow()[0].clone();
+    let first_publication = observed.lock().unwrap()[0].clone();
     assert_eq!(first_publication.region_id, 1);
     assert_eq!(
         first_publication.publication.physical_address(),
@@ -75,11 +94,11 @@ fn publication_observer_runs_before_pending_completion_and_resets_per_query() {
     assert_eq!(first_publication.publication.forwarded_host(), None);
     assert_eq!(evidence.snapshot().published_attempts, [first_publication]);
 
-    completion_gate.set(false);
+    completion_gate.store(false, Ordering::SeqCst);
     let mut second = select_result(&mut runtime, &transport_request(metadata("a", "z")));
-    let second_gate = Rc::clone(&completion_gate);
+    let second_gate = Arc::clone(&completion_gate);
     evidence
-        .set_publication_observer(move |_| second_gate.set(true))
+        .set_publication_observer(move |_| second_gate.store(true, Ordering::SeqCst))
         .expect("the next query bind must detach the previous observer");
     assert_eq!(
         second.next_raw().unwrap(),
@@ -93,7 +112,7 @@ fn publication_observer_runs_before_pending_completion_and_resets_per_query() {
 fn local_batch_admission_busy_falls_back_without_route_failure_feedback() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let events = Rc::new(RefCell::new(Vec::new()));
-    let retry_control = Rc::new(RecordingRetryControl::default());
+    let retry_control = Arc::new(RecordingRetryControl::default());
     let transport = DirectUnaryQueryTransport::new_injected_batch_first(
         ScriptedClient {
             calls: Rc::clone(&calls),
@@ -131,5 +150,5 @@ fn local_batch_admission_busy_falls_back_without_route_failure_feedback() {
         events.borrow().as_slice(),
         [ClientEvent::Send("tikv-1:20160".to_owned())]
     );
-    assert!(retry_control.sleeps.borrow().is_empty());
+    assert!(retry_control.sleeps.lock().unwrap().is_empty());
 }

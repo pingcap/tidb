@@ -240,7 +240,7 @@ pub fn eval_bool<C: Columns>(
 ///
 /// See the module header for the one deliberate difference from Go: the
 /// `EvalInt` branch's NULL rule is applied to every filter.
-fn row_based_filter<C: Columns>(
+pub(crate) fn row_based_filter<C: Columns>(
     ctx: &C,
     conditions: &[Expression],
     input: &Chunk,

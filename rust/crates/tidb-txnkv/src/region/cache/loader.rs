@@ -198,13 +198,14 @@ impl<L: RegionRecoveryLoader> SharedRegionLoader<L> {
         &self,
         metadata: &[RegionMetadata],
         leader_store_id: u64,
+        resolved_stores: &mut BTreeMap<u64, Option<StoreMetadata>>,
     ) -> Result<Vec<(RegionLocation, StoreLabels)>, RegionRecoveryError> {
         self.with_loader(|loader| {
             metadata
                 .iter()
                 .map(|metadata| {
                     let hydrated = loader
-                        .hydrate_region(metadata, leader_store_id)
+                        .hydrate_region(metadata, leader_store_id, resolved_stores)
                         .map_err(RegionRecoveryError::Loader)?;
                     if hydrated.region != metadata.region {
                         return Err(RegionRecoveryError::HydratedRegionMismatch {
@@ -330,9 +331,14 @@ pub trait BatchRegionLoader: RegionLoader {
 /// Region loader with the required current-region store hydration capability.
 pub trait RegionRecoveryLoader: RegionLoader {
     /// Resolves the stores referenced by TiKV-provided current-region metadata.
+    /// `resolved_stores` is the recovery plan's snapshot of canonical store
+    /// metadata, shared across all replacement regions. Missing entries need
+    /// resolution; `None` is a known removed store. Add newly resolved entries
+    /// to this temporary map, leaving publication and refresh to RegionCache.
     fn hydrate_region(
         &mut self,
         metadata: &RegionMetadata,
         leader_store_id: u64,
+        resolved_stores: &mut BTreeMap<u64, Option<StoreMetadata>>,
     ) -> Result<RegionLocation, RegionLoadError>;
 }

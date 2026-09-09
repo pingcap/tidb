@@ -1,0 +1,64 @@
+{
+  "date": "2026-09-09",
+  "status": "WIP: independent detached-secondary progress proven through the production RPC transport with a scripted TiKV peer. No workload throughput claim.",
+  "git_head": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "branch": "hparser-integration",
+  "go_source": {
+    "module": "github.com/tikv/client-go/v2@v2.0.8-0.20260708122311-01bd8f99f4da",
+    "files": [
+      "txnkv/transaction/2pc.go: doActionOnGroupedBatches uses spawnWithStorePool for secondaries after a confirmed primary commit",
+      "txnkv/transaction/txn.go: spawnWithStorePool retains the store wait group and submits independent work to store.Go"
+    ]
+  },
+  "change": {
+    "files": [
+      "rust/crates/tidb-txnkv/src/transaction/command_client.rs",
+      "rust/crates/tidb-txnkv/src/rpc/async_completion.rs",
+      "rust/crates/tidb-txnkv/src/rpc/transaction.rs",
+      "rust/crates/tidb-txnkv/tests/async_commit_one_pc_source.rs",
+      "rust/docs/prepared-plan-execplan.md"
+    ],
+    "root": "The previous process-global FIFO worker called publish_commits synchronously and held the client authority mutex across all response waits. One stalled transaction therefore blocked unrelated detached flushes and every user of that client authority.",
+    "implementation": "Retain one runtime executor and spawn independent suspendable tasks. Clone the non-owning request capability while submitting and retain the original owner Arc through task completion; do not acquire the authority mutex in the background task. Admit every region request before awaiting responses. Add a native task-waker alternative to the existing completion observer slot; poll the original completion state, preserving the callback/run-loop authority. Responses capture existing entry identity without a publication barrier. Shared deadline and per-command secondary failure accounting remain.",
+    "deletion": "Removed DETACHED_FLUSH_QUEUE, detached_flush_sender, DetachedFlushJob and the non-Go OS-thread-count protection test. Replaced the test with a held-response independent-progress witness; backup retains all prior dirty source.",
+    "recovery": "/private/tmp/tidb-detached-progress.cAMaPl/before-source.tar.gz",
+    "limits": "This does not complete the Go package or add missing secondary retry/store-lifecycle policies. Foreground APIs retain their existing blocking behavior."
+  },
+  "witness": {
+    "path": "rust/crates/tidb-txnkv/tests/async_commit_one_pc_source.rs",
+    "test": "detached_secondary_flushes_progress_independently",
+    "method": "Hold transaction A's Commit response after the scripted peer records it. Submit B on a separate client authority through the same detached facility. B must reach the peer before A is released; A's authority mutex must also be available. Release the held response before asserting, including on the old implementation.",
+    "before": {
+      "independent": false,
+      "authority_available": false,
+      "second_admission_us": 2000438,
+      "meaning": "B had not arrived when the two-second observation bound expired; this is not an exact old service latency."
+    },
+    "after": {
+      "independent": true,
+      "authority_available": true,
+      "second_admission_us": 1278
+    },
+    "red_log": "/private/tmp/tidb-detached-progress.cAMaPl/red.log",
+    "green_log": "/private/tmp/tidb-detached-progress.cAMaPl/witness-final.log",
+    "interpretation": "Proves removal of cross-transaction head-of-line blocking and mutex-held response waiting. The admission timing is a controlled fixture observation, not a sysbench/TPC-C benchmark or general speedup estimate."
+  },
+  "validation": {
+    "profile": "WIP",
+    "cargo_working_directory": "/Users/qiliu/projects/tidb/rust",
+    "commands": [
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all detached_secondary_flushes_progress_independently -- --nocapture",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --lib rpc::",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all",
+      "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "/Users/qiliu/projects/tidb/rust/target/release/build/tidb-txnkv/522e07f03f46a26f/out/all-522e07f03f46a26f --exact async_commit_one_pc_source::detached_secondary_flushes_progress_independently --nocapture",
+      "git diff --check"
+    ],
+    "results": "20 RPC unit tests and 417 topology-independent tests passed; 11 ignored. Release build passed. Existing transaction completion tests cover response before first poll, response after task registration, cancellation wakeup and release of the task waker.",
+    "logs": "/private/tmp/tidb-detached-progress.cAMaPl/{unit-final,all-final,build,witness-final}.log",
+    "candidate": "/private/tmp/tidb-detached-progress.cAMaPl/candidate-server",
+    "candidate_sha256": "0e853a49036b07e614eacc07bb287a7d1a68e39ce1c592d374e12f207cf24d42",
+    "not_verified": "Ready lint, ignored real-cluster tests, full package parity and sysbench/TPC-C throughput/latency. No real PD/TiKV cluster or SQL benchmark service started in this increment; localhost scripted-peer tests ran to terminal completion."
+  },
+  "remaining": "The prior eight-client read-only regression and control variability remain open. Mixed-write TPC-C performance and general prepared physical-plan reuse remain unverified. The overall goal remains active; no commit or push."
+}

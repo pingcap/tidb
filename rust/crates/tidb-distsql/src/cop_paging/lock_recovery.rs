@@ -46,7 +46,7 @@ impl<C, L, S> LockedResponseDelegate<C, L> for OptimisticLockRecovery<S>
 where
     C: LockRecoveryClient,
     L: RegionRecoveryLoader,
-    S: TimestampSource,
+    S: TimestampSource + Send + Sync,
 {
     fn handle_locked_response(
         &self,
@@ -70,20 +70,8 @@ where
             true,
         )
         .map_err(|error| error.to_string())?;
-        if result.is_alive() {
-            let ttl = result.ttl;
-            let deadline_budget = observation.call.timeout();
-            if deadline_budget.is_zero() {
-                return Err("optimistic lock recovery exceeded the unary deadline".to_owned());
-            }
-            let wait = ttl.min(deadline_budget);
-            if observation.call.cancellation().wait_timeout(wait) {
-                return Err("optimistic lock TTL wait cancelled by caller".to_owned());
-            }
-            if wait < ttl {
-                return Err("optimistic lock recovery exceeded the unary deadline".to_owned());
-            }
-        }
+        // The response owner applies TxnLockFast using its existing per-region
+        // backoffer. TTL caps that backoff; it is not a sleep duration.
         // Go `ClientHelper.ResolveLocks` hands the two lists straight to the
         // snapshot's `TSSet`s, which the *next* send stamps onto its context.
         // The retry below is that next send.

@@ -190,7 +190,7 @@ impl From<QueryRuntimeError> for StorageReaderError {
 /// Executor-owned TableReader/IndexReader response lifecycle.
 pub struct TableIndexReader<T: QueryTransport>
 where
-    T::Response: 'static,
+    T::Response: Send + 'static,
 {
     plan: ReaderPlan,
     runtime: InjectedQueryRuntime<T>,
@@ -200,7 +200,7 @@ where
 
 impl<T: QueryTransport> TableIndexReader<T>
 where
-    T::Response: 'static,
+    T::Response: Send + 'static,
 {
     /// Binds a post-lowering reader plan to its transport capability.
     #[must_use]
@@ -317,7 +317,7 @@ where
 
 impl<T: QueryTransport> Drop for TableIndexReader<T>
 where
-    T::Response: 'static,
+    T::Response: Send + 'static,
 {
     fn drop(&mut self) {
         self.close();

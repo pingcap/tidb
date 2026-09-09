@@ -104,9 +104,6 @@
 //!   `pkg/types/parser_driver`, above this crate. [`param::ParamMarkerValue`]
 //!   is the two-field view (`Datum`, `Order`) that `ParamMarkerExpression`
 //!   reads, so no driver type is duplicated.
-//! - `// boundary:` `types.InferParamTypeFromDatum`. Not yet in
-//!   `tidb-datatype`; [`param::param_marker_expression`] takes the inferred
-//!   type as an argument rather than guessing one.
 //!
 //! # Not ported, and why
 //!
@@ -181,7 +178,8 @@ pub use substitute::{
 
 pub use normal_form::{
     derive_relaxed_filters_from_dnf, expr_from_schema, extract_filters_from_dnfs,
-    flatten_cnf_conditions, flatten_dnf_conditions, split_cnf_items, split_dnf_items,
+    flatten_cnf_conditions, flatten_dnf_conditions, into_cnf_items, split_cnf_items,
+    split_dnf_items,
 };
 
 pub use builder::{

@@ -27,43 +27,14 @@
 //! `tidb-expr` (the expression tree), so BOTH `tidb-planner` and
 //! `tidb-executor` may depend on it, matching Go's own layering.
 //!
-//! # What is here, and how it got here
+//! The graph owns dependency projection, conditional outer-join dependencies,
+//! and scalar-expression identities. Native logical operators in
+//! `tidb-planner` derive these sets from resolved expressions; the legacy SQL
+//! driver still has its AST-facing adapter until native SQL planning lands.
+//! Null rejection delegates to `tidb_expr::expression::is_null_rejected`.
 //!
-//! * [`fd_graph`] is a VERBATIM relocation of an existing, Go-verified port
-//!   (`fd_graph.go`), including its Go citations and its complete test table.
-//!   It is pure [`ColSet`] arithmetic and references no expression or AST type.
-//!   The only edits are mechanical: `pub(crate)` widened to `pub` so the graph
-//!   is usable across the crate boundary, doc comments added on the now-public
-//!   [`fd_graph::OuterJoinOptions`] fields, and the `#[cfg(test)]` gates
-//!   dropped from the two public accessors
-//!   ([`FdSet::closure_of_lax`](fd_graph::FdSet::closure_of_lax) and
-//!   [`FdSet::constant_cols`](fd_graph::FdSet::constant_cols)) that consumers
-//!   outside the crate must be able to call. No algorithm, comment, or test
-//!   assertion changed.
-//!
-//! * [`null_reject`] is RETARGETED, not relocated. Go's `IsNullRejected`
-//!   operates on `expression.Expression`, and the executor's copy was typed
-//!   against the written `tidb_ast::Expr` because that tier had no expression
-//!   tree. This crate's version works on [`tidb_expr::expression::Expression`],
-//!   which moves it TOWARD Go rather than away, and delegates the proof itself
-//!   to `tidb-expr`'s own complete transcreation of the Go function (which
-//!   carries Go's full `null_misc_builtins.go` table and the nullify-then-fold
-//!   bridge). What this module adds is the funcdep-facing shape -- one column
-//!   versus a whole nullified child schema -- and the boundary tests.
-//!
-//! # One proof, reached three ways
-//!
-//! The executor's duplicate copies have since been retired. `fd_graph` was a
-//! drop-in there, and `tidb-executor/src/driver/funcdep/null_reject.rs` now
-//! holds only a syntax-to-expression translation over
-//! [`null_reject::is_null_rejected_by`], because its callers pass
-//! `tidb_ast::Expr` with no schema in reach to resolve against.
-//!
-//! So the null-rejection proof exists once, in
-//! `tidb_expr::expression::is_null_rejected`. This module is the
-//! funcdep-facing shape over it, and the executor's module is the
-//! syntax-facing one. Neither carries proof logic of its own, which is the
-//! state `AGENTS.md` requires.
+//! Graph tests originate in Go. Full SQL-to-FD tests remain explicit ignored
+//! gaps: native derivation alone does not establish whole-package parity.
 
 pub mod fd_graph;
 pub mod null_reject;

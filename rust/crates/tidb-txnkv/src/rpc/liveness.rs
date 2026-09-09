@@ -59,8 +59,8 @@ enum ServingStatus {
     ServiceUnknown = 3,
 }
 
-pub(super) fn check_liveness(
-    runtime: &tokio::runtime::Runtime,
+pub(super) async fn check_liveness(
+    runtime: &tokio::runtime::Handle,
     address: &str,
     timeout: Duration,
     security: &ClusterSecurity,
@@ -71,26 +71,26 @@ pub(super) fn check_liveness(
     let Ok(endpoint) = secure_endpoint(address, security) else {
         return StoreLiveness::Unreachable;
     };
+    let tasks = super::execution::ConnectionTasks::new(runtime);
     let channel = {
         let _runtime = runtime.enter();
-        endpoint.connect_lazy()
+        endpoint.executor(tasks.clone()).connect_lazy()
     };
     let request = HealthCheckRequest {
         service: String::new(),
     }
     .encode_to_vec();
     let path = tonic::codegen::http::uri::PathAndQuery::from_static(HEALTH_CHECK_PATH);
-    let result = runtime.block_on(async {
-        tokio::time::timeout(timeout, async {
-            let mut client = tonic::client::Grpc::new(channel);
-            client.ready().await.map_err(|_| ())?;
-            client
-                .unary(tonic::Request::new(request), path, RawProtobufCodec)
-                .await
-                .map_err(|_| ())
-        })
-        .await
-    });
+    let result = tokio::time::timeout(timeout, async {
+        let mut client = tonic::client::Grpc::new(channel);
+        client.ready().await.map_err(|_| ())?;
+        client
+            .unary(tonic::Request::new(request), path, RawProtobufCodec)
+            .await
+            .map_err(|_| ())
+    })
+    .await;
+    tasks.close().await;
     let Ok(Ok(response)) = result else {
         return StoreLiveness::Unreachable;
     };

@@ -14,9 +14,9 @@
 
 #![allow(missing_docs)]
 
-use std::cell::Cell;
 use std::collections::VecDeque;
-use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use prost::Message;
@@ -35,7 +35,7 @@ use tidb_proto::tipb::{Chunk, SelectResponse};
 use tidb_proto::CoprocessorResponse;
 
 struct ReaderUnaryClient {
-    sends: Rc<Cell<usize>>,
+    sends: Arc<AtomicUsize>,
     responses: VecDeque<Vec<u8>>,
 }
 
@@ -58,6 +58,7 @@ impl RegionRecoveryLoader for ReaderLoader {
         &mut self,
         metadata: &RegionMetadata,
         leader_store_id: u64,
+        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
     ) -> Result<RegionLocation, RegionLoadError> {
         if metadata.region != self.region.region {
             return Err(RegionLoadError::new(
@@ -90,7 +91,7 @@ impl DirectUnaryClient for ReaderUnaryClient {
         assert_eq!(request.context.region_id, 1);
         assert!(timeout <= Duration::from_secs(9));
         assert!(timeout > Duration::from_secs(8));
-        self.sends.set(self.sends.get() + 1);
+        self.sends.fetch_add(1, Ordering::SeqCst);
         Ok(DirectUnaryResponse::new(
             self.responses.pop_front().expect("one unary response"),
             address,
@@ -200,12 +201,12 @@ fn request(cancel: std::sync::Arc<tidb_distsql::CancelHandle>) -> TransportReque
     TransportRequest::new(metadata, cancel)
 }
 
-fn transport(sends: Rc<Cell<usize>>) -> DirectUnaryQueryTransport<ReaderUnaryClient, ReaderLoader> {
+fn transport(sends: Arc<AtomicUsize>) -> DirectUnaryQueryTransport<ReaderUnaryClient, ReaderLoader> {
     transport_with_rows(sends, &[&[1, 2, 3]])
 }
 
 fn transport_with_rows(
-    sends: Rc<Cell<usize>>,
+    sends: Arc<AtomicUsize>,
     responses: &[&[i64]],
 ) -> DirectUnaryQueryTransport<ReaderUnaryClient, ReaderLoader> {
     let responses = responses
@@ -253,7 +254,7 @@ fn transport_with_rows(
 #[test]
 fn exhausting_first_serial_request_does_not_cancel_its_sibling() {
     let execution = tidb_distsql::ExecutionState::new();
-    let sends = Rc::new(Cell::new(0));
+    let sends = Arc::new(AtomicUsize::new(0));
     let plan = ReaderPlan::new(
         ReaderKind::Table,
         vec![
@@ -263,12 +264,12 @@ fn exhausting_first_serial_request_does_not_cancel_its_sibling() {
         vec![FieldType::new(FieldTypeCode::Long)],
     );
     let mut reader =
-        TableIndexReader::new(plan, transport_with_rows(Rc::clone(&sends), &[&[1], &[2]]));
+        TableIndexReader::new(plan, transport_with_rows(Arc::clone(&sends), &[&[1], &[2]]));
 
     reader.open().unwrap();
     assert_eq!(ints(reader.next(1).unwrap()), [1]);
     assert_eq!(ints(reader.next(1).unwrap()), [2]);
-    assert_eq!(sends.get(), 2);
+    assert_eq!(sends.load(Ordering::SeqCst), 2);
     assert!(!execution.cancel.is_cancelled());
 }
 
@@ -302,56 +303,56 @@ fn table_and_index_readers_lazily_cross_the_unary_boundary_and_keep_row_budgets(
     // pkg/executor/table_readers_required_rows_test.go:225 TestIndexReaderRequiredRows
     for kind in [ReaderKind::Table, ReaderKind::Index] {
         let execution = tidb_distsql::ExecutionState::new();
-        let sends = Rc::new(Cell::new(0));
+        let sends = Arc::new(AtomicUsize::new(0));
         let plan = ReaderPlan::new(
             kind,
             vec![request(std::sync::Arc::clone(&execution.cancel))],
             vec![FieldType::new(FieldTypeCode::Long)],
         );
-        let mut reader = TableIndexReader::new(plan, transport(Rc::clone(&sends)));
+        let mut reader = TableIndexReader::new(plan, transport(Arc::clone(&sends)));
 
         reader.open().unwrap();
-        assert_eq!(sends.get(), 0, "open only transfers the lazy owner");
+        assert_eq!(sends.load(Ordering::SeqCst), 0, "open only transfers the lazy owner");
         assert_eq!(ints(reader.next(1).unwrap()), [1]);
-        assert_eq!(sends.get(), 1);
+        assert_eq!(sends.load(Ordering::SeqCst), 1);
         // The decoder buffers the unused rows from the one raw TiKV response;
         // the second caller budget is honored without a speculative RPC.
         assert_eq!(ints(reader.next(2).unwrap()), [2, 3]);
-        assert_eq!(sends.get(), 1);
+        assert_eq!(sends.load(Ordering::SeqCst), 1);
         assert!(reader.next(1).unwrap().is_empty());
         reader.close();
         reader.close();
         assert_eq!(reader.state(), ReaderState::Closed);
-        assert_eq!(sends.get(), 1);
+        assert_eq!(sends.load(Ordering::SeqCst), 1);
     }
 }
 
 #[test]
 fn close_after_open_discards_the_unpulled_unary_response() {
     let execution = tidb_distsql::ExecutionState::new();
-    let sends = Rc::new(Cell::new(0));
+    let sends = Arc::new(AtomicUsize::new(0));
     let plan = ReaderPlan::new(
         ReaderKind::Table,
         vec![request(std::sync::Arc::clone(&execution.cancel))],
         vec![FieldType::new(FieldTypeCode::Long)],
     );
-    let mut reader = TableIndexReader::new(plan, transport(Rc::clone(&sends)));
+    let mut reader = TableIndexReader::new(plan, transport(Arc::clone(&sends)));
     reader.open().unwrap();
     reader.close();
-    assert_eq!(sends.get(), 0);
+    assert_eq!(sends.load(Ordering::SeqCst), 0);
 }
 
 #[test]
 fn table_index_reader_preserves_typed_execution_cancellation_without_dispatch() {
     // pkg/executor/adapter_test.go:93 TestContextCancelWhenReadFromCopIterator
     let execution = tidb_distsql::ExecutionState::new();
-    let sends = Rc::new(Cell::new(0));
+    let sends = Arc::new(AtomicUsize::new(0));
     let plan = ReaderPlan::new(
         ReaderKind::Table,
         vec![request(std::sync::Arc::clone(&execution.cancel))],
         vec![FieldType::new(FieldTypeCode::Long)],
     );
-    let mut reader = TableIndexReader::new(plan, transport(Rc::clone(&sends)));
+    let mut reader = TableIndexReader::new(plan, transport(Arc::clone(&sends)));
     reader.open().unwrap();
 
     execution.cancel.cancel();
@@ -359,7 +360,7 @@ fn table_index_reader_preserves_typed_execution_cancellation_without_dispatch() 
         reader.next(1),
         Err(tidb_exec::storage_reader::StorageReaderError::Cancelled)
     );
-    assert_eq!(sends.get(), 0, "cancellation must win before TiKV dispatch");
+    assert_eq!(sends.load(Ordering::SeqCst), 0, "cancellation must win before TiKV dispatch");
     reader.close();
     assert_eq!(reader.state(), ReaderState::Closed);
 }

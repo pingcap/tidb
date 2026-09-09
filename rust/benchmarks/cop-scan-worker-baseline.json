@@ -1,0 +1,403 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-08",
+  "status": "not_a_throughput_win",
+  "change": "Reuse exclusive pinned workers for all coprocessor scans; remove inline and fixed queued dispatch.",
+  "git_head": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "branch": "hparser-integration",
+  "before": {
+    "port": 53052,
+    "pid": 24677,
+    "sha256": "68730b1de1185340661edf516676c8002ce8e1818cf037a247fbc77aa99efee5"
+  },
+  "after": {
+    "port": 53053,
+    "pid": 47807,
+    "sha256": "65d86bb60b2d1dd8be472fe7cecae8082811c5498364ca81a97f791d5aa1ddfd"
+  },
+  "correctness": {
+    "runtime_red_failures": [
+      "worker discarded instead of parked",
+      "LIMIT 1 plus residual predicate blocks open on bounded channel"
+    ],
+    "scoped_tests_passed": 29,
+    "lint": "GOMAXPROCS=12 GOFLAGS='-p=12' GOTOOLCHAIN=local make -j12 lint",
+    "ten_query_result_hashes_match_go_before_after": true,
+    "before_after_plans_identical": true,
+    "probe": "/private/tmp/tidb-cop-worker-results.json"
+  },
+  "configuration": {
+    "database": "perf_sysbench_locking_v2",
+    "table_size": 100000,
+    "tables": 1,
+    "seed": 1,
+    "prepared_mode": "auto",
+    "mysql_ssl_flag": "off (not proof of plaintext with this installed client)",
+    "warmup_seconds": 5,
+    "measurement_seconds": 20,
+    "rounds": 4,
+    "alternating_order": true,
+    "canonical_threads": 8,
+    "limit_one_threads": 2,
+    "limit_one_query": "SELECT c FROM sbtest1 WHERE id >= ? ORDER BY id LIMIT 1",
+    "persistent_writes": 0
+  },
+  "summary": [
+    {
+      "workload": "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+      "pairs": [
+        {
+          "round": 0,
+          "tps_change_percent": -3.013777443185639,
+          "cpu_per_txn_change_percent": -11.378076518841429
+        },
+        {
+          "round": 1,
+          "tps_change_percent": -2.8894564923741983,
+          "cpu_per_txn_change_percent": -11.4824465994664
+        },
+        {
+          "round": 2,
+          "tps_change_percent": -3.115558219471326,
+          "cpu_per_txn_change_percent": -11.286520857922744
+        },
+        {
+          "round": 3,
+          "tps_change_percent": -1.2579087267417965,
+          "cpu_per_txn_change_percent": -13.606293629886878
+        }
+      ],
+      "medians": {
+        "before": {
+          "tps": 1631.255,
+          "server_cpu_ms_per_txn": 2.272941771908778,
+          "tikv_cpu_ms_per_txn": 2.7306216769582368
+        },
+        "after": {
+          "tps": 1583.29,
+          "server_cpu_ms_per_txn": 2.0102264613371634,
+          "tikv_cpu_ms_per_txn": 2.9064566898666246
+        }
+      }
+    },
+    {
+      "workload": "/private/tmp/tidb-cop-worker-limit-one.lua",
+      "pairs": [
+        {
+          "round": 0,
+          "tps_change_percent": -0.7923324210953986,
+          "cpu_per_txn_change_percent": 2.057643267404763
+        },
+        {
+          "round": 1,
+          "tps_change_percent": -1.3383858423934636,
+          "cpu_per_txn_change_percent": 2.476632599297801
+        },
+        {
+          "round": 2,
+          "tps_change_percent": -2.680141381422574,
+          "cpu_per_txn_change_percent": 4.665986738964256
+        },
+        {
+          "round": 3,
+          "tps_change_percent": -1.5560015930539572,
+          "cpu_per_txn_change_percent": 2.4098501378841286
+        }
+      ],
+      "medians": {
+        "before": {
+          "tps": 5042.455,
+          "server_cpu_ms_per_txn": 0.27871903501371653,
+          "tikv_cpu_ms_per_txn": 0.6886671876083552
+        },
+        "after": {
+          "tps": 4970.66,
+          "server_cpu_ms_per_txn": 0.2854571381286607,
+          "tikv_cpu_ms_per_txn": 0.6941293825442076
+        }
+      }
+    }
+  ],
+  "samples": [
+    {
+      "server": "before",
+      "workload": "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+      "threads": 8,
+      "round": 0,
+      "transactions": 32684,
+      "tps": 1633.83,
+      "server_cpu_ms_per_txn": 2.2693060824868425,
+      "tikv_cpu_ms_per_txn": 2.721821074531632,
+      "errors": 0,
+      "writes": 0,
+      "reconnects": 0,
+      "log": "/private/tmp/tidb-cop-worker-comparison/oltp_read_only-0-before.log"
+    },
+    {
+      "server": "after",
+      "workload": "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+      "threads": 8,
+      "round": 0,
+      "transactions": 31704,
+      "tps": 1584.59,
+      "server_cpu_ms_per_txn": 2.0111026999747668,
+      "tikv_cpu_ms_per_txn": 2.9012112036334825,
+      "errors": 0,
+      "writes": 0,
+      "reconnects": 0,
+      "log": "/private/tmp/tidb-cop-worker-comparison/oltp_read_only-0-after.log"
+    },
+    {
+      "server": "after",
+      "workload": "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+      "threads": 8,
+      "round": 1,
+      "transactions": 31640,
+      "tps": 1581.62,
+      "server_cpu_ms_per_txn": 2.0151706700379264,
+      "tikv_cpu_ms_per_txn": 2.9058154235146123,
+      "errors": 0,
+      "writes": 0,
+      "reconnects": 0,
+      "log": "/private/tmp/tidb-cop-worker-comparison/oltp_read_only-1-after.log"
+    },
+    {
+      "server": "before",
+      "workload": "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+      "threads": 8,
+      "round": 1,
+      "transactions": 32584,
+      "tps": 1628.68,
+      "server_cpu_ms_per_txn": 2.2765774613307133,
+      "tikv_cpu_ms_per_txn": 2.734470905966297,
+      "errors": 0,
+      "writes": 0,
+      "reconnects": 0,
+      "log": "/private/tmp/tidb-cop-worker-comparison/oltp_read_only-1-before.log"
+    },
+    {
+      "server": "before",
+      "workload": "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+      "threads": 8,
+      "round": 2,
+      "transactions": 32709,
+      "tps": 1635.02,
+      "server_cpu_ms_per_txn": 2.262985722583998,
+      "tikv_cpu_ms_per_txn": 2.7267724479501765,
+      "errors": 0,
+      "writes": 0,
+      "reconnects": 0,
+      "log": "/private/tmp/tidb-cop-worker-comparison/oltp_read_only-2-before.log"
+    },
+    {
+      "server": "after",
+      "workload": "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+      "threads": 8,
+      "round": 2,
+      "transactions": 31690,
+      "tps": 1584.08,
+      "server_cpu_ms_per_txn": 2.0075733669927414,
+      "tikv_cpu_ms_per_txn": 2.907857368254786,
+      "errors": 0,
+      "writes": 0,
+      "reconnects": 0,
+      "log": "/private/tmp/tidb-cop-worker-comparison/oltp_read_only-2-after.log"
+    },
+    {
+      "server": "after",
+      "workload": "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+      "threads": 8,
+      "round": 3,
+      "transactions": 31657,
+      "tps": 1582.5,
+      "server_cpu_ms_per_txn": 2.0093502226995605,
+      "tikv_cpu_ms_per_txn": 2.907097956218637,
+      "errors": 0,
+      "writes": 0,
+      "reconnects": 0,
+      "log": "/private/tmp/tidb-cop-worker-comparison/oltp_read_only-3-after.log"
+    },
+    {
+      "server": "before",
+      "workload": "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+      "threads": 8,
+      "round": 3,
+      "transactions": 32062,
+      "tps": 1602.66,
+      "server_cpu_ms_per_txn": 2.325806250389868,
+      "tikv_cpu_ms_per_txn": 2.794273594909753,
+      "errors": 0,
+      "writes": 0,
+      "reconnects": 0,
+      "log": "/private/tmp/tidb-cop-worker-comparison/oltp_read_only-3-before.log"
+    },
+    {
+      "server": "before",
+      "workload": "/private/tmp/tidb-cop-worker-limit-one.lua",
+      "threads": 2,
+      "round": 0,
+      "transactions": 100420,
+      "tps": 5020.62,
+      "server_cpu_ms_per_txn": 0.27912766381198933,
+      "tikv_cpu_ms_per_txn": 0.6912965544712035,
+      "errors": 0,
+      "writes": 0,
+      "reconnects": 0,
+      "log": "/private/tmp/tidb-cop-worker-comparison/tidb-cop-worker-limit-one-0-before.log"
+    },
+    {
+      "server": "after",
+      "workload": "/private/tmp/tidb-cop-worker-limit-one.lua",
+      "threads": 2,
+      "round": 0,
+      "transactions": 99624,
+      "tps": 4980.84,
+      "server_cpu_ms_per_txn": 0.28487111539388094,
+      "tikv_cpu_ms_per_txn": 0.6926041917610214,
+      "errors": 0,
+      "writes": 0,
+      "reconnects": 0,
+      "log": "/private/tmp/tidb-cop-worker-comparison/tidb-cop-worker-limit-one-0-after.log"
+    },
+    {
+      "server": "after",
+      "workload": "/private/tmp/tidb-cop-worker-limit-one.lua",
+      "threads": 2,
+      "round": 1,
+      "transactions": 99465,
+      "tps": 4972.94,
+      "server_cpu_ms_per_txn": 0.2853264967576534,
+      "tikv_cpu_ms_per_txn": 0.6942140451415363,
+      "errors": 0,
+      "writes": 0,
+      "reconnects": 0,
+      "log": "/private/tmp/tidb-cop-worker-comparison/tidb-cop-worker-limit-one-1-after.log"
+    },
+    {
+      "server": "before",
+      "workload": "/private/tmp/tidb-cop-worker-limit-one.lua",
+      "threads": 2,
+      "round": 1,
+      "transactions": 100815,
+      "tps": 5040.4,
+      "server_cpu_ms_per_txn": 0.2784307890690863,
+      "tikv_cpu_ms_per_txn": 0.6887863909140736,
+      "errors": 0,
+      "writes": 0,
+      "reconnects": 0,
+      "log": "/private/tmp/tidb-cop-worker-comparison/tidb-cop-worker-limit-one-1-before.log"
+    },
+    {
+      "server": "before",
+      "workload": "/private/tmp/tidb-cop-worker-limit-one.lua",
+      "threads": 2,
+      "round": 2,
+      "transactions": 100908,
+      "tps": 5044.51,
+      "server_cpu_ms_per_txn": 0.27857057914139627,
+      "tikv_cpu_ms_per_txn": 0.6885479843026369,
+      "errors": 0,
+      "writes": 0,
+      "reconnects": 0,
+      "log": "/private/tmp/tidb-cop-worker-comparison/tidb-cop-worker-limit-one-2-before.log"
+    },
+    {
+      "server": "after",
+      "workload": "/private/tmp/tidb-cop-worker-limit-one.lua",
+      "threads": 2,
+      "round": 2,
+      "transactions": 98193,
+      "tps": 4909.31,
+      "server_cpu_ms_per_txn": 0.29156864542278976,
+      "tikv_cpu_ms_per_txn": 0.7036143105923692,
+      "errors": 0,
+      "writes": 0,
+      "reconnects": 0,
+      "log": "/private/tmp/tidb-cop-worker-comparison/tidb-cop-worker-limit-one-2-after.log"
+    },
+    {
+      "server": "after",
+      "workload": "/private/tmp/tidb-cop-worker-limit-one.lua",
+      "threads": 2,
+      "round": 3,
+      "transactions": 99374,
+      "tps": 4968.38,
+      "server_cpu_ms_per_txn": 0.2855877794996679,
+      "tikv_cpu_ms_per_txn": 0.6940447199468791,
+      "errors": 0,
+      "writes": 0,
+      "reconnects": 0,
+      "log": "/private/tmp/tidb-cop-worker-comparison/tidb-cop-worker-limit-one-3-after.log"
+    },
+    {
+      "server": "before",
+      "workload": "/private/tmp/tidb-cop-worker-limit-one.lua",
+      "threads": 2,
+      "round": 3,
+      "transactions": 100944,
+      "tps": 5046.91,
+      "server_cpu_ms_per_txn": 0.27886749088603674,
+      "tikv_cpu_ms_per_txn": 0.688500554763037,
+      "errors": 0,
+      "writes": 0,
+      "reconnects": 0,
+      "log": "/private/tmp/tidb-cop-worker-comparison/tidb-cop-worker-limit-one-3-before.log"
+    }
+  ],
+  "native_profiles": {
+    "template": "Time Profiler",
+    "requested_seconds": 15,
+    "states": "Running only",
+    "before": {
+      "samples": 54843,
+      "observed_thread_ids": 98256,
+      "lifecycle_samples": 2515,
+      "lifecycle_percent": 4.585817697791879,
+      "stem": "/private/tmp/tidb-readonly-rust-20260908"
+    },
+    "after": {
+      "samples": 47204,
+      "observed_thread_ids": 80,
+      "lifecycle_samples": 1,
+      "lifecycle_percent": 0.002118464536903652,
+      "stem": "/private/tmp/tidb-cop-worker-profile"
+    },
+    "counting": "Observed IDs across capture, not simultaneous threads. Lifecycle is union of _pthread_create, pthread_detach, _pthread_exit, _pthread_tsd_cleanup stack matches. Profile timing is not the unprofiled paired baseline."
+  },
+  "fixed_work_diagnostic": {
+    "report": "/private/tmp/tidb-cop-worker-fixed-work/results.json",
+    "single_client": {
+      "events": 3000,
+      "before_tps": 386.09,
+      "after_tps": 409.14
+    },
+    "eight_clients": {
+      "events": 20000,
+      "before_tps": 1637.02,
+      "after_tps": 1582.19,
+      "coprocessor_rpc_count_before": 163057,
+      "coprocessor_rpc_count_after": 163063,
+      "point_get_rpc_count_before": 201138,
+      "point_get_rpc_count_after": 201173,
+      "coprocessor_rpc_duration_seconds_before": 19.103238142995906,
+      "coprocessor_rpc_duration_seconds_after": 20.852168259996688,
+      "point_get_rpc_duration_seconds_before": 17.816868287998204,
+      "point_get_rpc_duration_seconds_after": 20.282612625000638
+    },
+    "interpretation": "One diagnostic pair per concurrency, not a performance baseline. RPC volumes nearly match; service-duration counters rise at eight clients. Metrics include background cluster traffic and local publication lag. This narrows investigation but does not establish the cause of the slowdown."
+  },
+  "limitations": [
+    "Shared macOS host: mediaanalysisd and mds_stores active in every measured round; top process CPU deltas retained in raw report.",
+    "Server CPU per transaction improved, but both workload throughput medians regressed and every paired throughput result was negative. Do not present as speedup or ship on this evidence.",
+    "No mixed TPC-C fixture writes; prior explicit approval remains outstanding.",
+    "General immutable prepared physical-plan reuse is unimplemented; no whole-package equivalence claim.",
+    "Cancellation tests preserve consumer-close behavior; immediate interruption of an already blocked remote RPC is not established by this change."
+  ],
+  "raw_comparison": "/private/tmp/tidb-cop-worker-comparison/results.json",
+  "commands": [
+    "python3 /private/tmp/tidb-cop-worker-results.py",
+    "python3 /private/tmp/tidb-cop-worker-compare.py --after-pid 47807 --seconds 20 --rounds 4 --output /private/tmp/tidb-cop-worker-comparison",
+    "python3 /private/tmp/tidb-readonly-paired-profile.py --pid 47807 --port 53053 --stem /private/tmp/tidb-cop-worker-profile",
+    "python3 /private/tmp/tidb-cop-worker-fixed-work.py"
+  ]
+}

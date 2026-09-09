@@ -1,0 +1,64 @@
+{
+  "scope": "Metadata lookup microbenchmark only; no end-to-end sysbench or TPC-C gain claimed",
+  "change": "Borrow catalog entries and constraints, then sort and copy only references matching the parent",
+  "base_commit": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "unrelated_tables": 100,
+  "unrelated_columns_per_table": 32,
+  "iterations_per_sample": 5000,
+  "rounds": 6,
+  "order": "Alternating owned-reference/borrowed and borrowed/owned-reference",
+  "matching_five_constraints": {
+    "before_ns": [311701292, 306440500, 304686375, 311321083, 299037625, 298776500],
+    "after_ns": [4182500, 4154000, 4274875, 4318000, 3887416, 4821000]
+  },
+  "no_matching_constraints": {
+    "before_ns": [300428458, 313683875, 309615375, 301502375, 295264917, 301220334],
+    "after_ns": [666375, 656000, 685250, 683500, 688125, 698334]
+  },
+  "command": "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib benchmark_referring_metadata -- --ignored --nocapture",
+  "artifacts": "/private/tmp/tidb-fk-metadata-micro.log",
+  "tpcc_comparison": {
+    "database": "perf_tpcc_locking_v1",
+    "warehouses": 1,
+    "warmup_transactions_per_endpoint_and_concurrency": 1000,
+    "transactions_per_sample": 10000,
+    "rounds": 3,
+    "before_binary_sha256": "29ac2bc4c8c055a8d341e33212faa2b1fc5cdea6eb856c1d0a8c57b3023a8c26",
+    "after_binary_sha256": "d23d15774a6f70690d233ee5881cde36768672c67c0b25cadafcb07b7be2313c",
+    "two_clients": {
+      "before_seconds": [22.81938312499551, 24.808844833052717, 24.429753499978688],
+      "after_seconds": [22.651537458994426, 22.503208915994037, 24.98698687495198],
+      "go_seconds": [17.668958084017504, 18.27403241704451, 17.75476229097694],
+      "median_tps_before_after_go": [409.33691778792297, 441.4711371403719, 563.2291683838566]
+    },
+    "eight_clients": {
+      "before_seconds": [17.87879420799436, 17.05751420801971, 19.03058341704309],
+      "after_seconds": [17.518999708001502, 16.84734254097566, 19.513124541030265],
+      "go_seconds": [14.977011665992904, 15.021801374969073, 15.52322654199088],
+      "median_tps_before_after_go": [559.3218358947596, 570.808845634758, 665.6991229203088]
+    },
+    "artifacts": "/private/tmp/tidb-fk-metadata-tpcc-comparison/results.json",
+    "validation": "All 180000 measured and 6000 warmup transactions completed without reported errors; all 11 Go post-run conditions and all 30000 customer balance/delivery-counter checks passed",
+    "conclusion": "Median TPS increased, but paired changes are inconsistent and transaction mixes are time-seeded on an evolving dataset. No stable end-to-end gain established. Rust still trails Go at both concurrencies."
+  },
+  "sysbench_comparison": {
+    "database": "perf_sysbench_locking_v2",
+    "workload": "oltp_read_write",
+    "threads": 2,
+    "rounds": 3,
+    "warmup_seconds_per_endpoint": 5,
+    "sample_seconds": 20,
+    "before_transactions": [8772, 8577, 8337],
+    "after_transactions": [8704, 8686, 8391],
+    "go_transactions": [9879, 9574, 9527],
+    "before_seconds": [20.0046, 20.0043, 20.0011],
+    "after_seconds": [20.0021, 20.0034, 20.0041],
+    "go_seconds": [20.0021, 20.0042, 20.0046],
+    "median_tps_before_after_go": [428.7578170693301, 434.22618154913664, 478.59949410623767],
+    "artifacts": "/private/tmp/tidb-fk-metadata-sysbench-comparison/results.json",
+    "errors": 0,
+    "reconnects": 0,
+    "conclusion": "Small mixed paired differences; no stable end-to-end gain established. All nine samples retained."
+  },
+  "notes": "Both metadata algorithms run in the same optimized test binary, assert identical reference counts, and inspect black-boxed catalog input. The old implementation is retained only as a test compatibility/timing oracle. Every paired metadata sample improved, but live workload differences remain inconclusive. No concurrent build, profile, or other workload overlapped measurements. Catalog traversal remains linear in table count; no stale metadata cache or foreign-key bypass introduced."
+}

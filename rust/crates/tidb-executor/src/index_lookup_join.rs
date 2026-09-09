@@ -225,9 +225,9 @@ pub struct IndexJoinLookUpContent {
 ///
 /// Go declares this as an interface *"to avoid cycle import"*; it is an
 /// interface here for the same reason plus one more -- the body it stands for
-/// (`buildExecutorForIndexJoinInternal` in `pkg/executor/builder.go`, which
-/// turns lookup contents into index ranges and dispatches a distsql request)
-/// is not in this crate at all.
+/// (`buildExecutorForIndexJoinInternal` in `pkg/executor/builder.go`) belongs
+/// to executor construction. `physical_builder` supplies the native reader
+/// implementation, filling batch ranges without reparsing or replanning SQL.
 ///
 /// # boundary: `IndexJoinExecutorBuilder.BuildExecutorForIndexJoin`
 /// Go additionally passes `cwc *physicalop.ColWithCmpFuncManager`, a

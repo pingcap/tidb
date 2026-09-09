@@ -179,116 +179,86 @@ pub(crate) fn leaf_index_path(
             if let Ok(Some(pin)) =
                 super::access::try_point_get(&stmt, table, columns, &ctx.session_zone())
             {
+                let num_ranges = usize::from(pin.handle.is_some());
                 return Some(LeafAccessPath::Point {
                     handle: pin.handle,
                     order: wanted.map(|order| order.to_vec()).unwrap_or_default(),
-                    candidate: tidb_planner::candidate_cost::Candidate::Fixed {
-                        rows: 1.0,
+                    candidate: crate::access_cost::point_get_candidate(
+                        num_ranges as f64,
                         row_size,
-                        cost: tidb_planner::plan_cost_ver2::point_get_cost(
-                            None,
-                            1.0,
-                            row_size,
-                            &tidb_planner::plan_cost_ver2::Ver2Factors::default().tidb_to_kv_net,
-                            true,
-                        )
-                        .value(),
-                        num_ranges: 1,
-                    },
+                        num_ranges,
+                        ctx.optimizer_cost_env(),
+                    ),
                 });
             }
         }
     }
-    let mut paths = crate::access_cost::enumerate_paths(
-        table,
-        columns,
-        where_clause,
-        &needed,
-        &resolver,
-        None,
-        stats,
-        hints,
-        false,
-        false,
-        demand.statement_forces_an_index(),
-        // A join leaf is a whole `DataSource` in Go, so `DeriveStats` runs
-        // the heuristic there too -- BEFORE the required-order filter below,
-        // exactly as Go's pruning precedes `findBestTask`'s property checks.
-        true,
-        None,
-    );
-    if let Some(wanted) = wanted {
-        // `matchProperty` as a FILTER over the enumeration.
-        //
-        // Go keeps every path in the skyline and refuses the non-matching ones
-        // one layer later -- `convertToIndexScan`/`convertToTableScan` both
-        // open with `if !prop.IsSortItemEmpty() && !candidate.matchPropResult
-        // .Matched() { return invalidTask }` -- and stops a non-matching path
-        // DOMINATING a matching one with the `matchResult` dimension,
-        // `compareBool(lhs.matchPropResult.Matched(), rhs...)`. Removing them
-        // up front reaches the same answer with one fewer moving part: a
-        // matching path is still never pruned by a non-matching one, pruning
-        // BETWEEN two matching paths is unchanged (their `matchResult` is 0),
-        // and a non-matching path could only ever have produced `invalidTask`.
-        // It is also what keeps [`crate::skyline`]'s `match_result = 0` EXACT
-        // rather than an approximation -- see that module's own doc.
-        //
-        // There is no `Sort` enforcer below a `FROM` in this tier, so an
-        // enumeration that empties here declines the order rather than paying
-        // for one.
-        paths.retain(|candidate| match &candidate.path.index {
-            Some((index_id, _)) => table
-                .indexes()
-                .iter()
-                .find(|index| index.id == *index_id)
-                .is_some_and(|index| leaf_index_order(table, index, columns).starts_with(wanted)),
-            // `matchProperty`'s int-handle branch: `if len(prop.SortItems) !=
-            // 1 || pkCol == nil { return PropNotMatched }` and then the column
-            // itself. The table path stays a COSTED candidate when it matches,
-            // which is how an ordered index that is dearer than the ordered
-            // table read still loses -- `best.index?` below then reads the
-            // table path as "keep the whole-table scan already installed".
-            None => leaf_handle_order(table, columns).starts_with(wanted),
-        });
-    }
-    // Prepared plan cache, the reusable half (Go `GetPlanFromPlanCache`):
-    // a pin from the statement's first execution NARROWS the candidates to
-    // the path that won then, whatever today's literals would cost. Every
-    // candidate here was built from the same pushed conditions with the same
-    // residual handling, so the narrowing can only change what the read
-    // costs, never what it answers. An empty narrowed set (the pinned index
-    // left the catalog, or the order filter already refused it) falls back
-    // to the free race -- Go's miss-and-replan.
-    let pin_trace = std::env::var("TIKV_PIN_TRACE").as_deref() == Ok("1");
-    let paths = match ctx.prepared_path_pin_for(visible) {
-        Some(pin) => {
-            let (pinned, rest): (Vec<_>, Vec<_>) = paths
-                .into_iter()
-                .partition(|candidate| match (&pin, &candidate.path.index) {
-                    (PinnedLeafAccess::IndexId(pinned_id), Some((id, _))) => id == pinned_id,
-                    (PinnedLeafAccess::TableScan, None) => true,
-                    _ => false,
-                });
-            if pin_trace {
-                eprintln!("[PINTRACE] leaf {visible} pin={pin:?} candidates={} narrowed={}", rest.len(), pinned.len());
-            }
-            if pinned.is_empty() {
-                if pin_trace {
-                    eprintln!("[PINTRACE] leaf {visible} FALLBACK free race ({} candidates)", rest.len());
-                }
-                rest
-            } else {
-                pinned
-            }
+    let choose = |cached_path| {
+        let mut paths = crate::access_cost::enumerate_paths(
+            table,
+            columns,
+            where_clause,
+            &needed,
+            &resolver,
+            None,
+            stats,
+            hints,
+            false,
+            false,
+            demand.statement_forces_an_index(),
+            // A join leaf is a whole `DataSource` in Go, so `DeriveStats` runs
+            // the heuristic there too -- BEFORE the required-order filter below,
+            // exactly as Go's pruning precedes `findBestTask`'s property checks.
+            true,
+            None,
+            cached_path,
+        );
+        if let Some(wanted) = wanted {
+            // `matchProperty` as a FILTER over the enumeration.
+            //
+            // Go keeps every path in the skyline and refuses the non-matching ones
+            // one layer later -- `convertToIndexScan`/`convertToTableScan` both
+            // open with `if !prop.IsSortItemEmpty() && !candidate.matchPropResult
+            // .Matched() { return invalidTask }` -- and stops a non-matching path
+            // DOMINATING a matching one with the `matchResult` dimension,
+            // `compareBool(lhs.matchPropResult.Matched(), rhs...)`. Removing them
+            // up front reaches the same answer with one fewer moving part: a
+            // matching path is still never pruned by a non-matching one, pruning
+            // BETWEEN two matching paths is unchanged (their `matchResult` is 0),
+            // and a non-matching path could only ever have produced `invalidTask`.
+            // It is also what keeps [`crate::skyline`]'s `match_result = 0` EXACT
+            // rather than an approximation -- see that module's own doc.
+            //
+            // There is no `Sort` enforcer below a `FROM` in this tier, so an
+            // enumeration that empties here declines the order rather than paying
+            // for one.
+            paths.retain(|candidate| match &candidate.path.index {
+                Some((index_id, _)) => table
+                    .indexes()
+                    .iter()
+                    .find(|index| index.id == *index_id)
+                    .is_some_and(|index| {
+                        leaf_index_order(table, index, columns).starts_with(wanted)
+                    }),
+                // `matchProperty`'s int-handle branch: `if len(prop.SortItems) !=
+                // 1 || pkCol == nil { return PropNotMatched }` and then the column
+                // itself. The table path stays a COSTED candidate when it matches,
+                // which is how an ordered index that is dearer than the ordered
+                // table read still loses -- `best.index?` below then reads the
+                // table path as "keep the whole-table scan already installed".
+                None => leaf_handle_order(table, columns).starts_with(wanted),
+            });
         }
-        None => {
-            if pin_trace {
-                eprintln!("[PINTRACE] leaf {visible} no-pin (free race)");
-            }
-            paths
-        }
+        crate::access_cost::choose_access_path(paths, stats, false, false)
     };
-    let best = crate::access_cost::choose_access_path(paths, stats, false, false)?;
+    // Rebuild the cached path before considering alternatives. An unavailable
+    // path or incompatible required order is a miss, not permission to use
+    // stale ranges or claim an order the selected source cannot deliver.
+    let pin = ctx.prepared_path_pin_for(visible);
+    let best = pin
+        .as_ref()
+        .and_then(|pin| choose(Some(pin)))
+        .or_else(|| choose(None))?;
     // Capture what just won, when this execution stores pins: the session
     // keeps the map as the statement's pins after it succeeds. The early
     // point-get arm above returns BEFORE this line on purpose -- a point
@@ -307,17 +277,22 @@ pub(crate) fn leaf_index_path(
         }
     }
     let Some((index_id, ranges)) = best.index else {
-        let residual_filters = where_clause.map_or_else(Vec::new, |predicate| {
-            crate::handle_range::build_handle_ranges(table, predicate, &ctx.session_zone())
-                .map(|built| built.residual.into_iter().cloned().collect())
-                .unwrap_or_else(|| {
+        let (ranges, residual_filters) = match best.table_ranges {
+            Some(built) => (
+                Some(built.ranges),
+                built.residual.into_iter().cloned().collect(),
+            ),
+            None => (
+                None,
+                where_clause.map_or_else(Vec::new, |predicate| {
                     let mut all = Vec::new();
                     crate::plan_trace::collect_and(predicate, &mut all);
                     all.into_iter().cloned().collect()
-                })
-        });
+                }),
+            ),
+        };
         return Some(LeafAccessPath::Table {
-            ranges: best.table_ranges,
+            ranges,
             estimate: best.estimate,
             residual_filters,
             // Keep the scan -> reader boundary intact. A parent aggregation
@@ -347,7 +322,6 @@ pub(crate) fn leaf_index_path(
         where_clause,
         &resolver,
     );
-    let num_ranges = ranges.len();
     Some(LeafAccessPath::Index(LeafIndexPath {
         index_id,
         ranges,
@@ -356,12 +330,10 @@ pub(crate) fn leaf_index_path(
         keep_order: wanted.is_some(),
         index_filter,
         residual_filters,
-        candidate: tidb_planner::candidate_cost::Candidate::Fixed {
-            rows: best.estimate.rows,
-            row_size,
-            cost: best.cost,
-            num_ranges,
-        },
+        // Preserve the same task boundary as the table arm. A covering
+        // index is a cop scan plus reader; collapsing it into one root cost
+        // hides the place where a parent can push a partial aggregate.
+        candidate: best.planner_candidate,
     }))
 }
 

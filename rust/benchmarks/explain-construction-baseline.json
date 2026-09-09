@@ -1,0 +1,1280 @@
+{
+  "status": "WIP: local prepared-query improvement; not live sysbench/TPC-C acceptance, Ready validation, or whole Go-package completion.",
+  "change": "Make physical display-name, condition and key formatting belong to the existing PlanTrace boundary across table scans, derived tables and joins. Preserve IndexJoin source, key, aggregation and null-filter setup independently of tracing. Correct an implicit real-cast construction gap exposed by broader prepared metadata tests without restoring recursive parent folding.",
+  "files": [
+    "rust/crates/tidb-executor/src/driver/from.rs",
+    "rust/crates/tidb-expr/src/rewriter.rs",
+    "rust/docs/prepared-plan-execplan.md"
+  ],
+  "base_commit": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "worktree": "Shared dirty hparser-integration preserved. No Git or remote mutations, permanent test changes, live services or workload dataset changes.",
+  "go_source": [
+    "pkg/executor/builder.go:2251 buildSelection consumes physical filters without explain formatting",
+    "pkg/executor/builder.go:3507 buildIndexLookUpJoin consumes physical keys and filters",
+    "pkg/executor/explain.go:163 generateExplainInfo invokes RenderResult",
+    "pkg/planner/core/operator/physicalop/physical_selection.go:120 ExplainInfo",
+    "pkg/planner/core/operator/physicalop/physical_index_join.go:147 ExplainInfoInternal owns printable keys and conditions",
+    "pkg/planner/core/operator/physicalop/physical_table_scan.go:450 ExplainInfo",
+    "pkg/expression/builtin_cast.go:2614 BuildCastFunctionWithCheck folds non-JSON casts normally",
+    "pkg/expression/builtin_cast.go:2703 WrapWithCastAsReal delegates to BuildCastFunction",
+    "pkg/expression/constant_fold.go:174 ordinary scalar folding inspects already-constructed arguments"
+  ],
+  "evidence_directory": "/private/tmp/tidb-trace-ownership.flFD9Q",
+  "source_note": "The tested and measured final implementation differs from current source only in two comment lines and line wrapping in the implicit-cast helper.",
+  "binaries": {
+    "before": "796e991f1d9997d5b77b39d2140e66ecaf26169f0b08741eda163c4675305c40",
+    "after": "0d096469ae54d67fa115a610fd1b8cff98920a91ace0cbace82df1f7b3d134e2",
+    "replay-before": "0d5b449aae674629a08e11d14b102b8236e411d30b08e3ef0fd2147b1fe1d8cb",
+    "replay-final": "992b27aebe7104428a7084e25e4171453dbf1b8f3103c08c9c12f5578d53e3af"
+  },
+  "validation": {
+    "profile": "WIP",
+    "builds": "All consolidated release builds pass, offline/locked with 12 jobs. Existing warnings remain.",
+    "executor": "376 passed, 7 failed, 1 ignored in driver:: and access_cost::.",
+    "expression": "164 passed in rewriter, simple_expr, constant, new_function, expr_util, builtin_arithmetic, builtin_compare, math and pow filters.",
+    "regression": {
+      "test": "driver::params::tests::prepared_typed_markers_match_go_result_metadata_on_type_changes",
+      "before": "Fails in initial expanded batch: POW(?,?) Double flags 128 versus expected 129. Passes on retained older 42a5b97ce3d3b987 and f0a604221494fd91 executor binaries. The prior removal of recursive descendant folding exposed an implicit real cast that never folded itself.",
+      "after": "Passes after folding the newly constructed implicit cast normally, as Go does. Existing prepared_rewriter_keeps_parameter_dependent_implicit_real_casts also passes changing arguments [2,3], [3,2], [5,0], yielding 8, 9, 1.",
+      "scope": "No test expectations weakened or tests removed; existing regression and original fixtures reused."
+    },
+    "known_failures": [
+      "driver::tests::aggregates::tpcc_condition_six_simplifies_and_pushes_through_derived_tables",
+      "driver::tests::point_get::residual_selection_uses_logical_rows_over_access_rows",
+      "driver::tests::predicate_pushdown::a_common_dnf_equality_is_a_hash_join_key",
+      "driver::tests::predicate_pushdown::a_join_leaf_dnf_selection_uses_loaded_column_statistics",
+      "driver::tests::subqueries::explaining_a_correlated_scalar_type_reads_no_storage",
+      "driver::tests::subqueries::tpcc_conditions_ten_and_twelve_decorrelate_scalar_sums",
+      "driver::tests::subqueries::tpch_q2_correlated_min_matches_recorded_hash_join_plan"
+    ],
+    "known_failure_evidence": "All seven are recorded in select-rewrite-ownership-baseline.json. Not freshly reproduced against the immediate pre-edit unit-test binary this increment.",
+    "fixtures": "21 complete report comparisons identical after elapsed-time normalization: 4955 matched, 141 existing divergences, 606 skips. Includes original EXPLAIN, join, aggregate, prepared, cast and builtin topics. Neither existing divergences nor skips count as parity.",
+    "fixture_reports": [
+      {
+        "topic": "agg_predicate_pushdown",
+        "matched": 17,
+        "diverged": 0,
+        "total": 17,
+        "report": "17 matched     0 diverged of    17 in     11ms  agg_predicate_pushdown  {\"PlanProperty\": 6, \"Rows\": 6, \"SideEffect\": 5} {}",
+        "normalized_sha256": "17ae12aea999842a7b56cbaac0d60dee3fff0dbebc5f898fef83d2e5b5d7b0a7"
+      },
+      {
+        "topic": "collation_pointget",
+        "matched": 100,
+        "diverged": 2,
+        "total": 105,
+        "report": "100 matched     2 diverged of   105 in      5ms  collation_pointget  {\"Rows\": 58, \"SideEffect\": 42} {\"BothRejected\": 3}",
+        "normalized_sha256": "5e646f6dc16be7556ae85eaabb89c5ad6e203cc7b568623ad1cce985d8a98ad7"
+      },
+      {
+        "topic": "common_collation",
+        "matched": 25,
+        "diverged": 0,
+        "total": 25,
+        "report": "25 matched     0 diverged of    25 in      3ms  common_collation  {\"Rows\": 11, \"SideEffect\": 14} {}",
+        "normalized_sha256": "7a3a7c7ca6ebfd4cea5d302523130bb1fe2efb9143c23282375c62bf982e3ab1"
+      },
+      {
+        "topic": "executor_aggregate",
+        "matched": 808,
+        "diverged": 20,
+        "total": 892,
+        "report": "808 matched    20 diverged of   892 in     78ms  executor/aggregate  {\"PlanProperty\": 4, \"Rows\": 356, \"SideEffect\": 448} {\"BothRejected\": 29, \"OutOfDomain\": 33, \"RecorderRewroteOutput(\\\"recorder rewrote the output by regex\\\")\": 2}",
+        "normalized_sha256": "8d538765d43dcabc534c13ccd072eec796d87962e6d3bfcbef5b94d7b12c2ea6"
+      },
+      {
+        "topic": "executor_delete",
+        "matched": 59,
+        "diverged": 3,
+        "total": 91,
+        "report": "59 matched     3 diverged of    91 in      8ms  executor/delete  {\"Rows\": 7, \"SideEffect\": 52} {\"BothRejected\": 6, \"OutOfDomain\": 3, \"RecorderRewroteOutput(\\\"recorded affected-rows info line\\\")\": 15, \"RecorderRewroteOutput(\\\"recorder rewrote the output by regex\\\")\": 5}",
+        "normalized_sha256": "ab7363ebfded007e6142fcd477f8a899a7c26a349cd8f6ff9fa8f6a65883c247"
+      },
+      {
+        "topic": "executor_prepared",
+        "matched": 188,
+        "diverged": 18,
+        "total": 220,
+        "report": "188 matched    18 diverged of   220 in   6025ms  executor/prepared  {\"Rows\": 41, \"SideEffect\": 147} {\"BothRejected\": 10, \"OutOfDomain\": 4}",
+        "normalized_sha256": "15a88944bce934ec82aa9161755073994d2582353ad043ebaa26e94ed6b1c2d3"
+      },
+      {
+        "topic": "executor_update",
+        "matched": 437,
+        "diverged": 14,
+        "total": 535,
+        "report": "437 matched    14 diverged of   535 in     26ms  executor/update  {\"Rows\": 104, \"SideEffect\": 333} {\"BothRejected\": 17, \"OutOfDomain\": 32, \"RecorderRewroteOutput(\\\"recorded affected-rows info line\\\")\": 35}",
+        "normalized_sha256": "a2f36558306941a046ee8aa09b463e664429cd41cbf9f402ca8fb2da671c009a"
+      },
+      {
+        "topic": "explain_complex",
+        "matched": 44,
+        "diverged": 0,
+        "total": 45,
+        "report": "44 matched     0 diverged of    45 in     20ms  explain_complex  {\"PlanProperty\": 10, \"Rows\": 1, \"SideEffect\": 33} {\"OutOfDomain\": 1}",
+        "normalized_sha256": "857cbd0778c3fe77144ef97b30fe4168e2576cb692704d3937a649a7b50870ea"
+      },
+      {
+        "topic": "explain_easy",
+        "matched": 171,
+        "diverged": 0,
+        "total": 190,
+        "report": "171 matched     0 diverged of   190 in     20ms  explain_easy  {\"PlanProperty\": 91, \"SideEffect\": 80} {\"OutOfDomain\": 12, \"PlanFormatNotComparable(\\\"EXPLAIN FORMAT is not a text operator tree\\\")\": 3, \"PlanWithoutProperty\": 4}",
+        "normalized_sha256": "7f64174e4777784a4bb9ed05741b322588de7dd5efb86653289ef2d6635f17a2"
+      },
+      {
+        "topic": "expression_builtin",
+        "matched": 1279,
+        "diverged": 12,
+        "total": 1390,
+        "report": "1279 matched    12 diverged of  1390 in   1317ms  expression/builtin  {\"Rows\": 803, \"SideEffect\": 476} {\"BothRejected\": 92, \"OutOfDomain\": 6, \"RecorderRewroteOutput(\\\"recorder rewrote the output by regex\\\")\": 1}",
+        "normalized_sha256": "fe2d7b43ca9b2245c4759ddbc659dc72711e1cce701c8ab4dc0f7d7eef838869"
+      },
+      {
+        "topic": "expression_cast",
+        "matched": 75,
+        "diverged": 3,
+        "total": 85,
+        "report": "75 matched     3 diverged of    85 in      6ms  expression/cast  {\"Rows\": 30, \"SideEffect\": 45} {\"BothRejected\": 6, \"PlanWithoutProperty\": 1}",
+        "normalized_sha256": "7c5ebeeed9ab45849fa2c97d7075228f950640a633e490937538c036b0c0930a"
+      },
+      {
+        "topic": "expression_charset_and_collation",
+        "matched": 673,
+        "diverged": 22,
+        "total": 733,
+        "report": "673 matched    22 diverged of   733 in     35ms  expression/charset_and_collation  {\"PlanProperty\": 16, \"Rows\": 378, \"SideEffect\": 279} {\"BothRejected\": 12, \"OutOfDomain\": 26}",
+        "normalized_sha256": "510bf2fced9b34bc2cc8514a40b0302295f9ef15e9dbb6eb13750ef0ed8c8e95"
+      },
+      {
+        "topic": "expression_constant_fold",
+        "matched": 16,
+        "diverged": 0,
+        "total": 16,
+        "report": "16 matched     0 diverged of    16 in      5ms  expression/constant_fold  {\"Rows\": 8, \"SideEffect\": 8} {}",
+        "normalized_sha256": "67e6576eaf40798a18c1e0778d60b54eae9b731b0b0cf51bdce1751a2c76f68f"
+      },
+      {
+        "topic": "expression_plan_cache",
+        "matched": 184,
+        "diverged": 0,
+        "total": 184,
+        "report": "184 matched     0 diverged of   184 in     18ms  expression/plan_cache  {\"Rows\": 55, \"SideEffect\": 129} {}",
+        "normalized_sha256": "7f393472866d9a1087957dbeb173458e7461ab79d31649da62748678b07bd4fe"
+      },
+      {
+        "topic": "index_join",
+        "matched": 20,
+        "diverged": 1,
+        "total": 21,
+        "report": "20 matched     1 diverged of    21 in      7ms  index_join  {\"PlanProperty\": 3, \"Rows\": 1, \"SideEffect\": 16} {}",
+        "normalized_sha256": "1e0e5b429f5fa5f0318b0c14a82495762771cbf9a07d7720c77e34ba50790b06"
+      },
+      {
+        "topic": "index_merge",
+        "matched": 62,
+        "diverged": 12,
+        "total": 165,
+        "report": "62 matched    12 diverged of   165 in     29ms  index_merge  {\"Rows\": 11, \"SideEffect\": 51} {\"OutOfDomain\": 91}",
+        "normalized_sha256": "d71ce05494760184733741c14a359c8db097d62d76ceb92d0e1d060ba110634f"
+      },
+      {
+        "topic": "planner_core_join_reorder_through_projection",
+        "matched": 332,
+        "diverged": 0,
+        "total": 346,
+        "report": "332 matched     0 diverged of   346 in    156ms  planner/core/join_reorder_through_projection  {\"PlanProperty\": 90, \"Rows\": 67, \"SideEffect\": 175} {\"OutOfDomain\": 10, \"RecorderRewroteOutput(\\\"recorder rewrote the output by regex\\\")\": 4}",
+        "normalized_sha256": "5cfb721028fba8620eaa15b47f2c2cb2178364c010be838958d6a74d4cab91cb"
+      },
+      {
+        "topic": "session_clustered_index",
+        "matched": 247,
+        "diverged": 9,
+        "total": 383,
+        "report": "247 matched     9 diverged of   383 in     19ms  session/clustered_index  {\"PlanProperty\": 3, \"Rows\": 67, \"SideEffect\": 177} {\"BothRejected\": 38, \"OutOfDomain\": 89}",
+        "normalized_sha256": "6079282e7040a9c53fd7dd62ee8f3284ea40a9168c417521e2d02ad229bb05a6"
+      },
+      {
+        "topic": "subquery",
+        "matched": 30,
+        "diverged": 0,
+        "total": 31,
+        "report": "30 matched     0 diverged of    31 in      6ms  subquery  {\"PlanProperty\": 5, \"Rows\": 2, \"SideEffect\": 23} {\"OutOfDomain\": 1}",
+        "normalized_sha256": "28ccca9011b807b9de6bc8f5111097a0b4f6a4d173b898b63c0c5d4df49d0af1"
+      },
+      {
+        "topic": "table_index",
+        "matched": 40,
+        "diverged": 0,
+        "total": 44,
+        "report": "40 matched     0 diverged of    44 in     13ms  table/index  {\"Rows\": 7, \"SideEffect\": 33} {\"BothRejected\": 4}",
+        "normalized_sha256": "5be165cc529e2ca5bc096600e5451164fbfcd5306c243a43c10c3f1ff742a92d"
+      },
+      {
+        "topic": "util_ranger",
+        "matched": 148,
+        "diverged": 25,
+        "total": 184,
+        "report": "148 matched    25 diverged of   184 in     23ms  util/ranger  {\"PlanProperty\": 32, \"Rows\": 61, \"SideEffect\": 55} {\"PlanWithoutProperty\": 11}",
+        "normalized_sha256": "046ab3b248f67780b268796e5299eeec43d8d9ab9f07aab9fbab952aa2f4d047"
+      }
+    ],
+    "not_verified": [
+      "Ready lint",
+      "Whole Go-package parity",
+      "Full native physical-plan cache integration",
+      "Fresh Go CPU profile",
+      "Live sysbench/TPC-C throughput",
+      "Host-wide quiescence"
+    ]
+  },
+  "profile": {
+    "method": "Instruments skill sample-quick.sh launches only the private benchmark, duration 8 seconds, 1ms interval, 200000 range operations. Both commands exit 0, captures complete. Run separately from builds/tests/timings.",
+    "before": "6137 main-thread samples; 244 samples under the physical column-name vector construction in build_from_inner.",
+    "after": "No physical_column_trace_name or physical_column_origin occurrences. The capture contains 5712 running main-thread samples and 427 other main-thread samples.",
+    "qualification": "Inclusive sample weights establish the removed call path, not an operation-normalized CPU saving."
+  },
+  "measurement": {
+    "scope": "Isolated Session with four in-process rows; real prepare_ast, bind_for_execution and run_bound_prepared. Unchanged source/manifest retained in type-metadata-sharing-baseline.json.",
+    "method": "Per-class adjacent before/after/after/before pairs; 100 warmups, five rounds per invocation, 1000000 operations per point round and 50000 for each other class. Builds, tests and profiles completed first.",
+    "acceptance": "Accept the observed local range/index/aggregate reductions in both invocation pairs. Point control is 1.26% lower without the changed table-construction path; no independent point improvement is claimed. Sort is 1.91% lower and retained as qualified evidence rather than an independent accepted win. No host-wide quiescence guarantee and no live-workload claim. Compare paired binaries only, not absolute timings across historical records.",
+    "accepted_local_query_classes": [
+      "range",
+      "index",
+      "aggregate"
+    ],
+    "runs": [
+      {
+        "stage": "before",
+        "kind": "point",
+        "results": [
+          "RESULT point Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "point",
+            "round": 0,
+            "ns": 1553727667,
+            "count": 1000000
+          },
+          {
+            "kind": "point",
+            "round": 1,
+            "ns": 1544078792,
+            "count": 1000000
+          },
+          {
+            "kind": "point",
+            "round": 2,
+            "ns": 1541050958,
+            "count": 1000000
+          },
+          {
+            "kind": "point",
+            "round": 3,
+            "ns": 1571449500,
+            "count": 1000000
+          },
+          {
+            "kind": "point",
+            "round": 4,
+            "ns": 1555595500,
+            "count": 1000000
+          }
+        ]
+      },
+      {
+        "stage": "after",
+        "kind": "point",
+        "results": [
+          "RESULT point Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "point",
+            "round": 0,
+            "ns": 1534476458,
+            "count": 1000000
+          },
+          {
+            "kind": "point",
+            "round": 1,
+            "ns": 1535539416,
+            "count": 1000000
+          },
+          {
+            "kind": "point",
+            "round": 2,
+            "ns": 1577188750,
+            "count": 1000000
+          },
+          {
+            "kind": "point",
+            "round": 3,
+            "ns": 1562828000,
+            "count": 1000000
+          },
+          {
+            "kind": "point",
+            "round": 4,
+            "ns": 1540671000,
+            "count": 1000000
+          }
+        ]
+      },
+      {
+        "stage": "after",
+        "kind": "point",
+        "results": [
+          "RESULT point Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "point",
+            "round": 0,
+            "ns": 1534633167,
+            "count": 1000000
+          },
+          {
+            "kind": "point",
+            "round": 1,
+            "ns": 1533003458,
+            "count": 1000000
+          },
+          {
+            "kind": "point",
+            "round": 2,
+            "ns": 1526930500,
+            "count": 1000000
+          },
+          {
+            "kind": "point",
+            "round": 3,
+            "ns": 1524430459,
+            "count": 1000000
+          },
+          {
+            "kind": "point",
+            "round": 4,
+            "ns": 1574224459,
+            "count": 1000000
+          }
+        ]
+      },
+      {
+        "stage": "before",
+        "kind": "point",
+        "results": [
+          "RESULT point Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "point",
+            "round": 0,
+            "ns": 1552929500,
+            "count": 1000000
+          },
+          {
+            "kind": "point",
+            "round": 1,
+            "ns": 1565057709,
+            "count": 1000000
+          },
+          {
+            "kind": "point",
+            "round": 2,
+            "ns": 1558891000,
+            "count": 1000000
+          },
+          {
+            "kind": "point",
+            "round": 3,
+            "ns": 1583907625,
+            "count": 1000000
+          },
+          {
+            "kind": "point",
+            "round": 4,
+            "ns": 1539287042,
+            "count": 1000000
+          }
+        ]
+      },
+      {
+        "stage": "before",
+        "kind": "range",
+        "results": [
+          "RESULT range Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "range",
+            "round": 0,
+            "ns": 1956174917,
+            "count": 50000
+          },
+          {
+            "kind": "range",
+            "round": 1,
+            "ns": 1943889083,
+            "count": 50000
+          },
+          {
+            "kind": "range",
+            "round": 2,
+            "ns": 1968193417,
+            "count": 50000
+          },
+          {
+            "kind": "range",
+            "round": 3,
+            "ns": 1945998792,
+            "count": 50000
+          },
+          {
+            "kind": "range",
+            "round": 4,
+            "ns": 1949588709,
+            "count": 50000
+          }
+        ]
+      },
+      {
+        "stage": "after",
+        "kind": "range",
+        "results": [
+          "RESULT range Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "range",
+            "round": 0,
+            "ns": 1862932416,
+            "count": 50000
+          },
+          {
+            "kind": "range",
+            "round": 1,
+            "ns": 1882745542,
+            "count": 50000
+          },
+          {
+            "kind": "range",
+            "round": 2,
+            "ns": 1863126917,
+            "count": 50000
+          },
+          {
+            "kind": "range",
+            "round": 3,
+            "ns": 1869600417,
+            "count": 50000
+          },
+          {
+            "kind": "range",
+            "round": 4,
+            "ns": 1880070709,
+            "count": 50000
+          }
+        ]
+      },
+      {
+        "stage": "after",
+        "kind": "range",
+        "results": [
+          "RESULT range Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "range",
+            "round": 0,
+            "ns": 1885140417,
+            "count": 50000
+          },
+          {
+            "kind": "range",
+            "round": 1,
+            "ns": 1872453042,
+            "count": 50000
+          },
+          {
+            "kind": "range",
+            "round": 2,
+            "ns": 1872794542,
+            "count": 50000
+          },
+          {
+            "kind": "range",
+            "round": 3,
+            "ns": 1872192458,
+            "count": 50000
+          },
+          {
+            "kind": "range",
+            "round": 4,
+            "ns": 1882506833,
+            "count": 50000
+          }
+        ]
+      },
+      {
+        "stage": "before",
+        "kind": "range",
+        "results": [
+          "RESULT range Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "range",
+            "round": 0,
+            "ns": 1944668542,
+            "count": 50000
+          },
+          {
+            "kind": "range",
+            "round": 1,
+            "ns": 1928759625,
+            "count": 50000
+          },
+          {
+            "kind": "range",
+            "round": 2,
+            "ns": 1933148875,
+            "count": 50000
+          },
+          {
+            "kind": "range",
+            "round": 3,
+            "ns": 1946549166,
+            "count": 50000
+          },
+          {
+            "kind": "range",
+            "round": 4,
+            "ns": 1941656792,
+            "count": 50000
+          }
+        ]
+      },
+      {
+        "stage": "before",
+        "kind": "index",
+        "results": [
+          "RESULT index Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "index",
+            "round": 0,
+            "ns": 3063213625,
+            "count": 50000
+          },
+          {
+            "kind": "index",
+            "round": 1,
+            "ns": 3042077417,
+            "count": 50000
+          },
+          {
+            "kind": "index",
+            "round": 2,
+            "ns": 3058488834,
+            "count": 50000
+          },
+          {
+            "kind": "index",
+            "round": 3,
+            "ns": 3055211208,
+            "count": 50000
+          },
+          {
+            "kind": "index",
+            "round": 4,
+            "ns": 3087764833,
+            "count": 50000
+          }
+        ]
+      },
+      {
+        "stage": "after",
+        "kind": "index",
+        "results": [
+          "RESULT index Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "index",
+            "round": 0,
+            "ns": 3014200750,
+            "count": 50000
+          },
+          {
+            "kind": "index",
+            "round": 1,
+            "ns": 2999556875,
+            "count": 50000
+          },
+          {
+            "kind": "index",
+            "round": 2,
+            "ns": 2979460000,
+            "count": 50000
+          },
+          {
+            "kind": "index",
+            "round": 3,
+            "ns": 2972746458,
+            "count": 50000
+          },
+          {
+            "kind": "index",
+            "round": 4,
+            "ns": 2987623708,
+            "count": 50000
+          }
+        ]
+      },
+      {
+        "stage": "after",
+        "kind": "index",
+        "results": [
+          "RESULT index Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "index",
+            "round": 0,
+            "ns": 2978350334,
+            "count": 50000
+          },
+          {
+            "kind": "index",
+            "round": 1,
+            "ns": 2993880458,
+            "count": 50000
+          },
+          {
+            "kind": "index",
+            "round": 2,
+            "ns": 2978650916,
+            "count": 50000
+          },
+          {
+            "kind": "index",
+            "round": 3,
+            "ns": 2972665375,
+            "count": 50000
+          },
+          {
+            "kind": "index",
+            "round": 4,
+            "ns": 3014104500,
+            "count": 50000
+          }
+        ]
+      },
+      {
+        "stage": "before",
+        "kind": "index",
+        "results": [
+          "RESULT index Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "index",
+            "round": 0,
+            "ns": 3059190917,
+            "count": 50000
+          },
+          {
+            "kind": "index",
+            "round": 1,
+            "ns": 3058809583,
+            "count": 50000
+          },
+          {
+            "kind": "index",
+            "round": 2,
+            "ns": 3052561708,
+            "count": 50000
+          },
+          {
+            "kind": "index",
+            "round": 3,
+            "ns": 3068831458,
+            "count": 50000
+          },
+          {
+            "kind": "index",
+            "round": 4,
+            "ns": 3048847083,
+            "count": 50000
+          }
+        ]
+      },
+      {
+        "stage": "before",
+        "kind": "aggregate",
+        "results": [
+          "RESULT aggregate Rows { columns: [(\"sum(k)\", FieldType { code: NewDecimal, flags: 128, flen: 41, decimal: 0, collation: Binary, charset_name: \"binary\", collation_name: \"binary\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[Decimal(Decimal { negative: false, digits: DecimalDigits([51, 54]), scale: 0, storage_scale: 0, declared_shape: Some((41, 0)) })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "aggregate",
+            "round": 0,
+            "ns": 2917582209,
+            "count": 50000
+          },
+          {
+            "kind": "aggregate",
+            "round": 1,
+            "ns": 2949328667,
+            "count": 50000
+          },
+          {
+            "kind": "aggregate",
+            "round": 2,
+            "ns": 2938489834,
+            "count": 50000
+          },
+          {
+            "kind": "aggregate",
+            "round": 3,
+            "ns": 2942913416,
+            "count": 50000
+          },
+          {
+            "kind": "aggregate",
+            "round": 4,
+            "ns": 2938210500,
+            "count": 50000
+          }
+        ]
+      },
+      {
+        "stage": "after",
+        "kind": "aggregate",
+        "results": [
+          "RESULT aggregate Rows { columns: [(\"sum(k)\", FieldType { code: NewDecimal, flags: 128, flen: 41, decimal: 0, collation: Binary, charset_name: \"binary\", collation_name: \"binary\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[Decimal(Decimal { negative: false, digits: DecimalDigits([51, 54]), scale: 0, storage_scale: 0, declared_shape: Some((41, 0)) })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "aggregate",
+            "round": 0,
+            "ns": 2859139208,
+            "count": 50000
+          },
+          {
+            "kind": "aggregate",
+            "round": 1,
+            "ns": 2886396084,
+            "count": 50000
+          },
+          {
+            "kind": "aggregate",
+            "round": 2,
+            "ns": 2880799666,
+            "count": 50000
+          },
+          {
+            "kind": "aggregate",
+            "round": 3,
+            "ns": 2865170500,
+            "count": 50000
+          },
+          {
+            "kind": "aggregate",
+            "round": 4,
+            "ns": 2854795583,
+            "count": 50000
+          }
+        ]
+      },
+      {
+        "stage": "after",
+        "kind": "aggregate",
+        "results": [
+          "RESULT aggregate Rows { columns: [(\"sum(k)\", FieldType { code: NewDecimal, flags: 128, flen: 41, decimal: 0, collation: Binary, charset_name: \"binary\", collation_name: \"binary\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[Decimal(Decimal { negative: false, digits: DecimalDigits([51, 54]), scale: 0, storage_scale: 0, declared_shape: Some((41, 0)) })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "aggregate",
+            "round": 0,
+            "ns": 2894004917,
+            "count": 50000
+          },
+          {
+            "kind": "aggregate",
+            "round": 1,
+            "ns": 2849600375,
+            "count": 50000
+          },
+          {
+            "kind": "aggregate",
+            "round": 2,
+            "ns": 2844655125,
+            "count": 50000
+          },
+          {
+            "kind": "aggregate",
+            "round": 3,
+            "ns": 2873527042,
+            "count": 50000
+          },
+          {
+            "kind": "aggregate",
+            "round": 4,
+            "ns": 2872720791,
+            "count": 50000
+          }
+        ]
+      },
+      {
+        "stage": "before",
+        "kind": "aggregate",
+        "results": [
+          "RESULT aggregate Rows { columns: [(\"sum(k)\", FieldType { code: NewDecimal, flags: 128, flen: 41, decimal: 0, collation: Binary, charset_name: \"binary\", collation_name: \"binary\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[Decimal(Decimal { negative: false, digits: DecimalDigits([51, 54]), scale: 0, storage_scale: 0, declared_shape: Some((41, 0)) })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "aggregate",
+            "round": 0,
+            "ns": 2959236708,
+            "count": 50000
+          },
+          {
+            "kind": "aggregate",
+            "round": 1,
+            "ns": 2910092166,
+            "count": 50000
+          },
+          {
+            "kind": "aggregate",
+            "round": 2,
+            "ns": 2931613584,
+            "count": 50000
+          },
+          {
+            "kind": "aggregate",
+            "round": 3,
+            "ns": 2964338667,
+            "count": 50000
+          },
+          {
+            "kind": "aggregate",
+            "round": 4,
+            "ns": 2975566000,
+            "count": 50000
+          }
+        ]
+      },
+      {
+        "stage": "before",
+        "kind": "sort",
+        "results": [
+          "RESULT sort Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "sort",
+            "round": 0,
+            "ns": 2698059208,
+            "count": 50000
+          },
+          {
+            "kind": "sort",
+            "round": 1,
+            "ns": 2701841000,
+            "count": 50000
+          },
+          {
+            "kind": "sort",
+            "round": 2,
+            "ns": 2687414083,
+            "count": 50000
+          },
+          {
+            "kind": "sort",
+            "round": 3,
+            "ns": 2721423125,
+            "count": 50000
+          },
+          {
+            "kind": "sort",
+            "round": 4,
+            "ns": 2691976750,
+            "count": 50000
+          }
+        ]
+      },
+      {
+        "stage": "after",
+        "kind": "sort",
+        "results": [
+          "RESULT sort Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "sort",
+            "round": 0,
+            "ns": 2621049958,
+            "count": 50000
+          },
+          {
+            "kind": "sort",
+            "round": 1,
+            "ns": 2635217875,
+            "count": 50000
+          },
+          {
+            "kind": "sort",
+            "round": 2,
+            "ns": 2634559458,
+            "count": 50000
+          },
+          {
+            "kind": "sort",
+            "round": 3,
+            "ns": 2654405375,
+            "count": 50000
+          },
+          {
+            "kind": "sort",
+            "round": 4,
+            "ns": 2667051208,
+            "count": 50000
+          }
+        ]
+      },
+      {
+        "stage": "after",
+        "kind": "sort",
+        "results": [
+          "RESULT sort Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "sort",
+            "round": 0,
+            "ns": 2641884708,
+            "count": 50000
+          },
+          {
+            "kind": "sort",
+            "round": 1,
+            "ns": 2636281042,
+            "count": 50000
+          },
+          {
+            "kind": "sort",
+            "round": 2,
+            "ns": 2640101625,
+            "count": 50000
+          },
+          {
+            "kind": "sort",
+            "round": 3,
+            "ns": 2641978875,
+            "count": 50000
+          },
+          {
+            "kind": "sort",
+            "round": 4,
+            "ns": 2615490125,
+            "count": 50000
+          }
+        ]
+      },
+      {
+        "stage": "before",
+        "kind": "sort",
+        "results": [
+          "RESULT sort Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n"
+        ],
+        "times": [
+          {
+            "kind": "sort",
+            "round": 0,
+            "ns": 2696928166,
+            "count": 50000
+          },
+          {
+            "kind": "sort",
+            "round": 1,
+            "ns": 2681178917,
+            "count": 50000
+          },
+          {
+            "kind": "sort",
+            "round": 2,
+            "ns": 2683143708,
+            "count": 50000
+          },
+          {
+            "kind": "sort",
+            "round": 3,
+            "ns": 2685186250,
+            "count": 50000
+          },
+          {
+            "kind": "sort",
+            "round": 4,
+            "ns": 2680691250,
+            "count": 50000
+          }
+        ]
+      }
+    ],
+    "summary": {
+      "point": {
+        "before_ns": 1554.6615835,
+        "after_ns": 1535.0862915,
+        "change_percent": -1.2591352489671914,
+        "per_run_medians": [
+          [
+            1553.727667,
+            1558.891
+          ],
+          [
+            1540.671,
+            1533.003458
+          ]
+        ],
+        "values": [
+          [
+            [
+              1541.050958,
+              1544.078792,
+              1553.727667,
+              1555.5955,
+              1571.4495
+            ],
+            [
+              1539.287042,
+              1552.9295,
+              1558.891,
+              1565.057709,
+              1583.907625
+            ]
+          ],
+          [
+            [
+              1534.476458,
+              1535.539416,
+              1540.671,
+              1562.828,
+              1577.18875
+            ],
+            [
+              1524.430459,
+              1526.9305,
+              1533.003458,
+              1534.633167,
+              1574.224459
+            ]
+          ]
+        ]
+      },
+      "range": {
+        "before_ns": 38906.67334,
+        "after_ns": 37452.47584,
+        "change_percent": -3.7376557160052504,
+        "per_run_medians": [
+          [
+            38991.77418,
+            38833.13584
+          ],
+          [
+            37392.00834,
+            37455.89084
+          ]
+        ],
+        "values": [
+          [
+            [
+              38877.78166,
+              38919.97584,
+              38991.77418,
+              39123.49834,
+              39363.86834
+            ],
+            [
+              38575.1925,
+              38662.9775,
+              38833.13584,
+              38893.37084,
+              38930.98332
+            ]
+          ],
+          [
+            [
+              37258.64832,
+              37262.53834,
+              37392.00834,
+              37601.41418,
+              37654.91084
+            ],
+            [
+              37443.84916,
+              37449.06084,
+              37455.89084,
+              37650.13666,
+              37702.80834
+            ]
+          ]
+        ]
+      },
+      "index": {
+        "before_ns": 61172.984169999996,
+        "after_ns": 59670.83708,
+        "change_percent": -2.455572685199603,
+        "per_run_medians": [
+          [
+            61169.77668,
+            61176.19166
+          ],
+          [
+            59752.47416,
+            59573.01832
+          ]
+        ],
+        "values": [
+          [
+            [
+              60841.54834,
+              61104.22416,
+              61169.77668,
+              61264.2725,
+              61755.29666
+            ],
+            [
+              60976.94166,
+              61051.23416,
+              61176.19166,
+              61183.81834,
+              61376.62916
+            ]
+          ],
+          [
+            [
+              59454.92916,
+              59589.2,
+              59752.47416,
+              59991.1375,
+              60284.015
+            ],
+            [
+              59453.3075,
+              59567.00668,
+              59573.01832,
+              59877.60916,
+              60282.09
+            ]
+          ]
+        ]
+      },
+      "aggregate": {
+        "before_ns": 58814.0325,
+        "after_ns": 57378.91291,
+        "change_percent": -2.44009725060087,
+        "per_run_medians": [
+          [
+            58769.79668,
+            59184.73416
+          ],
+          [
+            57303.41,
+            57454.41582
+          ]
+        ],
+        "values": [
+          [
+            [
+              58351.64418,
+              58764.21,
+              58769.79668,
+              58858.26832,
+              58986.57334
+            ],
+            [
+              58201.84332,
+              58632.27168,
+              59184.73416,
+              59286.77334,
+              59511.32
+            ]
+          ],
+          [
+            [
+              57095.91166,
+              57182.78416,
+              57303.41,
+              57615.99332,
+              57727.92168
+            ],
+            [
+              56893.1025,
+              56992.0075,
+              57454.41582,
+              57470.54084,
+              57880.09834
+            ]
+          ]
+        ]
+      },
+      "sort": {
+        "before_ns": 53793.908330000006,
+        "after_ns": 52763.82667,
+        "change_percent": -1.914866742310195,
+        "per_run_medians": [
+          [
+            53961.18416,
+            53662.87416
+          ],
+          [
+            52704.3575,
+            52802.0325
+          ]
+        ],
+        "values": [
+          [
+            [
+              53748.28166,
+              53839.535,
+              53961.18416,
+              54036.82,
+              54428.4625
+            ],
+            [
+              53613.825,
+              53623.57834,
+              53662.87416,
+              53703.725,
+              53938.56332
+            ]
+          ],
+          [
+            [
+              52420.99916,
+              52691.18916,
+              52704.3575,
+              53088.1075,
+              53341.02416
+            ],
+            [
+              52309.8025,
+              52725.62084,
+              52802.0325,
+              52837.69416,
+              52839.5775
+            ]
+          ]
+        ]
+      }
+    }
+  },
+  "reproduction": {
+    "timing_script": "require 'json'\nroot = File.dirname(__FILE__)\nruns = []\n%w[point range index aggregate sort].each do |kind|\n  count = kind == 'point' ? 1000000 : 50000\n  expected = nil\n  %w[before after after before].each_with_index do |stage, i|\n    path = \"#{root}/paired-#{kind}-#{i}-#{stage}.log\"\n    abort \"benchmark #{stage} #{kind}\" unless system(\"#{root}/#{stage}\", count.to_s, kind, out: path, err: [:child, :out])\n    lines = File.readlines(path)\n    results = lines.grep(/^RESULT /)\n    abort 'row or metadata mismatch' if expected && results != expected\n    expected = results\n    times = lines.grep(/^TIME /).map { |line| _, k, round, ns, n = line.split; {kind: k, round: round.to_i, ns: ns.to_i, count: n.to_i} }\n    runs << {stage: stage, kind: kind, results: results, times: times}\n  end\nend\nsummary = {}\n%w[point range index aggregate sort].each do |kind|\n  grouped = %w[before after].map { |stage| runs.select { |r| r[:stage] == stage && r[:kind] == kind }.map { |r| r[:times].map { |t| t[:ns].to_f / t[:count] }.sort } }\n  med = grouped.map { |g| a = g.flatten.sort; (a[4] + a[5]) / 2 }\n  summary[kind] = {before_ns: med[0], after_ns: med[1], change_percent: (med[1] / med[0] - 1) * 100, per_run_medians: grouped.map { |g| g.map { |a| a[2] } }, values: grouped}\nend\nputs JSON.pretty_generate({runs: runs, summary: summary})\n",
+    "fixture_script": "require 'json'\nroot = File.dirname(__FILE__)\ntopics = %w[table/index explain_easy explain_complex util/ranger index_join index_merge executor/aggregate session/clustered_index executor/prepared expression/charset_and_collation common_collation collation_pointget subquery planner/core/join_reorder_through_projection executor/update executor/delete expression/constant_fold expression/builtin expression/cast expression/plan_cache agg_predicate_pushdown]\nstage, binary = ARGV\nnormalize = ->(text) { text.gsub(/in\\s+\\d+ms/, 'in TIME').gsub(/finished in [0-9.]+s/, 'finished in TIME') }\ntopics.each do |topic|\n  path = \"#{root}/#{stage}-#{topic.tr('/', '_')}.log\"\n  abort topic unless system({'INTEGRATION_TOPIC' => topic, 'INTEGRATION_SHOW_DIVERGENCES' => '1'}, binary, '--ignored', '--nocapture', 'replay_one_topic_from_env', '--test-threads=12', out: path, err: [:child, :out])\n  if stage == 'after'\n    before = normalize.call(File.read(path.sub('/after-', '/before-')))\n    after = normalize.call(File.read(path))\n    unless before == after\n      old = before.lines\n      new = after.lines\n      differences = old.zip(new).each_with_index.filter_map { |(a, b), n| {line: n + 1, before: a&.slice(0, 300), after: b&.slice(0, 300)} if a != b }\n      puts JSON.generate({topic: topic, differences: differences.take(10), before_lines: old.length, after_lines: new.length})\n      abort \"different #{topic}\"\n    end\n    puts \"IDENTICAL #{topic}\"\n  end\nend\n"
+  }
+}

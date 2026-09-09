@@ -1,0 +1,230 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-08",
+  "purpose": "Correctness repair and read-only throughput guard; not an accepted performance win.",
+  "change": "Use one conservative single-table column demand for physical scan pruning and ordinary covering-index costing, including the retained row column; apply the pruning offer once.",
+  "servers": {
+    "go": {
+      "port": 45000,
+      "revision": "23bff313186b8ceb61fcbe9faac43ae700e7fb14"
+    },
+    "before": {
+      "pid": 70316,
+      "port": 53063,
+      "sha256": "70bbdebd0b13d36b65d1c536ca3d4ca585a05040bf8f759c99d6882d870d8661"
+    },
+    "after": {
+      "pid": 82651,
+      "port": 53064,
+      "sha256": "86f4dcb64137fd369f2b5e8403b6c6586bd3c186eba54444e485076672a613b8"
+    },
+    "manifest": "/private/tmp/tidb-batching-candidate-cgedac7b/manifest.json",
+    "final_workspace_binary_matches_candidate": true
+  },
+  "fixture": {
+    "database": "perf_sysbench_locking_v2",
+    "table": "sbtest1",
+    "count": 100013,
+    "sum_k": 5011271921,
+    "reset": false,
+    "persistent_benchmark_writes": false
+  },
+  "timing": {
+    "command": "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-cgedac7b/manifest.json --output /private/tmp/tidb-scan-demand-readonly-pairs --case read_only --pair-only --pair-threads 1 8 32",
+    "raw_results": "/private/tmp/tidb-scan-demand-readonly-pairs/results.json",
+    "method": "Three alternating pairs at each concurrency; unmodified sysbench oltp_read_only.lua, fixed seed, prepared protocol, no concurrent build or profiling. Raw records retain exact sysbench commands, CPU deltas and TiKV counters.",
+    "zero_writes_errors_reconnects": true,
+    "results": [
+      {
+        "clients": 1,
+        "before": {
+          "median_tps": 447.15,
+          "sql_cpu_ms_per_transaction": 1.2333333333333343,
+          "tikv_cpu_ms_per_transaction": 1.0533333333332848
+        },
+        "after": {
+          "median_tps": 448.17,
+          "sql_cpu_ms_per_transaction": 1.2266666666666666,
+          "tikv_cpu_ms_per_transaction": 1.046666666667079
+        },
+        "tps_delta_percent": 0.22811137202281007,
+        "sql_cpu_delta_percent": -0.5405405405406238,
+        "tikv_cpu_delta_percent": -0.6329113923613461,
+        "pairs": [
+          {
+            "before": "0-1-before",
+            "after": "0-1-after",
+            "tps_delta_percent": -0.7522968354711224
+          },
+          {
+            "before": "1-1-before",
+            "after": "1-1-after",
+            "tps_delta_percent": 0.22811137202281007
+          },
+          {
+            "before": "2-1-before",
+            "after": "2-1-after",
+            "tps_delta_percent": 0.3693092797349973
+          }
+        ]
+      },
+      {
+        "clients": 8,
+        "before": {
+          "median_tps": 2074.29,
+          "sql_cpu_ms_per_transaction": 2.0524999999999998,
+          "tikv_cpu_ms_per_transaction": 1.8350000000000364
+        },
+        "after": {
+          "median_tps": 2077.72,
+          "sql_cpu_ms_per_transaction": 2.0583333333333336,
+          "tikv_cpu_ms_per_transaction": 1.8158333333332546
+        },
+        "tps_delta_percent": 0.16535778507345,
+        "sql_cpu_delta_percent": 0.2842062525375777,
+        "tikv_cpu_delta_percent": -1.0445049954649233,
+        "pairs": [
+          {
+            "before": "3-8-before",
+            "after": "3-8-after",
+            "tps_delta_percent": 0.6893925150292413
+          },
+          {
+            "before": "4-8-before",
+            "after": "4-8-after",
+            "tps_delta_percent": -0.29602630487816084
+          },
+          {
+            "before": "5-8-before",
+            "after": "5-8-after",
+            "tps_delta_percent": 0.02744144621233957
+          }
+        ]
+      },
+      {
+        "clients": 32,
+        "before": {
+          "median_tps": 3367.54,
+          "sql_cpu_ms_per_transaction": 2.0749999999999993,
+          "tikv_cpu_ms_per_transaction": 1.6670833333333424
+        },
+        "after": {
+          "median_tps": 3365.32,
+          "sql_cpu_ms_per_transaction": 2.068749999999999,
+          "tikv_cpu_ms_per_transaction": 1.6712500000000243
+        },
+        "tps_delta_percent": -0.06592349311366208,
+        "sql_cpu_delta_percent": -0.3012048192771122,
+        "tikv_cpu_delta_percent": 0.24993751562201183,
+        "pairs": [
+          {
+            "before": "6-32-before",
+            "after": "6-32-after",
+            "tps_delta_percent": -0.8330411157505768
+          },
+          {
+            "before": "7-32-before",
+            "after": "7-32-after",
+            "tps_delta_percent": 0.26696045184320116
+          },
+          {
+            "before": "8-32-before",
+            "after": "8-32-after",
+            "tps_delta_percent": -0.01039911815478023
+          }
+        ]
+      }
+    ],
+    "interpretation": "Median TPS is essentially flat, with mixed pair directions at every concurrency. These short trials establish no general speedup and do not resolve high-concurrency or mixed-write performance."
+  },
+  "validation": {
+    "profile": "Ready checks executed; the broad driver suite remains red on six independently reproduced pre-existing failures.",
+    "commands": [
+      {
+        "cwd": "rust",
+        "command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib driver::",
+        "passed": 345,
+        "failed": 6,
+        "ignored": 1,
+        "log": "/private/tmp/tidb-scan-demand-driver-verified.log"
+      },
+      {
+        "cwd": "rust",
+        "command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib access_cost::",
+        "passed": 23,
+        "failed": 0,
+        "log": "/private/tmp/tidb-scan-demand-cost.log"
+      },
+      {
+        "cwd": "rust",
+        "command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib remote_cursor_tests::",
+        "passed": 15,
+        "failed": 0,
+        "log": "/private/tmp/tidb-scan-demand-remote.log"
+      },
+      {
+        "cwd": "rust",
+        "command": "cargo test --offline --locked --release -j12 -p tidb-session --lib tests_window::",
+        "passed": 43,
+        "failed": 0,
+        "log": "/private/tmp/tidb-scan-demand-windows-verified.log"
+      },
+      {
+        "cwd": "rust",
+        "command": "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+        "exit_code": 0,
+        "log": "/private/tmp/tidb-scan-demand-build-verified.log"
+      },
+      {
+        "cwd": ".",
+        "command": "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+        "exit_code": 0,
+        "log": "/private/tmp/tidb-scan-demand-lint-verified.log"
+      }
+    ],
+    "red_regressions": "/private/tmp/tidb-scan-demand-red.log",
+    "driver_negative_control": "/private/tmp/tidb-scan-demand-driver-control.log",
+    "negative_control_results": {
+      "passed": 343,
+      "failed": 8,
+      "ignored": 1,
+      "note": "Temporarily restored the exact old pruning/costing bodies; all final code restored afterward. All six surviving normalized failure bodies are identical; only the two new regressions disappear."
+    },
+    "known_failures": [
+      "driver::tests::aggregates::tpcc_condition_six_simplifies_and_pushes_through_derived_tables",
+      "driver::tests::point_get::residual_selection_uses_logical_rows_over_access_rows",
+      "driver::tests::predicate_pushdown::a_common_dnf_equality_is_a_hash_join_key",
+      "driver::tests::predicate_pushdown::a_join_leaf_dnf_selection_uses_loaded_column_statistics",
+      "driver::tests::subqueries::explaining_a_correlated_scalar_type_reads_no_storage",
+      "driver::tests::subqueries::tpcc_conditions_ten_and_twelve_decorrelate_scalar_sums"
+    ],
+    "live": {
+      "candidate_comparisons": 60,
+      "all_match_go_before_and_after_timing": true,
+      "control_covering_index_failures": 4,
+      "candidate_still_uses_covering_readers": true,
+      "artifacts": [
+        "/private/tmp/tidb-scan-demand-window-results.json",
+        "/private/tmp/tidb-scan-demand-window-post-results.json",
+        "/private/tmp/tidb-scan-demand-projection-results.json",
+        "/private/tmp/tidb-scan-demand-projection-post-results.json",
+        "/private/tmp/tidb-scan-demand-prepared-results.json",
+        "/private/tmp/tidb-scan-demand-prepared-post-results.json",
+        "/private/tmp/tidb-scan-demand-standard-results.json",
+        "/private/tmp/tidb-scan-demand-standard-post-results.json",
+        "/private/tmp/tidb-scan-demand-aggregate-results.json",
+        "/private/tmp/tidb-scan-demand-aggregate-post-results.json",
+        "/private/tmp/tidb-scan-demand-consumer-results.json",
+        "/private/tmp/tidb-scan-demand-consumer-post-results.json"
+      ],
+      "exact_commands": "rust/docs/transport-batching-execplan.md"
+    }
+  },
+  "limitations": [
+    "No new CPU profile in this increment.",
+    "No mixed-write TPC-C authorization or measurement.",
+    "Named-window and locking shapes can retain a conservative full-width schema; output alias collisions can retain extra columns.",
+    "Full package/workspace correctness remains unproven; existing test expectations were not changed.",
+    "No commit or push in this increment."
+  ]
+}

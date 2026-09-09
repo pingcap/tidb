@@ -57,10 +57,8 @@ pub struct ParamMarkerValue {
 /// ordinary literal, which is what lets a non-cached statement optimize
 /// against the actual value.
 ///
-/// `// boundary:` Go calls `types.InferParamTypeFromDatum(&v.Datum, tp)` to
-/// derive the result type. That inference is not in `tidb-datatype` yet, so
-/// the inferred type is a parameter here rather than a guess; passing `None`
-/// reproduces Go's starting point, `types.NewFieldType(mysql.TypeUnspecified)`.
+/// The optional type is a caller's already-resolved type; otherwise use Go's
+/// `InferParamTypeFromDatum`, including its parameter-specific width rules.
 #[must_use]
 pub fn param_marker_expression(
     v: &ParamMarkerValue,
@@ -68,7 +66,8 @@ pub fn param_marker_expression(
     need_param: bool,
     inferred_type: Option<FieldType>,
 ) -> Constant {
-    let field_type = inferred_type.unwrap_or_else(|| FieldType::new(FieldTypeCode::Unspecified));
+    let field_type =
+        inferred_type.unwrap_or_else(|| tidb_datatype::infer_param_type_from_datum(&v.datum));
     let mut constant = Constant::new(v.datum.clone(), field_type);
     if use_cache || need_param {
         constant.param_marker = Some(ParamMarker { order: v.order });

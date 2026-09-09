@@ -1,0 +1,173 @@
+{
+  "status": "WIP: 34 scoped tests, live Go comparisons and all postchecks pass. Sysbench +1.55% has two slower pairs; TPC-C two/eight-client -8.70%/-1.69% has all pairs slower. PING diagnostic directions are mixed. Separate profiling and repeated postchecks are complete. No workload improvement or readiness claim.",
+  "change": "Write each uncompressed MySQL frame through borrowed header/body IoSlices. Forward ClientStream vectored writes to TCP or a borrowed rustls::Stream over the existing TLS owner. Preserve per-completed-frame sequence advancement, short/interrupted write handling, scalar-only transports and the existing compression boundaries.",
+  "source": [
+    "pkg/server/internal/packetio.go: PacketIO.WritePacket and Flush",
+    "rust/crates/tidb-protocol/src/packet.rs: PacketWriter, PacketOutput and PacketIoWriter",
+    "rust/crates/tidb-server/src/mysql_tls.rs: ClientStream Write implementation",
+    "rustls 0.23.42 src/stream.rs: Stream implements write_vectored; StreamOwned does not forward it"
+  ],
+  "before": {
+    "port": 53051,
+    "pid": 17058,
+    "sha256": "4f081c5fd78090b28191e5067906a25eee654791c2e6eb33fe6b25f5a58742d4",
+    "saved": "/private/tmp/tidb-frame-write-before-TnXtCM/tidb-server"
+  },
+  "validation": {
+    "profile": "WIP",
+    "working_directory": "rust",
+    "runtime_red": {
+      "protocol_command": "cargo test --offline --locked --release -j12 -p tidb-protocol --test all packetio_source::each_uncompressed_frame_reaches_transport_as_one_write",
+      "protocol_log": "/private/tmp/tidb-frame-write-red.log",
+      "protocol_evidence": "A three-byte payload reaches the old transport in two scalar calls instead of one vectored frame call.",
+      "tls_command": "cargo test --offline --locked --release -j12 -p tidb-server --test all mysql_tls_source::the_same_socket_carries_plaintext_and_then_tls",
+      "tls_log": "/private/tmp/tidb-frame-write-tls-red.log",
+      "tls_evidence": "The old ClientStream default vectored implementation accepts only the first slice, 7 of 16 bytes. This is valid Write behavior but loses the intended coalescing."
+    },
+    "compile_correction": "The first post-change attempt used ErrorKind.into() where PacketError requires io::Error. Corrected the conversion; that compile failure is not behavioral regression evidence.",
+    "protocol_command": "cargo test --offline --locked --release -j12 -p tidb-protocol --test all packetio_source::",
+    "protocol_log": "/private/tmp/tidb-frame-write-green-v2.log",
+    "protocol_passed": 23,
+    "tls_command": "cargo test --offline --locked --release -j12 -p tidb-server --test all mysql_tls_source::",
+    "tls_log": "/private/tmp/tidb-frame-write-tls-green.log",
+    "tls_session": 1957,
+    "tls_status": "complete",
+    "tls_passed": 6,
+    "compression_command": "cargo test --offline --locked --release -j12 -p tidb-server --test all server_internal_packetio_source::",
+    "compression_log": "/private/tmp/tidb-frame-write-compression-green.log",
+    "compression_passed": 5,
+    "total_scoped_passed": 34
+  },
+  "after": {
+    "port": 53052,
+    "pid": 24677,
+    "server_session": 59794,
+    "sha256": "68730b1de1185340661edf516676c8002ce8e1818cf037a247fbc77aa99efee5",
+    "build_command": "cargo build --offline --locked --release -j12 -p tidb-server",
+    "build_log": "/private/tmp/tidb-frame-write-build.log",
+    "build_note": "0.26-second final build reused the candidate artifacts compiled during the 1m56s TLS test build.",
+    "server_log": "/private/tmp/tidb-frame-write-server.log"
+  },
+  "live": {
+    "session": 46418,
+    "status": "complete",
+    "commands": [
+      "python3 /private/tmp/tidb-frame-write-live.py --ports 45000 53051 53052",
+      "python3 /private/tmp/tidb-dirty-order-live.py --ports 45000 53052 --report-mutations",
+      "python3 /private/tmp/tidb-distinct-live.py --ports 45000 53052"
+    ],
+    "logs": ["/private/tmp/tidb-frame-write-live.jsonl", "/private/tmp/tidb-frame-write-overlay.jsonl", "/private/tmp/tidb-frame-write-distinct.jsonl"],
+    "all_results_errors_and_affected_rows_match_go": true,
+    "transport_records": 48,
+    "overlay_records": 38,
+    "distinct_having_records": 96,
+    "coverage": "Seven cases per plaintext/TLS endpoint across Go, before and after: PING, scalar/large/range results, error packets, affected-row OK and staged read followed by rollback. TLS socket cipher/version match SHOW SESSION STATUS. Eleven overlay and 48 DISTINCT/HAVING cases per endpoint; three DISTINCT errors are expected Go errors. Physical plans are not claimed equal.",
+    "tls_policy": "Live endpoints use local self-signed certificates, so this helper tests encryption without certificate identity verification. The independent Rust TLS test trusts and verifies its generated certificate. No server TLS policy changed."
+  },
+  "sysbench": {
+    "session": 53954,
+    "status": "complete",
+    "command": "python3 rust/scripts/compare-sysbench.py --server before:53051 --server after:53052 --server go:45000 --database perf_sysbench_locking_v2 --workload oltp_read_write --threads 2 --seconds 30 --rounds 3 --table-size 100000 --output /private/tmp/tidb-frame-write-sysbench",
+    "results": "/private/tmp/tidb-frame-write-sysbench/results.json",
+    "summary": "/private/tmp/tidb-frame-write-sysbench-summary.json",
+    "samples": 9,
+    "errors": 0,
+    "reconnects": 0,
+    "medians": {"before": 383.4617538059562, "after": 389.38707774745325, "go": 371.84298407577506},
+    "median_change_percent": 1.545219016678101,
+    "paired_change_percent": [-4.252278968804024, 1.545219016678101, -6.946697838073246],
+    "interpretation": "Two of three candidate pairs are slower despite a positive median. This does not establish a reliable sysbench gain."
+  },
+  "tpcc": {
+    "session": 37984,
+    "status": "complete",
+    "command": "python3 /private/tmp/tidb-agg-tpcc-compare.py --server before:53051 --server after:53052 --server go:45000 --output /private/tmp/tidb-frame-write-tpcc",
+    "results": "/private/tmp/tidb-frame-write-tpcc/results.json",
+    "summary": "/private/tmp/tidb-frame-write-tpcc-summary.json",
+    "measured_transactions": 180000,
+    "warmup_transactions": 6000,
+    "errors": 0,
+    "groups": [
+      {
+        "threads": 2,
+        "medians": {"before": 489.93359271490004, "after": 447.2926007753143, "go": 482.1586658197748},
+        "median_change_percent": -8.703422784973059,
+        "paired_change_percent": [-2.514480287960874, -8.703422784973059, -11.340765696191546]
+      },
+      {
+        "threads": 8,
+        "medians": {"before": 648.1948544106817, "after": 637.2537642223585, "go": 580.7033861945338},
+        "median_change_percent": -1.6879322805285923,
+        "paired_change_percent": [-6.218326855197176, -1.6879322805285923, -20.94748985856203]
+      }
+    ],
+    "interpretation": "All five transaction types and exact counts completed in every sample. All six candidate pairs are slower. Shared evolving data and time-seeded mixes limit attribution, but do not justify dismissing the regressions."
+  },
+  "postcheck": {
+    "session": 96704,
+    "status": "complete",
+    "commands": [
+      "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc tpcc check -H 127.0.0.1 -P 45000 -U root -D perf_tpcc_locking_v1 --warehouses 1 -T 1",
+      "mysql --protocol=tcp -h127.0.0.1 -P45000 -uroot --plugin-dir=/opt/homebrew/opt/mysql-client/lib/plugin perf_tpcc_locking_v1 < /private/tmp/tidb-tpcc-locking-balance-check.sql"
+    ],
+    "conditions_passed": 11,
+    "customers_checked": 30000,
+    "bad_balances": 0,
+    "bad_delivery_counts": 0,
+    "logs": ["/private/tmp/tidb-frame-write-tpcc-check.log", "/private/tmp/tidb-frame-write-balances.tsv"]
+  },
+  "command_diagnostic": {
+    "session": 77415,
+    "status": "complete",
+    "command": "python3 /private/tmp/tidb-frame-write-command-compare.py --server before:53051 --server after:53052 --server go:45000 --count 5000 --rounds 3 --output /private/tmp/tidb-frame-write-commands",
+    "results": "/private/tmp/tidb-frame-write-commands/results.json",
+    "samples": 36,
+    "measured_commands": 180000,
+    "errors": 0,
+    "groups": [
+      {"tls": false, "operation": "ping", "median_change_percent": 7.75342292205472, "paired_change_percent": [21.728321884577472, 7.75342292205472, -5.427538611770844]},
+      {"tls": false, "operation": "select", "median_change_percent": 1.5931515767852344, "paired_change_percent": [1.6360767357118444, -2.441145116003085, -1.1873805455566377]},
+      {"tls": true, "operation": "ping", "median_change_percent": 4.54640382585576, "paired_change_percent": [-1.3926528654781833, 9.330611486889095, 8.836001253680447]},
+      {"tls": true, "operation": "select", "median_change_percent": -4.545515107091235, "paired_change_percent": [-8.727809879298709, 3.3692897491615525, -6.6570659005553035]}
+    ],
+    "interpretation": "PING isolates the single OK frame without SQL/TiKV work; SELECT 1 controls the already-batched result path. Each short sample is 5,000 fixed data-free commands. PING medians improve but all groups have mixed pair directions; the unchanged result-batch control also varies. This does not establish a stable latency gain or explain the TPC-C regression."
+  },
+  "after_profile": {
+    "session": 18209,
+    "status": "complete",
+    "command": "python3 /private/tmp/tidb-mixed-workload-profile.py --port 53052 --pid 24677 --stem /private/tmp/tidb-frame-write-tpcc-profile --workload tpcc --threads 8",
+    "report": "/private/tmp/tidb-frame-write-tpcc-profile.json",
+    "sample": "/private/tmp/tidb-frame-write-tpcc-profile.sample.txt",
+    "analysis": "/private/tmp/tidb-frame-write-tpcc-profile.active.txt",
+    "transactions": 20000,
+    "errors": 0,
+    "cpu_interval_seconds": 38.657401250035036,
+    "rust_cpu_seconds": 55.309999999999974,
+    "tikv_cpu_seconds": 162.44000000000233,
+    "packet_write_non_wait_frames": 286,
+    "client_stream_vectored_non_wait_frames": 284,
+    "statement_context_non_wait_frames": 370,
+    "interpretation": "The workload traverses the new vectored path. Earlier unpaired type-read diagnostics used Rust/TiKV 56.14/141.73 CPU-seconds over 36.00s, versus 55.31/162.44 over 38.66s now. Different time-seeded mixes and evolving data prevent attributing throughput changes to these counters. Non-wait inclusive frame counts are not CPU percentages; do not use them as a causal gain receipt.",
+    "postcheck_commands": "Same two commands as postcheck.commands, repeated after profiling",
+    "postcheck_logs": ["/private/tmp/tidb-frame-write-profile-check.log", "/private/tmp/tidb-frame-write-profile-balances.tsv"],
+    "conditions_passed": 11,
+    "customers_checked": 30000,
+    "bad_balances": 0,
+    "bad_delivery_counts": 0
+  },
+  "reproducibility_probe": {
+    "command": "python3 /private/tmp/tidb-frame-write-plan-compare.py",
+    "log": "/private/tmp/tidb-frame-write-plans.jsonl",
+    "records": 24,
+    "current_before_after_differences": 0,
+    "coverage": "SHOW STATS_META for both benchmark databases and ten representative query plans (four sysbench, six TPC-C). Exact current rows match between 53051 and 53052; not proof that no transient difference existed during timing.",
+    "source": "cluster_session_node/boot.rs and real_tikv_node/schema_following.rs show a live StatsReloader at the two-second schema lease, not a permanently frozen boot snapshot. The Go server log records auto-analyze events during the broader measurement period; no attribution to a particular timing regression is established.",
+    "rng_sources": [
+      "/private/tmp/tidb-tpcc-tool-OY7S5G/source/pkg/workload/base.go:45 creates each worker RNG from time.Now().UnixNano()",
+      "/private/tmp/tidb-tpcc-tool-OY7S5G/source/tpcc/rand.go:128 seeds process-level nonuniform constants from time.Now().UnixNano()"
+    ],
+    "other_rust_cpu_profile": {"servers": 36, "cpu_seconds": 6.02000000000038, "percent_one_core": 15.57269709120689},
+    "interpretation": "Current sampled plans/statistics match. The driver varies both worker randomness and process-level nonuniform constants between invocations. Tighten reproducibility rather than explaining all negative pairs away with noise; the regression remains unproven as to cause. No benchmark driver, server policy or fixture has been changed."
+  },
+  "remaining": "All test/build/live/timing/profile/postcheck handles are terminal; candidate server 59794 remains running. No servers stopped, no readiness or broad performance claim, no commit or push. Establish workload-regression causality before stacking another micro-optimization; prior planner estimate/EXPLAIN gaps and rare stalls remain open. The go-tpc source is available at /private/tmp/tidb-tpcc-tool-OY7S5G/source, pinned a9ca4818625deef91ff80f6c395a575ccae22b7c. No fixture reset, driver change or further production edit was made."
+}

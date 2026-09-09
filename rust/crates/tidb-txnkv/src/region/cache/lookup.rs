@@ -95,21 +95,27 @@ impl<L> RegionCache<L> {
         key: &[u8],
         require_exact_start: bool,
     ) -> Result<RegionLookupSelection, RegionRouteError> {
-        self.select_region_lookup_at(key, require_exact_start, cache_now_seconds())
+        let selection = self.inspect_region_lookup(key, require_exact_start)?;
+        if let RegionLookupSelection::Load(plan) = &selection {
+            if let Some(location) = &plan.observed_location {
+                self.preferred_proxies.remove(&location.region);
+            }
+        }
+        Ok(selection)
     }
 
-    fn select_region_lookup_at(
-        &mut self,
+    pub(in crate::region) fn inspect_region_lookup(
+        &self,
         key: &[u8],
         require_exact_start: bool,
-        now_seconds: u64,
     ) -> Result<RegionLookupSelection, RegionRouteError> {
-        let observed_location = self.find_key(key).map(|index| self.regions[index].clone());
-        if let Some(location) = &observed_location {
+        let now_seconds = cache_now_seconds();
+        let observed_location = self.find_key(key).map(|index| &self.regions[index]);
+        if let Some(location) = observed_location {
             let next_expiry = self.next_expiry_at(now_seconds, location.region);
             let valid = self
                 .entry_states
-                .get_mut(&location.region)
+                .get(&location.region)
                 .is_some_and(|state| {
                     state.check_and_renew(now_seconds, self.base_ttl_seconds, next_expiry)
                 });
@@ -121,12 +127,11 @@ impl<L> RegionCache<L> {
                 }
                 return Ok(RegionLookupSelection::Hit(location.clone()));
             }
-            self.preferred_proxies.remove(&location.region);
         }
         Ok(RegionLookupSelection::Load(RegionLookupPlan {
             key: key.to_vec(),
             require_exact_start,
-            observed_location,
+            observed_location: observed_location.cloned(),
             observed_store_revision: self.store_revision,
         }))
     }

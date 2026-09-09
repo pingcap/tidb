@@ -27,6 +27,7 @@
 //! instead of importing Go's planner-layer hasher interface.
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use tidb_datatype::CharsetName;
 
 // Charset / collation name constants, mirroring `pkg/parser/charset`. Kept as
 // local literals because `tidb-datatype` exposes these names only as enum arms,
@@ -118,8 +119,9 @@ pub struct CollationInfo {
     coer: AtomicI32,
     coer_init: AtomicBool,
     repertoire: Repertoire,
-    charset: String,
-    collation: String,
+    // Expression clones copy Go string headers, not their immutable bytes.
+    charset: CharsetName,
+    collation: CharsetName,
     is_explicit_charset: bool,
 }
 
@@ -169,8 +171,8 @@ impl CollationInfo {
 
     /// Go `SetCharsetAndCollation`.
     pub fn set_charset_and_collation(&mut self, chs: &str, coll: &str) {
-        self.charset = chs.to_owned();
-        self.collation = coll.to_owned();
+        self.charset = chs.into();
+        self.collation = coll.into();
     }
 
     /// Go `CharsetAndCollation`.
@@ -282,8 +284,8 @@ mod tests {
             coer: AtomicI32::new(1),
             coer_init: AtomicBool::new(false),
             repertoire: Repertoire(1),
-            charset: charset.to_owned(),
-            collation: collation.to_owned(),
+            charset: charset.into(),
+            collation: collation.into(),
             is_explicit_charset: false,
         }
     }

@@ -188,6 +188,31 @@ fn is_pad_space(collation: tidb_datatype::Collation) -> bool {
     )
 }
 
+/// Go `conditionChecker.checkLikeFunc`: deciding whether a range can replace
+/// LIKE is separate from producing its bounds. PAD SPACE keys lose trailing
+/// spaces; internal wildcards also describe more than a single prefix.
+pub(super) fn should_reserve(
+    pattern: &str,
+    escape: u8,
+    collation: tidb_datatype::Collation,
+) -> bool {
+    let reserve = is_pad_space(collation);
+    let bytes = pattern.as_bytes();
+    let mut position = 0;
+    while position < bytes.len() {
+        if bytes[position] == escape {
+            position += 2;
+            continue;
+        }
+        match bytes[position] {
+            b'%' => return reserve || position + 1 != bytes.len(),
+            b'_' => return true,
+            _ => position += 1,
+        }
+    }
+    reserve
+}
+
 /// Go's upper bound for a `LIKE` prefix (`newBuildFromPatternLike` case 4-2):
 /// the low value's sort key WITHOUT the PAD SPACE trim, with its last
 /// non-`0xff` byte incremented and every trailing `0xff` zeroed.

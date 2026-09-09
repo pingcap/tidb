@@ -122,6 +122,10 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         EvalError::TruncatedWrongValue(message) => {
             MysqlError::coded(ER_TRUNCATED_WRONG_VALUE, message)
         }
+        EvalError::Conversion(error) => {
+            let error = error.to_sql_error();
+            MysqlError::coded(error.code, error.message)
+        }
         EvalError::GroupConcatCut(message) => MysqlError::coded(ER_CUT_VALUE_GROUP_CONCAT, message),
         // Go `errWarnAllowedPacketOverflowed` (1301), the ERROR spelling of
         // the warning a read takes: same code, same text.

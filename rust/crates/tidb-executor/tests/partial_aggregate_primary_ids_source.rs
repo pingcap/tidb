@@ -146,6 +146,7 @@ fn capture(table: &mut KvTable, captured: Arc<Mutex<Option<PushdownScanRequest>>
         Vec::<ScanPredicate>::new().as_slice(),
         Option::<&[IndexRange]>::None,
         &count_over_primary(),
+        &tidb_executor::StmtContext::default(),
         &SessionTimeZone::default(),
         &PushdownStatementContext::default(),
     );

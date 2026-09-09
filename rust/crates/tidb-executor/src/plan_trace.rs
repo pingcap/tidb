@@ -381,11 +381,13 @@ impl Est {
 /// Nodes arrive bottom-up: a source is [`PlanTrace::push`]ed, and each
 /// operator built over it [`PlanTrace::wrap`]s whatever is on top. The stack
 /// holds one entry per completed subtree, so a join simply wraps two.
+#[derive(Clone)]
 pub(crate) struct GoLogicalQuerySourceColumns {
     pub(crate) query: tidb_ast::QueryStmt,
     pub(crate) columns: GoLogicalPlanColumns,
 }
 
+#[derive(Clone)]
 pub(crate) struct GoLogicalPlanColumns {
     pub(crate) aggregate_ids: Vec<(tidb_ast::Expr, i64)>,
     pub(crate) pending_aggregates: Vec<tidb_ast::Expr>,
@@ -432,6 +434,25 @@ pub(crate) struct PlanTrace {
 }
 
 impl PlanTrace {
+    /// Fork a physical alternative at the same statement-wide logical state.
+    /// Existing counters still belong to the already-built prefix; operators
+    /// recorded after the fork receive their own counters and column IDs.
+    pub(crate) fn fork(&self) -> Self {
+        Self {
+            stack: self.stack.clone(),
+            counting: self.counting,
+            plan_only: self.plan_only,
+            refused: self.refused,
+            plan_column_ids: SimplePlanColumnIdAllocator::new(
+                self.plan_column_ids.last_plan_column_id(),
+            ),
+            next_aggregation_projection: self.next_aggregation_projection.clone(),
+            pre_reserved_query_source_frames: self.pre_reserved_query_source_frames.clone(),
+            next_pre_reserved_query_source: self.next_pre_reserved_query_source.clone(),
+            join_cast_frames: self.join_cast_frames.clone(),
+        }
+    }
+
     /// A trace for plain `EXPLAIN`: record the build, execute nothing.
     pub(crate) fn planning() -> Self {
         Self {
@@ -1760,7 +1781,6 @@ impl PlanTrace {
     /// `Selection` over the whole predicate.
     pub(crate) fn cop_selection_reader(
         &mut self,
-        predicate: &tidb_ast::Expr,
         built: &[Expression],
         qualify: &Qualifier<'_>,
         stats_selectivity: Option<f64>,
@@ -1773,7 +1793,15 @@ impl PlanTrace {
         }) {
             return false;
         }
-        self.selection(predicate, Some(built), qualify, stats_selectivity);
+        let Some(info) = qualify.conditions(built) else {
+            return false;
+        };
+        let est = if self.stack.last().is_some_and(|child| child.access_consumed) {
+            Est::Inherit
+        } else {
+            Est::Scale(stats_selectivity.unwrap_or(SELECTIVITY_FACTOR))
+        };
+        self.wrap("Selection", est, info);
         if self.scan_reader_or_cop_selection() {
             return true;
         }
@@ -1990,123 +2018,6 @@ impl PlanTrace {
         true
     }
 
-    /// Moves a bare scan and a global partial StreamAgg into the TiKV task,
-    /// leaving the root reader above it. This is the physical split Go picks
-    /// for high-estimate Sysbench `COUNT`/`SUM` ranges.
-    pub(crate) fn partial_stream_agg(
-        &mut self,
-        select: &tidb_ast::SelectStmt,
-        qualify: &Qualifier<'_>,
-        sum: bool,
-    ) -> bool {
-        self.in_cop_task(|trace| trace.partial_stream_agg_inside_cop_task(select, qualify, sum))
-    }
-
-    fn partial_stream_agg_inside_cop_task(
-        &mut self,
-        select: &tidb_ast::SelectStmt,
-        qualify: &Qualifier<'_>,
-        sum: bool,
-    ) -> bool {
-        let Some(mut top) = self.stack.pop() else {
-            return false;
-        };
-        let argument = select.fields.fields().iter().find_map(|field| match field {
-            tidb_ast::SelectField::Expr {
-                expr: tidb_ast::Expr::Aggregate { args, .. },
-                ..
-            } => args.first(),
-            _ => None,
-        });
-        let Some(argument) = argument else {
-            self.stack.push(top);
-            return false;
-        };
-        // Go pushes the partial aggregate to the top of the COP TASK, not
-        // directly onto the scan -- a `WHERE` pushed into the same task keeps
-        // its `Selection` between them:
-        //
-        // ```text
-        // StreamAgg          root       funcs:count(Column#N)->Column#M
-        // └─TableReader      root       data:StreamAgg
-        //   └─StreamAgg      cop[tikv]  funcs:count(1)->Column#N
-        //     └─Selection    cop[tikv]  gt(test.t.a, 10)
-        //       └─TableFullScan cop[tikv]  table:t
-        // ```
-        let mut filter = None;
-        if top.name == "Selection" && top.children.len() == 1 {
-            let child = top.children.pop().expect("the Selection's one child");
-            top.children.push(child);
-            if matches!(
-                top.children[0].name,
-                "TableFullScan" | "TableRangeScan" | "IndexFullScan" | "IndexRangeScan"
-            ) {
-                let scan = top.children.pop().expect("the Selection's scan");
-                filter = Some(top);
-                top = scan;
-            }
-        }
-        let mut scan = top;
-        let reader = match scan.name {
-            "TableFullScan" | "TableRangeScan" => "TableReader",
-            "IndexFullScan" | "IndexRangeScan" => "IndexReader",
-            _ => {
-                self.stack.push(match filter {
-                    Some(mut filter) => {
-                        filter.children.push(scan);
-                        filter
-                    }
-                    None => scan,
-                });
-                return false;
-            }
-        };
-        scan.task = "cop[tikv]";
-        // The rows that leave the cop task are the FILTERED ones, so the
-        // reader and the partial aggregate count what the `Selection` emitted
-        // rather than what the scan read.
-        let act_rows = filter
-            .as_ref()
-            .map_or_else(|| scan.act_rows.clone(), |filter| filter.act_rows.clone());
-        let key_ndv_ratio = scan.key_ndv_ratio;
-        let scan = match filter {
-            Some(mut filter) => {
-                filter.task = "cop[tikv]";
-                filter.children.push(scan);
-                filter
-            }
-            None => scan,
-        };
-        let mut partial = PlanNode::new(
-            "StreamAgg",
-            Some(1.0),
-            String::new(),
-            format!(
-                "funcs:{}({})->Column#0",
-                if sum { "sum" } else { "count" },
-                qualify.expr(argument)
-            ),
-        );
-        partial.task = "cop[tikv]";
-        partial.act_rows = act_rows.clone();
-        partial.children.push(scan);
-
-        let mut reader_node = PlanNode::new(
-            reader,
-            Some(1.0),
-            String::new(),
-            if reader == "TableReader" {
-                "data:StreamAgg".to_owned()
-            } else {
-                "index:StreamAgg".to_owned()
-            },
-        );
-        reader_node.key_ndv_ratio = key_ndv_ratio;
-        reader_node.act_rows = act_rows;
-        reader_node.children.push(partial);
-        self.stack.push(reader_node);
-        true
-    }
 
     /// Moves a one-column grouping stage below the reader. The root HashAgg
     /// still deduplicates keys that different regions emitted.
@@ -2178,69 +2089,6 @@ impl PlanTrace {
         true
     }
 
-    /// Moves a one-key, one-SUM partial HashAgg below the table reader.  The
-    /// estimate is the logical group-key NDV rather than the access scan's
-    /// lower-bound-adjusted rows, matching Go's aggregation statistics
-    /// pipeline. The fallback is retained for shapes whose logical row source
-    /// cannot be modeled.
-    pub(crate) fn partial_grouped_sum(
-        &mut self,
-        select: &tidb_ast::SelectStmt,
-        qualify: &Qualifier<'_>,
-        grouped_rows: Option<f64>,
-    ) -> bool {
-        let Some(mut scan) = self.stack.pop() else {
-            return false;
-        };
-        if !matches!(scan.name, "TableFullScan" | "TableRangeScan") {
-            self.stack.push(scan);
-            return false;
-        }
-        let Some(group) = select.group_by.first() else {
-            self.stack.push(scan);
-            return false;
-        };
-        let Some(sum_argument) = select.fields.fields().iter().find_map(|field| match field {
-            tidb_ast::SelectField::Expr {
-                expr: tidb_ast::Expr::Aggregate { name, args, .. },
-                ..
-            } if name.eq_ignore_ascii_case("SUM") => args.first(),
-            _ => None,
-        }) else {
-            self.stack.push(scan);
-            return false;
-        };
-
-        let estimate = grouped_rows
-            .map(|rows| rows.max(1.0))
-            .or_else(|| Est::ScaleFloorOne(DISTINCT_FACTOR).apply(scan.est_rows));
-        let group = qualify.expr(&group.expr);
-        let sum_argument = qualify.expr(sum_argument);
-        scan.task = "cop[tikv]";
-        let act_rows = scan.act_rows.clone();
-        let key_ndv_ratio = scan.key_ndv_ratio;
-        let mut partial = PlanNode::new(
-            "HashAgg",
-            estimate,
-            String::new(),
-            format!("group by:{group}, funcs:sum({sum_argument})->Column#0"),
-        );
-        partial.task = "cop[tikv]";
-        partial.act_rows = act_rows.clone();
-        partial.children.push(scan);
-
-        let mut reader = PlanNode::new(
-            "TableReader",
-            estimate,
-            String::new(),
-            "data:HashAgg".to_owned(),
-        );
-        reader.key_ndv_ratio = key_ndv_ratio;
-        reader.act_rows = act_rows;
-        reader.children.push(partial);
-        self.stack.push(reader);
-        true
-    }
 
     /// Moves an ordered grouped partial StreamAgg below its reader. The
     /// executor negotiated the same partial package with the scan before this
@@ -2478,6 +2326,9 @@ impl PlanTrace {
                 let owned = format!("data:StreamAgg{info}");
                 node.info = owned;
             }
+            if let Some(info) = node.info.strip_prefix("index:HashAgg") {
+                node.info = format!("index:StreamAgg{info}");
+            }
             let _ = is_root_of_pair;
             for child in &mut node.children {
                 walk(child, false);
@@ -2503,42 +2354,6 @@ impl PlanTrace {
         );
     }
 
-    /// The root final stage for [`Self::partial_grouped_sum`].
-    pub(crate) fn final_grouped_sum_hash_agg(
-        &mut self,
-        select: &tidb_ast::SelectStmt,
-        qualify: &Qualifier<'_>,
-    ) {
-        let Some(group) = select.group_by.first() else {
-            self.refuse("grouped SUM final stage has no group key");
-            return;
-        };
-        let group = qualify.expr(&group.expr);
-        self.wrap(
-            "HashAgg",
-            Est::Inherit,
-            format!(
-                "group by:{group}, funcs:sum(Column#0)->Column#1, funcs:firstrow({group})->{group}"
-            ),
-        );
-    }
-
-    /// The select-order projection above a grouped SUM final stage.
-    pub(crate) fn grouped_sum_projection(
-        &mut self,
-        select: &tidb_ast::SelectStmt,
-        qualify: &Qualifier<'_>,
-    ) {
-        let Some(group) = select.group_by.first() else {
-            self.refuse("grouped SUM projection has no group key");
-            return;
-        };
-        self.wrap(
-            "Projection",
-            Est::Inherit,
-            format!("{}, Column#1", qualify.expr(&group.expr)),
-        );
-    }
 
     /// Rewrites the inner side's scan node into the range read an index join
     /// decided per outer key: Go's `IndexRangeScan`/`TableRangeScan` with
@@ -3517,8 +3332,8 @@ impl PlanTrace {
     /// stand, which is Go's `pseudoSelectivity`.
     ///
     /// `built` is the expression list execution owns after build-time folds.
-    /// The written AST remains the selectivity input and the atomic display
-    /// fallback for a built node this recorder cannot name.
+    /// Callers supply compiled-condition selectivity when available. The
+    /// written AST remains the display and pseudo-selectivity fallback.
     pub(crate) fn selection(
         &mut self,
         predicate: &tidb_ast::Expr,
@@ -5148,9 +4963,9 @@ impl PlanTrace {
         true
     }
 
-    /// Go's locking-read marker. Cluster sessions collect the raw keys read
-    /// by the executor and issue the matching pessimistic lock after the
-    /// statement attempt, so this wrapper records that real transaction seam.
+    /// Selected-row locking boundary. SelectLock retains physical identities
+    /// from its output rows; the cluster session locks them before publishing
+    /// the statement result and replays the statement after a conflict.
     pub(crate) fn select_lock(&mut self) {
         self.wrap("SelectLock", Est::Inherit, "for update 0".to_owned());
     }
@@ -7268,6 +7083,33 @@ fn binary_func_name(op: tidb_ast::BinaryOp) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fork_retains_prefix_and_isolates_alternative_logical_state() {
+        let mut original = PlanTrace::analyzing();
+        let count = Rc::new(Cell::new(3));
+        let mut prefix = PlanNode::new("TableDual", Some(3.0), String::new(), String::new());
+        prefix.act_rows = Some(count.clone());
+        original.stack.push(prefix);
+        original.reserve_plan_column_ids(17);
+        original.push_query_source_frame(Vec::new());
+        original.next_aggregation_projection.push(Some((4, 5)));
+        original.join_cast_frames.borrow_mut().push((0, 1));
+        let mut alternative = original.fork();
+        assert_eq!(alternative.alloc_plan_column_id(), 18);
+        assert_eq!(alternative.alloc_plan_column_id(), 19);
+        assert_eq!(original.alloc_plan_column_id(), 18);
+        alternative.truncate_query_source_frames(0);
+        alternative.next_aggregation_projection.clear();
+        alternative.join_cast_frames.borrow_mut().clear();
+        assert_eq!(original.query_source_frame_depth(), 1);
+        assert_eq!(original.next_aggregation_projection, vec![Some((4, 5))]);
+        assert_eq!(*original.join_cast_frames.borrow(), vec![(0, 1)]);
+        assert!(alternative.counting);
+        assert!(!alternative.is_plan_only());
+        count.set(7);
+        assert_eq!(alternative.into_root().unwrap().act_rows.unwrap().get(), 7);
+    }
 
     #[test]
     fn probe_residual_uses_filtered_logical_rows_for_lookup_output() {

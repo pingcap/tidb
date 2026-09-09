@@ -39,17 +39,13 @@
 //!   `@@last_plan_from_binding = 1` against one binding.
 //! * `straight_join` normalizes to `join`.
 //!
-//! # Session scope is implemented; GLOBAL scope is refused, and why
+//! # Ownership
 //!
-//! A session binding lives in a map on the session and needs no storage. A
-//! GLOBAL binding is a row in `mysql.bind_info` shared by every session, and
-//! this tier has no such table: the name is in `tidb-metadef`'s
-//! `CREATE_BIND_INFO_TABLE` as DDL text, but no session's catalog contains
-//! it. That is measured, not asserted --
-//! `select * from mysql.bind_info` in this tier answers `table not found in
-//! catalog`, and `tests_binding`'s
-//! `global_scope_is_refused_because_the_storage_table_is_absent` pins BOTH
-//! halves so the refusal flips the day the table appears.
+//! Session bindings live in a private map. Global bindings are persisted in
+//! `mysql.bind_info`; cluster sessions match a node-owned committed cache,
+//! refreshed independently of user transactions. Standalone in-memory
+//! sessions read their shared catalog. This module supplies matching and
+//! decoding, not a complete transcreation claim for `pkg/bindinfo`.
 //!
 //! # What a match changes here
 //!
@@ -388,6 +384,50 @@ pub struct Binding {
     pub(crate) hints: HintsSet,
 }
 
+/// Executes one global-binding storage operation in an independent transaction.
+/// Validation and user variables remain on the caller; the supplied session owns
+/// only the internal storage transaction, as Go's binding session pool does.
+pub trait GlobalBindingWriter: Send + Sync {
+    /// Commit the complete operation or discard all its writes on error.
+    fn execute(
+        &self,
+        operation: &mut dyn FnMut(&mut crate::Session) -> Result<u64, tidb_executor::DriverError>,
+    ) -> Result<u64, tidb_executor::DriverError>;
+}
+
+impl Binding {
+    /// Decode the stored binding projection used by both catalog and node loaders.
+    /// Invalid SQL and builtin rows are ignored; tombstones reach cache resolution.
+    pub fn from_storage_row(row: &[tidb_datatype::Datum], mode: tidb_parser::SqlMode) -> Option<Self> {
+        let text = |index: usize| crate::datum_text(row.get(index)?);
+        let status = match text(3)?.as_str() {
+            STATUS_ENABLED => STATUS_ENABLED,
+            STATUS_USING => STATUS_USING,
+            STATUS_DISABLED => STATUS_DISABLED,
+            STATUS_DELETED => STATUS_DELETED,
+            _ => return None,
+        };
+        let bind_sql = text(1)?;
+        let hinted = tidb_parser::parse_with_sql_mode(&bind_sql, mode).ok()?;
+        Some(Self {
+            original_sql: text(0)?,
+            bind_sql,
+            db: text(2)?,
+            status,
+            charset: text(6).unwrap_or_default(),
+            collation: text(7).unwrap_or_default(),
+            source: SOURCE_MANUAL,
+            sql_digest: text(9)?,
+            create_time: text(4).unwrap_or_default(),
+            update_time: text(5).unwrap_or_default(),
+            no_db_digest: no_db_digest(&hinted),
+            table_names: collect_table_names(&hinted),
+            hints: collect_hints(&hinted),
+        })
+    }
+
+}
+
 /// Go's `sessionBindingHandle`: one binding per normalized origin statement,
 /// replaced wholesale when the same statement is bound again.
 ///
@@ -520,6 +560,7 @@ pub(crate) const STATUS_ENABLED: &str = "enabled";
 /// Go `bindinfo.StatusDisabled`: listed by `SHOW BINDINGS`, skipped by the
 /// plan-time match.
 pub(crate) const STATUS_DISABLED: &str = "disabled";
+pub(crate) const STATUS_DELETED: &str = "deleted";
 /// Go `bindinfo.StatusUsing`, the pre-v6 spelling of `enabled`, still
 /// accepted by `SET BINDING DISABLED`'s status guard and by the match.
 pub(crate) const STATUS_USING: &str = "using";

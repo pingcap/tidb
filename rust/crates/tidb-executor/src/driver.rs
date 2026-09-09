@@ -300,6 +300,7 @@ pub mod access;
 mod agg_build;
 mod agg_predicate_pushdown;
 mod agg_select;
+mod ast_rewrite;
 mod catalog;
 mod clause_resolve;
 mod correlated_agg_decorrelate;
@@ -312,6 +313,7 @@ mod derived_projection_pushdown;
 mod dml;
 mod errors;
 mod from;
+mod select_lock;
 pub(crate) mod funcdep;
 mod grouping;
 mod having;
@@ -948,8 +950,7 @@ pub fn run_fast_prepared_point_get_with_decode_context(
     Ok(Some((output_columns, rows)))
 }
 
-/// The read-free decision shared by SQL execution and EXPLAIN for YCSB E's
-/// one-row clustered-handle range.
+/// The read-free bounded-range decision shared by execution and EXPLAIN.
 pub(crate) struct FastSingleRowScanPlan {
     pub(crate) visible: String,
     pub(crate) ranges: Vec<IndexRange>,
@@ -957,6 +958,50 @@ pub(crate) struct FastSingleRowScanPlan {
     table: KvTable,
     output_offsets: Vec<usize>,
     output_columns: Vec<(String, FieldType)>,
+}
+
+// Go's fast-plan matcher (point_get_plan.go::getNameValuePairs) reads
+// ValueExpr/ParamMarker leaves; it does not run scalar expressions while
+// deciding whether to fall back. Keep the same boundary for range admission.
+// Computed endpoints belong to ordinary planning, where their diagnostics
+// and side effects are owned by the statement that will actually execute.
+fn has_literal_range_endpoints(predicate: &tidb_ast::Expr) -> bool {
+    use tidb_ast::{BinaryOp, Expr};
+
+    let literal = |expr: &Expr| {
+        matches!(
+            expr,
+            Expr::String(_)
+                | Expr::RawString(_)
+                | Expr::Int(_)
+                | Expr::Float(_)
+                | Expr::Bool(_)
+                | Expr::Null
+                | Expr::ParamMarker { .. }
+        )
+    };
+    let column = |expr: &Expr| matches!(expr, Expr::Column(_));
+    match predicate {
+        Expr::Paren(inner) => has_literal_range_endpoints(inner),
+        Expr::Binary(BinaryOp::LogicAnd | BinaryOp::LogicOr, left, right) => {
+            has_literal_range_endpoints(left) && has_literal_range_endpoints(right)
+        }
+        Expr::Binary(
+            BinaryOp::Eq
+            | BinaryOp::NullEq
+            | BinaryOp::Ne
+            | BinaryOp::Lt
+            | BinaryOp::Le
+            | BinaryOp::Gt
+            | BinaryOp::Ge,
+            left,
+            right,
+        ) => (column(left) && literal(right)) || (literal(left) && column(right)),
+        Expr::Between { expr, low, high, .. } => column(expr) && literal(low) && literal(high),
+        Expr::In { expr, list, .. } => column(expr) && list.iter().all(literal),
+        Expr::Like { expr, pattern, .. } => column(expr) && literal(pattern),
+        _ => false,
+    }
 }
 
 pub(crate) fn plan_fast_single_row_scan(
@@ -985,6 +1030,9 @@ pub(crate) fn plan_fast_single_row_scan(
     let Some(where_clause) = select.where_clause.as_ref() else {
         return Ok(None);
     };
+    if !has_literal_range_endpoints(where_clause) {
+        return Ok(None);
+    }
     let Some(table_ref) = access::single_table_ref(&select.from) else {
         return Ok(None);
     };
@@ -1017,8 +1065,16 @@ pub(crate) fn plan_fast_single_row_scan(
     // below plans it and answers it. This fast path only ever claims the
     // shapes it can prove, so `None` from the range builder is a FALLBACK
     // signal -- turning it into an error would reject statements Go answers.
+    let resolver = TableResolver {
+        table_name: &visible,
+        columns: &[],
+        constant_context: ctx.clone(),
+        zone: ctx.session_zone(),
+        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+        div_precision_increment: ctx.div_precision_increment(),
+    };
     let Some(built) =
-        crate::handle_range::build_handle_ranges(&table, where_clause, &ctx.session_zone())
+        crate::handle_range::build_handle_ranges(&table, where_clause, &resolver)
     else {
         return Ok(None);
     };
@@ -1076,12 +1132,10 @@ pub(crate) fn plan_fast_single_row_scan(
     }))
 }
 
-/// Executes the bounded clustered-key range shape used by YCSB workload E
-/// without constructing a full table-reader/coprocessor DAG for every
-/// prepared execute. The range builder remains the source of truth for key
-/// semantics; this path only changes how the already-proven first row is
-/// fetched. Any residual predicate, secondary index, staged write, or wider
-/// limit falls back to the general planner.
+/// Executes a bounded clustered-key range without constructing a complete
+/// executor tree. The range builder owns key semantics and the bound storage
+/// handle owns the statement snapshot. Residual predicates, computed
+/// endpoints, staged writes and wider limits use ordinary planning.
 pub fn run_fast_single_row_scan(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
@@ -1098,12 +1152,8 @@ pub fn run_fast_single_row_scan(
         output_columns,
         ..
     } = plan;
-    // The proven one-row shape already carries the complete clustered-key
-    // range. Use the storage seam's bounded max-ts primitive directly: a DAG
-    // cop request would create a transport and response stream for one row,
-    // which is measurably slower than the same TiKV range seek. This remains
-    // fail-closed because the shape gate above rejects every residual,
-    // partitioned, dirty, or non-clustered table.
+    // The storage seam can stop after the first matching key. It still uses
+    // the statement's bound snapshot: LIMIT is not permission to read at MaxTS.
     let rows = table
         .first_row_in_handle_ranges(None, &ranges, &ctx.session_zone())
         .map_err(|error| DriverError::Exec(ExecError::Internal(format!("row decode failed: {error:?}").into())))?
@@ -1199,27 +1249,6 @@ fn restored_join_projection_fields(
     (!fields.is_empty() && actual != columns).then_some((columns, fields))
 }
 
-/// The grouped columns' positions in a SELECT's own result row. A grouped
-/// StreamAgg emits in this order; selected carriers preserve it through the
-/// final projection.
-fn grouped_select_output_order(select: &tidb_ast::SelectStmt) -> Option<Vec<usize>> {
-    select
-        .group_by
-        .iter()
-        .map(|group| {
-            let tidb_ast::Expr::Column(group_path) = &group.expr else {
-                return None;
-            };
-            select.fields.fields().iter().position(|field| {
-                matches!(field,
-                    tidb_ast::SelectField::Expr {
-                        expr: tidb_ast::Expr::Column(path),
-                        ..
-                    } if path == group_path)
-            })
-        })
-        .collect()
-}
 
 /// The name a source operator's `access object` prints: the alias the FROM
 /// clause gave the table, which is what Go prints too.
@@ -1240,7 +1269,7 @@ fn projects_entire_single_table_in_order(select: &tidb_ast::SelectStmt, scope: &
     };
     let fields = select.fields.fields();
     if let [SelectField::Wildcard(qualifier)] = fields {
-        return qualifier
+        return scope.star_columns().len() == scope.width() && qualifier
             .last()
             .is_none_or(|name| table.name.eq_ignore_ascii_case(name));
     }
@@ -1371,6 +1400,11 @@ enum AggregationChoice {
     Stream,
 }
 
+#[cfg(test)]
+thread_local! {
+    static AGGREGATION_PIPELINE_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// [`run_select_traced`] plus the order the built SELECT output actually
 /// retains. Derived-table materialization uses this receipt instead of
 /// predicting order from catalog properties after execution.
@@ -1386,6 +1420,7 @@ pub(super) fn run_select_traced_with_delivery(
     parent_duplicate_agnostic: bool,
 ) -> Result<SelectMeta, DriverError> {
     let query_source_frame_depth = trace.as_deref().map(PlanTrace::query_source_frame_depth);
+    let derived_output = output_delivered.is_some();
     let result = run_select_traced_with_delivery_choice(
         select,
         catalog,
@@ -1397,6 +1432,7 @@ pub(super) fn run_select_traced_with_delivery(
         deferred_exec,
         parent_duplicate_agnostic,
         AggregationChoice::Auto,
+        derived_output,
     );
     if let (Some(trace), Some(depth)) = (trace, query_source_frame_depth) {
         trace.truncate_query_source_frames(depth);
@@ -1416,6 +1452,7 @@ fn run_select_traced_with_delivery_choice(
     deferred_exec: Option<&mut Option<Box<dyn Executor>>>,
     parent_duplicate_agnostic: bool,
     aggregation_choice: AggregationChoice,
+    derived_output: bool,
 ) -> Result<SelectMeta, DriverError> {
     // Every nested SELECT -- a derived table, a subquery, a view -- plans by
     // recursing through here, and a debug build's planner frames run to
@@ -1437,6 +1474,7 @@ fn run_select_traced_with_delivery_choice(
             deferred_exec,
             parent_duplicate_agnostic,
             aggregation_choice,
+            derived_output,
         )
     })
 }
@@ -1453,6 +1491,7 @@ fn run_select_traced_with_delivery_choice_inner(
     mut deferred_exec: Option<&mut Option<Box<dyn Executor>>>,
     parent_duplicate_agnostic: bool,
     aggregation_choice: AggregationChoice,
+    derived_output: bool,
 ) -> Result<SelectMeta, DriverError> {
     // Go `pkg/planner/core/logical_plan_builder.go::computeCTEInlineFlag`
     // inlines a non-recursive CTE only when preprocess counted exactly one
@@ -1484,8 +1523,8 @@ fn run_select_traced_with_delivery_choice_inner(
     };
     // Go enumerates HashAgg before StreamAgg for an empty required property,
     // rebuilds the child under each candidate's property, and keeps the first
-    // candidate on an exact tie. Build both plans without executing or tracing
-    // them, then rebuild only the cheaper one into the caller's real output.
+    // candidate on an exact tie. Retain the winning pipeline and its planning
+    // state, as `findBestTask` returns the chosen task instead of rebuilding it.
     // `DISTINCT` is enumerated with them: Go's `buildDistinct`
     // (`pkg/planner/core/logical_plan_builder.go:1966`) builds a
     // LogicalAggregation whose `GroupByItems` are the projection's columns,
@@ -1507,7 +1546,7 @@ fn run_select_traced_with_delivery_choice_inner(
         let plan_only = trace.as_deref().is_some_and(PlanTrace::is_plan_only);
         let mut stream_delivered = from::Delivered::new();
         let mut stream_exec = None;
-        let mut stream_trace = plan_only.then(PlanTrace::planning);
+        let mut stream_trace = trace.as_deref().map(PlanTrace::fork);
         let stream = run_select_traced_with_delivery_choice(
             select,
             catalog,
@@ -1519,11 +1558,13 @@ fn run_select_traced_with_delivery_choice_inner(
             Some(&mut stream_exec),
             parent_duplicate_agnostic,
             AggregationChoice::Stream,
+            derived_output,
         );
+        let stream_stats = catalog.statistics_load_checkpoint();
         catalog.restore_statistics_load_checkpoint(&stats_checkpoint);
         let mut hash_delivered = from::Delivered::new();
         let mut hash_exec = None;
-        let mut hash_trace = plan_only.then(PlanTrace::planning);
+        let mut hash_trace = trace.as_deref().map(PlanTrace::fork);
         let hash = run_select_traced_with_delivery_choice(
             select,
             catalog,
@@ -1535,16 +1576,27 @@ fn run_select_traced_with_delivery_choice_inner(
             Some(&mut hash_exec),
             parent_duplicate_agnostic,
             AggregationChoice::Hash,
+            derived_output,
         );
+        let hash_stats = catalog.statistics_load_checkpoint();
         catalog.restore_statistics_load_checkpoint(&stats_checkpoint);
         let costed = |result: &Result<SelectMeta, DriverError>,
                       delivered: &from::Delivered,
                       stream: bool| {
             result.as_ref().ok()?;
             let candidate = delivered.candidate.as_ref()?;
+            // ORDER BY and LIMIT belong to the costed task, but do not
+            // change which aggregation implementation that task contains.
+            let mut aggregate = candidate;
+            while let tidb_planner::candidate_cost::Candidate::Sort { child, .. }
+            | tidb_planner::candidate_cost::Candidate::TopN { child, .. }
+            | tidb_planner::candidate_cost::Candidate::Limit { child, .. } = aggregate
+            {
+                aggregate = child;
+            }
             if stream
                 != matches!(
-                    candidate,
+                    aggregate,
                     tidb_planner::candidate_cost::Candidate::StreamAgg { .. }
                 )
             {
@@ -1552,12 +1604,12 @@ fn run_select_traced_with_delivery_choice_inner(
             }
             Some(tidb_planner::candidate_cost::evaluate(
                 candidate,
-                &tidb_planner::candidate_cost::CostEnv::default(),
+                ctx.optimizer_cost_env(),
                 tidb_planner::task_type::TaskType::Root,
             ))
         };
-        let stream_cost = costed(&stream, &stream_delivered, true);
-        let hash_cost = costed(&hash, &hash_delivered, false);
+        let stream_cost = costed(&stream, &stream_delivered, true).filter(|_| stream_exec.is_some());
+        let hash_cost = costed(&hash, &hash_delivered, false).filter(|_| hash_exec.is_some());
         let chosen = match (&stream_cost, &hash_cost) {
             (Some(stream), Some(hash)) => {
                 if tidb_planner::candidate_cost::prefer(stream, hash) {
@@ -1570,20 +1622,48 @@ fn run_select_traced_with_delivery_choice_inner(
             (None, Some(_)) => Some(AggregationChoice::Hash),
             (None, None) => None,
         };
-        if let Some(chosen) = chosen {
-            return run_select_traced_with_delivery_choice(
-                select,
-                catalog,
-                current_db,
-                ctx,
-                trace,
-                required,
-                output_delivered,
-                deferred_exec,
-                parent_duplicate_agnostic,
-                chosen,
-            );
+        let stream = stream.ok().zip(stream_exec).map(|(meta, exec)| {
+            (meta, exec, stream_delivered, stream_trace, stream_stats)
+        });
+        let hash = hash
+            .ok()
+            .zip(hash_exec)
+            .map(|(meta, exec)| (meta, exec, hash_delivered, hash_trace, hash_stats));
+        let selected = match chosen {
+            Some(AggregationChoice::Stream) => {
+                drop(hash);
+                stream
+            }
+            Some(AggregationChoice::Hash) => {
+                drop(stream);
+                hash
+            }
+            _ => None,
+        };
+        if let Some(((columns, _), exec, delivered, selected_trace, selected_stats)) = selected {
+            catalog.restore_statistics_load_checkpoint(&selected_stats);
+            if let (Some(trace), Some(selected_trace)) = (trace.as_deref_mut(), selected_trace) {
+                *trace = selected_trace;
+            }
+            if let Some(output) = output_delivered {
+                *output = delivered;
+            }
+            if let Some(deferred) = deferred_exec {
+                *deferred = Some(exec);
+                return Ok((columns, Vec::new()));
+            }
+            let rows = if plan_only {
+                Vec::new()
+            } else {
+                let types: Vec<_> = columns.iter().map(|(_, ty)| ty.clone()).collect();
+                drain_executor_rows(exec, &types, &ctx.statement_memory())?
+            };
+            return Ok((columns, rows));
         }
+    }
+    #[cfg(test)]
+    if !select.group_by.is_empty() || select.distinct {
+        AGGREGATION_PIPELINE_BUILDS.with(|builds| builds.set(builds.get() + 1));
     }
     // Go invokes `TryFastPlan` before `PlanBuilder`: a complete point read does
     // not materialize CTEs, run logical rewrites, derive statistics, or build a
@@ -1596,11 +1676,8 @@ fn run_select_traced_with_delivery_choice_inner(
             return Ok(result);
         }
     }
-    // Only a derived-table caller asks for an output-order receipt. Go's
-    // projection elimination can then map the outer relation directly onto
-    // an aggregation's schema, while a top-level SELECT retains the visible
-    // Projection that restores function-first partial aggregate outputs.
-    let derived_output = output_delivered.is_some();
+    // A cost-comparison receipt does not make this a derived table. Preserve
+    // the caller's output mode when building each physical alternative.
     if let Some(delivered) = output_delivered.as_deref_mut() {
         delivered.clear();
     }
@@ -1943,9 +2020,11 @@ fn run_select_traced_with_delivery_choice_inner(
             // withheld from a single-KV-table `SELECT` because that leaf is
             // costed later, and a question about which names the statement
             // WRITES cannot be deferred with it.
-            let all_names = leaf_demand::LeafDemand::of_select(select);
+            let mut all_names = leaf_demand::LeafDemand::of_select(select);
+            all_names.require_lock_handles(select, catalog, current_db);
             let wanted = plan_at_leaf.then(|| all_names.clone());
-            let output_wanted = leaf_demand::LeafDemand::of_select_output(select);
+            let mut output_wanted = leaf_demand::LeafDemand::of_select_output(select);
+            output_wanted.require_lock_handles(select, catalog, current_db);
             // The estimate owner: every relation of this `FROM` with the row
             // count `derive_stats` derives for it, read off the statement,
             // the catalog and the statistics. It is built here, beside the
@@ -1959,15 +2038,12 @@ fn run_select_traced_with_delivery_choice_inner(
             // key condition and the statement degenerates to a full scan.
             // A grouped stream plan is the exception above: its non-empty
             // property has already committed leaf planning at this site.
-            // A plain single-table SELECT has one statistics owner below:
-            // `commit_fast_path_source` derives the DataSource rows while it
-            // costs the access paths. Running `row_source` here as well used
-            // to repeat the full selectivity/ranger pass, which is especially
-            // visible for large IN predicates. Joins still need the complete
-            // relation map before they are built, while GROUP BY / DISTINCT
-            // need its per-expression NDV estimates; retain those cases.
-            let needs_row_source_estimate = plan_at_leaf
-                || !select.group_by.is_empty()
+            // The physical leaf owner also owns its logical StatsInfo. A
+            // sole KV source returns that profile below, including the NDVs
+            // aggregate/DISTINCT parents need. Building a second RowSource
+            // here would recompile predicates and repeat selectivity. Joins
+            // still need their relation map before physical leaf planning.
+            let needs_parent_stats = !select.group_by.is_empty()
                 || select.distinct
                 || select.fields.fields().iter().any(|field| {
                     matches!(field, SelectField::Expr { expr, .. } if expr.has_aggregate_flag())
@@ -1980,6 +2056,9 @@ fn run_select_traced_with_delivery_choice_inner(
                     .order_by
                     .iter()
                     .any(|item| item.expr.has_aggregate_flag());
+            let needs_row_source_estimate = plan_at_leaf
+                || (needs_parent_stats
+                    && access::sole_kv_table(&select.from, catalog, current_db).is_none());
             let row_source = needs_row_source_estimate
                 .then(|| {
                     join_reorder::row_source(
@@ -2272,7 +2351,7 @@ fn run_select_traced_with_delivery_choice_inner(
     };
     let AccessPathCommit {
         mut index_order,
-        candidate: access_candidate,
+        candidate: mut access_candidate,
         direct_output,
         direct_output_offsets,
         cop_projection_offsets,
@@ -2281,6 +2360,7 @@ fn run_select_traced_with_delivery_choice_inner(
         handle_range_residual,
         access_residual,
         logical_rows,
+        logical_stats,
         reader_ready,
         order_satisfied,
     } = access_path;
@@ -2291,18 +2371,34 @@ fn run_select_traced_with_delivery_choice_inner(
     if joined_logical_rows.is_none() {
         joined_logical_rows = logical_rows;
     }
+    if let Some(profile) = logical_stats.as_ref() {
+        if grouped_logical_rows.is_none() {
+            let expressions = select
+                .group_by
+                .iter()
+                .map(|item| &item.expr)
+                .collect::<Vec<_>>();
+            grouped_logical_rows = grouped_source_rows(profile, &expressions, &scope);
+        }
+        if select.distinct && distinct_logical_rows.is_none() {
+            let expressions = select
+                .fields
+                .fields()
+                .iter()
+                .map(|field| match field {
+                    SelectField::Expr { expr, .. } => Some(expr),
+                    SelectField::Wildcard(_) => None,
+                })
+                .collect::<Option<Vec<_>>>();
+            distinct_logical_rows = expressions
+                .as_deref()
+                .and_then(|expressions| grouped_source_rows(profile, expressions, &scope));
+        }
+    }
     let consumed_where = consumed_where || join_consumed_where;
     let grouped_stream_ordered = aggregation_order
         .as_ref()
         .is_some_and(|order| order.is_delivered_by(&from_delivered, &scope));
-    if grouped_stream_ordered {
-        if let (Some(delivered), Some(order)) = (
-            output_delivered.as_deref_mut(),
-            grouped_select_output_order(traced_select),
-        ) {
-            delivered.push(order);
-        }
-    }
     // Go's `TryFastPlan` makes a simple select list part of PointGetPlan or
     // BatchPointGetPlan itself. The lookup source already emits exactly that
     // schema, and the equality/IN predicate was fully consumed by the key,
@@ -2396,6 +2492,9 @@ fn run_select_traced_with_delivery_choice_inner(
             .is_some_and(|access| access.accept_column_prune(&offsets))
         {
             scope = crate::column_prune::pruned_scope(&scope, &offsets);
+            if let Some(order) = index_order.as_mut() {
+                order.remap_columns(&offsets);
+            }
             if let Some(trace) = trace.as_deref_mut() {
                 trace.cop_table_projection(
                     traced_select.fields.fields(),
@@ -2416,8 +2515,11 @@ fn run_select_traced_with_delivery_choice_inner(
     // alone, narrow the scan -- and with it the scope -- to the columns the
     // statement actually reads.
     let scope_before_prune = scope.clone();
-    let general_prune_offsets = crate::column_prune::prunable_columns(select, &scope);
-    prune_scan_columns(select, &mut scope, &mut from_source);
+    let column_demand = leaf_demand::LeafDemand::of_select(select);
+    let general_prune_offsets = crate::column_prune::prunable_columns(select, &scope, &column_demand);
+    if let Some(keep) = &general_prune_offsets {
+        prune_scan_columns(keep, &mut scope, &mut from_source);
+    }
     if let Some(keep) = general_prune_offsets
         .as_deref()
         .filter(|keep| keep.len() < scope_before_prune.width() && scope.width() == keep.len())
@@ -2492,7 +2594,10 @@ fn run_select_traced_with_delivery_choice_inner(
             ctx,
             consumed_where,
             logical_rows,
-            joined_logical_rows,
+            logical_stats
+                .as_ref()
+                .map(|stats| stats.row_count())
+                .or(joined_logical_rows),
             grouped_logical_rows,
             grouped_stream_ordered,
             grouped_stream_physical_order,
@@ -2544,12 +2649,13 @@ fn run_select_traced_with_delivery_choice_inner(
     // column a correlated WHERE subquery's Apply appends.
     // Predicate push-down: over a single base table, offer the source the
     // conjuncts it can apply itself; only the residual needs a `Selection`.
-    let (executed_where, pushed_where) = negotiate_scan_filter(
+    let (executed_where, pushed_where, pushed_access_residual) = negotiate_scan_filter(
         select,
         &scope,
         &mut source,
         ctx,
         consumed_where,
+        access_residual.as_ref().or(handle_range_residual.as_ref()),
         trace.as_deref_mut(),
     );
     let cop_filtered_projection_ready = handle_range_residual.is_some()
@@ -2564,6 +2670,11 @@ fn run_select_traced_with_delivery_choice_inner(
                     .is_some_and(|access| access.accept_post_filter_projection(offsets))
             });
     if cop_filtered_projection_ready {
+        if let Some(order) = index_order.as_mut() {
+            order.remap_columns(
+                filtered_cop_projection_offsets.as_deref().expect("accepted projection"),
+            );
+        }
         scope = crate::column_prune::pruned_scope(
             &scope,
             filtered_cop_projection_offsets
@@ -2584,7 +2695,7 @@ fn run_select_traced_with_delivery_choice_inner(
     // id DESC LIMIT 2` dropped its sort, capped the FORWARD walk, and
     // answered the two SMALLEST ids.
     let descending_order = select.order_by.first().is_some_and(|item| item.desc);
-    let order_satisfied = order_satisfied && (!descending_order || order_from_access);
+    let mut order_satisfied = order_satisfied && (!descending_order || order_from_access);
     if order_satisfied && order_from_access {
         if let Some(limit) = select.limit.as_ref() {
             let count = eval_limit_bound(&limit.count)?;
@@ -2683,39 +2794,40 @@ fn run_select_traced_with_delivery_choice_inner(
                     .or(handle_range_residual.as_ref())
                     .unwrap_or(written);
                 if access_residual.is_some() || handle_range_residual.is_some() {
-                    let resolver = ScopeResolver {
-                        scope: &filter_scope,
-                    };
-                    let mut physical = rewrite_expr_resolved(predicate, &resolver)
-                        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-                    refine_comparisons(&mut physical, ctx)
-                        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+                    let physical = pushed_access_residual
+                        .as_deref()
+                        .expect("a traced accepted scan retains its access residual expressions");
                     trace.residual_selection(
                         predicate,
-                        Some(std::slice::from_ref(&physical)),
+                        Some(physical),
                         &qualify,
                         logical_rows,
-                        crate::driver::access::select_predicate_stats_selectivity_in_session(
+                        access::select_expression_stats_selectivity(
                             select,
-                            predicate,
+                            physical,
                             catalog,
                             current_db,
                             &filter_scope,
+                            false,
                             ctx.default_string_match_selectivity(),
                         ),
                     );
                 } else if grouped_derived_output_pruned {
-                    let resolver = ScopeResolver {
-                        scope: &filter_scope,
-                    };
-                    let mut physical = rewrite_expr_resolved(predicate, &resolver)
-                        .map_err(|e| eval_error_in_clause(e, "where clause"))?;
-                    refine_comparisons(&mut physical, ctx)
-                        .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+                    let physical =
+                        tidb_expr::expr_util::compose_cnf_condition(pushed_where.clone())
+                            .expect("the source accepted a non-empty scan filter");
                     if !trace.physical_selection(
                         &physical,
                         predicate,
-                        select_stats_selectivity(select, catalog, current_db, &filter_scope),
+                        access::select_expression_stats_selectivity(
+                            select,
+                            &pushed_where,
+                            catalog,
+                            current_db,
+                            &filter_scope,
+                            true,
+                            ctx.default_string_match_selectivity(),
+                        ),
                     ) {
                         trace.refuse(
                             "a pruned derived aggregation's Selection is not printable yet",
@@ -2726,7 +2838,15 @@ fn run_select_traced_with_delivery_choice_inner(
                         predicate,
                         Some(&pushed_where),
                         &qualify,
-                        select_stats_selectivity(select, catalog, current_db, &filter_scope),
+                        access::select_expression_stats_selectivity(
+                            select,
+                            &pushed_where,
+                            catalog,
+                            current_db,
+                            &filter_scope,
+                            true,
+                            ctx.default_string_match_selectivity(),
+                        ),
                     );
                 }
                 if cop_filtered_projection_ready
@@ -2760,30 +2880,24 @@ fn run_select_traced_with_delivery_choice_inner(
     // is what keeps those root operators above the boundary rather than
     // inside it.
     let mut cop_selection_printed = false;
-    if let Some(predicate) = &executed_where {
+    if executed_where.is_some() {
         if let Some(trace) = trace.as_deref_mut() {
-            let cop_conjuncts = select
-                .where_clause
-                .as_ref()
-                .and_then(|whole| access::scan_pushed_conjuncts(whole, predicate));
-            match &cop_conjuncts {
-                Some(written) => {
-                    cop_selection_printed = trace.cop_selection_reader(
-                        written,
+            if pushed_where.is_empty() {
+                trace.scan_reader_or_cop_selection();
+            } else {
+                cop_selection_printed = trace.cop_selection_reader(
+                    &pushed_where,
+                    &qualify,
+                    access::select_expression_stats_selectivity(
+                        select,
                         &pushed_where,
-                        &qualify,
-                        access::select_predicate_stats_selectivity(
-                            select,
-                            written,
-                            catalog,
-                            current_db,
-                            &filter_scope,
-                        ),
-                    );
-                }
-                None => {
-                    trace.scan_reader_or_cop_selection();
-                }
+                        catalog,
+                        current_db,
+                        &filter_scope,
+                        false,
+                        ctx.default_string_match_selectivity(),
+                    ),
+                );
             }
         }
     }
@@ -2828,6 +2942,9 @@ fn run_select_traced_with_delivery_choice_inner(
                     current_db,
                     ctx,
                 )?;
+                // A runtime Apply has no costed inner task to compose.
+                from_delivered.candidate = None;
+                access_candidate = None;
             }
             let predicate_resolver = ScopeResolver {
                 scope: &current_scope,
@@ -2866,19 +2983,18 @@ fn run_select_traced_with_delivery_choice_inner(
                 let stats = physical_source_names
                     .then_some(crate::plan_trace::SELECTIVITY_FACTOR)
                     .or_else(|| {
-                        // `cardinality.Selectivity(RootTaskConds)` once the
-                        // cop `Selection` has already priced its own half.
-                        if cop_selection_printed {
-                            access::select_predicate_stats_selectivity(
-                                select,
-                                &selection_written,
-                                catalog,
-                                current_db,
-                                &filter_scope,
-                            )
-                        } else {
-                            select_stats_selectivity(select, catalog, current_db, &filter_scope)
-                        }
+                        // After the cop boundary, this list contains only
+                        // RootTaskConds. Otherwise it also includes the
+                        // source's pushed conditions. Both are already built.
+                        access::select_expression_stats_selectivity(
+                            select,
+                            explained_where.as_deref().unwrap_or_default(),
+                            catalog,
+                            current_db,
+                            &current_scope,
+                            false,
+                            ctx.default_string_match_selectivity(),
+                        )
                     });
                 if let Some(predicate) = &physical_trace_predicate {
                     let column_names =
@@ -2939,6 +3055,7 @@ fn run_select_traced_with_delivery_choice_inner(
 
     let mut limit_before_projection = false;
     let mut select_lock_traced = false;
+    let mut select_lock_installed = false;
     if let Some((offset, count)) = embedded_lookup_limit {
         if let Some(trace) = trace.as_deref_mut() {
             if !trace.embedded_lookup_limit(offset, count, logical_rows) {
@@ -2947,6 +3064,14 @@ fn run_select_traced_with_delivery_choice_inner(
         }
         limit_before_projection = true;
         if let Some((offsets, fields)) = ordered_lookup_projection(select, &current_scope) {
+            if select
+                .lock
+                .as_ref()
+                .is_some_and(|lock| lock.kind == tidb_ast::LockKind::Update)
+            {
+                source = select_lock::wrap(source, select, &current_scope, catalog, current_db, ctx)?;
+                select_lock_installed = true;
+            }
             let inner_resolver = ScopeResolver {
                 scope: &current_scope,
             };
@@ -2989,6 +3114,16 @@ fn run_select_traced_with_delivery_choice_inner(
         }
     }
 
+    // Carry the complete source task alongside the executor. A later
+    // operator must not recover an older leaf receipt after the whole task
+    // becomes unpriced.
+    let mut plain_candidate = output_delivered.as_ref().and_then(|_| {
+        from_delivered
+            .candidate
+            .clone()
+            .or_else(|| access_candidate.clone())
+    });
+
     // Window functions: the source rows are materialized here, each window
     // call is computed over them (see `crate::window`), and its values are
     // appended as one synthetic source column per call. Every `Expr::Window`
@@ -2998,6 +3133,12 @@ fn run_select_traced_with_delivery_choice_inner(
     let visible_fields = select.fields.clone();
     let window_rewritten;
     let select = if crate::window::select_has_window(select) {
+        // Window materialization can reorder every input row. The new
+        // source has no scan-order contract: neither the outer Sort/TopN
+        // nor a derived-table consumer may inherit the old leaf receipt.
+        order_satisfied = false;
+        from_delivered.clear();
+        plain_candidate = None;
         let calls = crate::window::collect_window_calls(select)?;
         let source_types: Vec<FieldType> = current_scope
             .column_list()
@@ -3071,6 +3212,7 @@ fn run_select_traced_with_delivery_choice_inner(
                 ctx,
             )?;
             source = applied;
+            plain_candidate = None;
             current_scope = widened_scope;
         }
         projected.push((
@@ -3098,6 +3240,7 @@ fn run_select_traced_with_delivery_choice_inner(
             catalog,
             current_db,
             ctx,
+            &mut plain_candidate,
         )?;
     }
     let projected_fields: Vec<SelectField> =
@@ -3280,7 +3423,7 @@ fn run_select_traced_with_delivery_choice_inner(
     // complete WHERE even when the executable Selection remains above the scan.
     if let Some(delivered) = output_delivered.as_deref_mut() {
         delivered.candidate = logical_column_prune
-            .then(|| from_delivered.candidate.clone().or_else(|| access_candidate.clone()))
+            .then(|| plain_candidate.clone())
             .flatten();
         // A COMPUTED simple projection is Go's `PhysicalProjection` over the
         // child task, priced by `getPlanCostVer24PhysicalProjection` -- child
@@ -3299,7 +3442,7 @@ fn run_select_traced_with_delivery_choice_inner(
             && simple_projection
             && select.order_by.is_empty()
         {
-            if let Some(child) = from_delivered.candidate.clone().or_else(|| access_candidate.clone())
+            if let Some(child) = plain_candidate.clone()
             {
                 let input_rows = tidb_planner::candidate_cost::evaluate(
                     &child,
@@ -3345,6 +3488,9 @@ fn run_select_traced_with_delivery_choice_inner(
         None
     };
     let mut deferred_distinct_sort: Option<Vec<SortByItem>> = None;
+    let mut distinct_cost = (select.distinct && !distinct_eliminated)
+        .then(|| plain_candidate.take())
+        .flatten();
 
     // ORDER BY: a sort below the projection, with by-items resolved against
     // the SELECT list first and the SOURCE schema second -- Go's own
@@ -3516,6 +3662,21 @@ fn run_select_traced_with_delivery_choice_inner(
                 source = trace.meter(source);
             }
         } else {
+            distinct_cost = distinct_cost.map(|child| {
+                let rows = tidb_planner::candidate_cost::evaluate(
+                    &child, ctx.optimizer_cost_env(), tidb_planner::task_type::TaskType::Root,
+                ).rows;
+                tidb_planner::candidate_cost::Candidate::Sort {
+                    child: Box::new(child),
+                    rows,
+                    row_size: tidb_planner::candidate_cost::RowSize::Fixed(
+                        crate::access_cost::schema_avg_row_size(&sort_schema.columns.iter()
+                            .filter_map(|column| column.ret_type.clone()).collect::<Vec<_>>()),
+                    ),
+                    by_items: by_items.iter()
+                        .map(|item| matches!(item.expr, Expression::ScalarFunction(_))).collect(),
+                }
+            });
             source = Box::new(SortExec::new(
                 ExecutorMeta::new(sort_schema, 3, INIT_CAP, MAX_CHUNK_SIZE),
                 by_items,
@@ -3562,10 +3723,36 @@ fn run_select_traced_with_delivery_choice_inner(
         }
     }
 
-    // The cluster-session transaction seam collects the raw keys consumed by
-    // a locking read and issues their TiKV pessimistic lock. It is transparent
-    // to row values, so the executor chain needs no row-transforming wrapper,
-    // but the physical plan retains Go's SelectLock at this point.
+    if select
+        .lock
+        .as_ref()
+        .is_some_and(|lock| lock.kind == tidb_ast::LockKind::Update)
+        && !select_lock_installed
+    {
+        if !limit_before_projection && !fused_topn && !select.distinct {
+            if let Some(limit) = select.limit.as_ref() {
+                let count = eval_limit_bound(&limit.count)?;
+                let offset = limit
+                    .offset
+                    .as_ref()
+                    .map(eval_limit_bound)
+                    .transpose()?
+                    .unwrap_or(0);
+                source = Box::new(LimitExec::new(
+                    ExecutorMeta::new(source.schema().clone(), 4, INIT_CAP, MAX_CHUNK_SIZE),
+                    offset,
+                    count,
+                    source,
+                ));
+                if let Some(trace) = trace.as_deref_mut() {
+                    trace.limit(offset, count);
+                    source = trace.meter(source);
+                }
+                limit_before_projection = true;
+            }
+        }
+        source = select_lock::wrap(source, select, &current_scope, catalog, current_db, ctx)?;
+    }
     if select.lock.is_some() && !select_lock_traced {
         if let Some(trace) = trace.as_deref_mut() {
             trace.select_lock();
@@ -3633,6 +3820,50 @@ fn run_select_traced_with_delivery_choice_inner(
     // Go's one-field-type-per-chunk-column invariant.
     let projection_elided =
         projection_elision_candidate && source.schema().columns.len() == out_schema.columns.len();
+    // Go's buildDistinct is a normal aggregation over the projected fields.
+    // Publish the same task we build, including an accepted cop partial;
+    // otherwise both alternatives are discarded and Auto plans it again.
+    distinct_cost = distinct_cost
+        .zip(distinct_logical_rows)
+        .map(|(mut child, output_rows)| {
+            let mut input_rows = tidb_planner::candidate_cost::evaluate(
+                &child,
+                ctx.optimizer_cost_env(),
+                tidb_planner::task_type::TaskType::Root,
+            )
+            .rows;
+            let row_size = crate::access_cost::schema_avg_row_size(&ret_types);
+            let group_items = vec![false; ret_types.len()];
+            if partial_distinct {
+                child = agg_select::pushed_grouped_partial_candidate(
+                    child,
+                    output_rows,
+                    row_size,
+                    0,
+                    &group_items,
+                    distinct_streamed,
+                );
+                input_rows = output_rows;
+            } else if direct_distinct_input.is_none() && !projection_elided {
+                child = tidb_planner::candidate_cost::Candidate::Projection {
+                    child: Box::new(child),
+                    input_rows,
+                    exprs: exprs
+                        .iter()
+                        .map(|expr| matches!(expr, Expression::ScalarFunction(_)))
+                        .collect(),
+                };
+            }
+            agg_select::aggregate_candidate(
+                child,
+                input_rows,
+                output_rows,
+                row_size,
+                ret_types.len(),
+                &group_items,
+                distinct_streamed,
+            )
+        });
     // Only EXPLAIN needs a second view of the executable expression tree.
     // Ordinary execution moves the sole copy into ProjectionExec, so the
     // TPCC hot path pays no clone for physical-expression rendering.
@@ -3826,6 +4057,23 @@ fn run_select_traced_with_delivery_choice_inner(
                 Some(expr) => eval_limit_bound(expr)?,
                 None => 0,
             };
+            distinct_cost = distinct_cost.map(|child| {
+                let input_rows = tidb_planner::candidate_cost::evaluate(
+                    &child, ctx.optimizer_cost_env(), tidb_planner::task_type::TaskType::Root,
+                ).rows;
+                tidb_planner::candidate_cost::Candidate::TopN {
+                    child: Box::new(child),
+                    input_rows,
+                    output_rows: (input_rows - offset as f64).max(0.0).min(count as f64),
+                    row_size: tidb_planner::candidate_cost::RowSize::Fixed(
+                        crate::access_cost::schema_avg_row_size(&ret_types),
+                    ),
+                    by_items: by_items.iter()
+                        .map(|item| matches!(item.expr, Expression::ScalarFunction(_))).collect(),
+                    count,
+                    offset,
+                }
+            });
             root = Box::new(TopNExec::new(
                 ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
                 by_items,
@@ -3841,6 +4089,20 @@ fn run_select_traced_with_delivery_choice_inner(
                 root = trace.meter(root);
             }
         } else {
+            distinct_cost = distinct_cost.map(|child| {
+                let rows = tidb_planner::candidate_cost::evaluate(
+                    &child, ctx.optimizer_cost_env(), tidb_planner::task_type::TaskType::Root,
+                ).rows;
+                tidb_planner::candidate_cost::Candidate::Sort {
+                    child: Box::new(child),
+                    rows,
+                    row_size: tidb_planner::candidate_cost::RowSize::Fixed(
+                        crate::access_cost::schema_avg_row_size(&ret_types),
+                    ),
+                    by_items: by_items.iter()
+                        .map(|item| matches!(item.expr, Expression::ScalarFunction(_))).collect(),
+                }
+            });
             root = Box::new(SortExec::new(
                 ExecutorMeta::new(out_schema.clone(), 3, INIT_CAP, MAX_CHUNK_SIZE),
                 by_items,
@@ -3869,6 +4131,15 @@ fn run_select_traced_with_delivery_choice_inner(
             None => 0,
         };
         let limit_schema = root.schema().clone();
+        distinct_cost = distinct_cost.map(|child| {
+            let rows = tidb_planner::candidate_cost::evaluate(
+                &child, ctx.optimizer_cost_env(), tidb_planner::task_type::TaskType::Root,
+            ).rows;
+            tidb_planner::candidate_cost::Candidate::Limit {
+                child: Box::new(child),
+                output_rows: (rows - offset as f64).max(0.0).min(count as f64),
+            }
+        });
         root = Box::new(LimitExec::new(
             ExecutorMeta::new(limit_schema, 4, limit_init_cap(count), MAX_CHUNK_SIZE),
             offset,
@@ -3909,6 +4180,12 @@ fn run_select_traced_with_delivery_choice_inner(
                 }
             }
             root = trace.meter(root);
+        }
+    }
+
+    if select.distinct && !distinct_eliminated {
+        if let Some(delivered) = output_delivered {
+            delivered.candidate = distinct_cost;
         }
     }
 

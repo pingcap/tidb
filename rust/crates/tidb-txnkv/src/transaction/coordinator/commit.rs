@@ -44,7 +44,7 @@ use super::super::state::{
 use super::{
     classify_key_error, record_attempt, secondary_commit_call_budget, transaction_lock_ttl_ms,
     OptimisticCoordinatorError, RealOptimisticTransaction, RecoveryPhase, MAX_COMMIT_TS_DRIFT_MS,
-    MAX_LOCK_ATTEMPTS, TSO_LOGICAL_BITS,
+    MAX_COMMIT_TIMESTAMP_ATTEMPTS, TSO_LOGICAL_BITS,
 };
 
 impl<C, L, T> RealOptimisticTransaction<C, L, T>
@@ -130,7 +130,6 @@ where
             protocol.use_one_pc
         ));
         let prewrite_started = std::time::Instant::now();
-        let mut lock_attempts = 0usize;
 
         loop {
             // One concurrent round: every pending region batch's Prewrite is
@@ -276,7 +275,7 @@ where
                                 batch.context(),
                                 call,
                             ) {
-                                Ok(()) if lock_attempts < MAX_LOCK_ATTEMPTS => {
+                                Ok(()) => {
                                     record_attempt(
                                         &mut receipt,
                                         TransactionAttemptPhase::Prewrite,
@@ -288,27 +287,7 @@ where
                                             detail: "Prewrite lock resolved or waited; retrying at the same start_ts".to_owned(),
                                         }),
                                     );
-                                    lock_attempts += 1;
                                     next_round.push_back((batch, true));
-                                }
-                                Ok(()) => {
-                                    let cause = TransactionCause::Lock {
-                                        key: primary_key.clone(),
-                                        detail: "Prewrite lock retry budget exhausted".to_owned(),
-                                    };
-                                    record_attempt(
-                                        &mut receipt,
-                                        TransactionAttemptPhase::Prewrite,
-                                        &published_keys,
-                                        &batch,
-                                        Some(response.publication.clone()),
-                                        TransactionAttemptResult::DefinitiveFailure(cause.clone()),
-                                    );
-                                    return Ok(self.rollback_after_failure(
-                                        receipt,
-                                        &possibly_prewrite_keys,
-                                        cause,
-                                    ));
                                 }
                                 Err(cause) => {
                                     record_attempt(
@@ -610,7 +589,11 @@ where
         &self,
         mutations: Vec<OptimisticMutation>,
     ) -> Result<(Vec<OptimisticMutation>, Vec<u8>), MutationSetError> {
-        pin_primary(self.pinned_primary_key.as_deref(), mutations)
+        pin_primary(
+            self.pinned_primary_key.as_deref(),
+            mutations,
+            self.pessimistic.as_ref().map(|plan| &plan.locked_keys),
+        )
     }
 
     /// Reports a prewrite whose outcome cannot be known, without cleanup.
@@ -637,7 +620,7 @@ where
         minimum: u64,
         call: &UnaryCallContext,
     ) -> Result<u64, TransactionCause> {
-        for _ in 0..MAX_LOCK_ATTEMPTS {
+        for _ in 0..MAX_COMMIT_TIMESTAMP_ATTEMPTS {
             if call.cancellation().is_cancelled() || call.timeout().is_zero() {
                 return Err(TransactionCause::Transport {
                     detail: "commit timestamp allocation was cancelled".to_owned(),
@@ -1192,30 +1175,37 @@ where
 /// abandoned. That is a torn transaction, and it is why the plan carries the
 /// pinned key rather than defaulting.
 ///
-/// A pinned primary this transaction locked but never wrote is not in the
-/// mutation set, and a primary prewrite never writes is no recovery entry point
-/// at all. Go covers that with an `Op_Lock` mutation (`2pc.go`
-/// `initKeysAndMutations`: `} else if it.Flags().HasLocked() { op =
-/// kvrpcpb.Op_Lock }`) and so do we — which is why nothing downstream needs a
-/// "the primary is missing" branch.
+/// Every held key must participate, including unchanged secondary rows.
+/// Go `initKeysAndMutations` emits `Op_Lock` for locked entries without a
+/// value change. Omitting them leaves pessimistic locks behind after commit.
+/// Include the pinned primary in the same set so recovery and cleanup use
+/// exactly the keys that prewrite and commit process.
 fn pin_primary(
     pinned: Option<&[u8]>,
-    mutations: Vec<OptimisticMutation>,
+    mut mutations: Vec<OptimisticMutation>,
+    locked_keys: Option<&std::collections::BTreeSet<Vec<u8>>>,
 ) -> Result<(Vec<OptimisticMutation>, Vec<u8>), MutationSetError> {
-    let Some(pinned) = pinned else {
-        let primary_key = mutations[0].key().to_vec();
-        return Ok((mutations, primary_key));
-    };
-    let primary_key = pinned.to_vec();
-    if mutations
-        .iter()
-        .any(|mutation| mutation.key() == primary_key.as_slice())
-    {
+    let primary_key = pinned.unwrap_or_else(|| mutations[0].key()).to_vec();
+    let held: std::collections::BTreeSet<&[u8]> = locked_keys
+        .into_iter()
+        .flatten()
+        .map(Vec::as_slice)
+        .chain(pinned)
+        .collect();
+    let missing = held
+        .into_iter()
+        .filter(|key| {
+            mutations
+                .binary_search_by(|mutation| mutation.key().cmp(key))
+                .is_err()
+        })
+        .map(|key| OptimisticMutation::lock_only(key.to_vec()))
+        .collect::<Result<Vec<_>, _>>()?;
+    if missing.is_empty() {
         return Ok((mutations, primary_key));
     }
-    let mut extended = mutations;
-    extended.push(OptimisticMutation::lock_only(primary_key.clone())?);
-    Ok((validate_and_sort(extended)?, primary_key))
+    mutations.extend(missing);
+    Ok((validate_and_sort(mutations)?, primary_key))
 }
 
 enum PrimaryResult {
@@ -1279,7 +1269,7 @@ mod tests {
         // sorts smaller. This is the torn-transaction case: before the pin was
         // carried, prewrite named k3 while the heartbeat refreshed k5.
         let mutations = sorted(&[b"k3", b"k5"]);
-        let (result, primary) = pin_primary(Some(b"k5"), mutations).unwrap();
+        let (result, primary) = pin_primary(Some(b"k5"), mutations, None).unwrap();
         assert_eq!(primary, b"k5".to_vec());
         assert_eq!(result.len(), 2, "no Op_Lock is needed when k5 is written");
         assert!(result.iter().any(|m| m.key() == b"k5"));
@@ -1290,7 +1280,7 @@ mod tests {
     #[test]
     fn unpinned_transaction_still_uses_the_smallest_key() {
         let mutations = sorted(&[b"k3", b"k5"]);
-        let (result, primary) = pin_primary(None, mutations).unwrap();
+        let (result, primary) = pin_primary(None, mutations, None).unwrap();
         assert_eq!(primary, b"k3".to_vec());
         assert_eq!(result.len(), 2);
     }
@@ -1301,7 +1291,7 @@ mod tests {
     fn primary_locked_but_never_written_is_prewritten_as_op_lock() {
         // `SELECT ... FOR UPDATE` on k9, then `UPDATE` of k3 only.
         let mutations = sorted(&[b"k3"]);
-        let (result, primary) = pin_primary(Some(b"k9"), mutations).unwrap();
+        let (result, primary) = pin_primary(Some(b"k9"), mutations, None).unwrap();
         assert_eq!(primary, b"k9".to_vec());
         assert_eq!(result.len(), 2);
         let lock = result
@@ -1322,12 +1312,34 @@ mod tests {
     fn heartbeat_key_and_prewrite_primary_are_the_same_key() {
         for heartbeat_key in [b"k1".as_slice(), b"k5", b"k9"] {
             let (result, primary) =
-                pin_primary(Some(heartbeat_key), sorted(&[b"k3", b"k5"])).unwrap();
+                pin_primary(Some(heartbeat_key), sorted(&[b"k3", b"k5"]), None).unwrap();
             assert_eq!(primary, heartbeat_key.to_vec());
             assert!(
                 result.iter().any(|m| m.key() == heartbeat_key),
                 "the refreshed key must be prewritten"
             );
+        }
+    }
+
+    #[test]
+    fn locked_unwritten_secondaries_join_commit_mutations() {
+        let held = [b"k1".to_vec(), b"k3".to_vec(), b"k9".to_vec()]
+            .into_iter()
+            .collect();
+        let (result, primary) =
+            pin_primary(Some(b"k3"), sorted(&[b"k3", b"k5"]), Some(&held)).unwrap();
+        assert_eq!(primary, b"k3");
+        assert_eq!(
+            result.iter().map(|m| m.key()).collect::<Vec<_>>(),
+            vec![b"k1".as_slice(), b"k3", b"k5", b"k9"]
+        );
+        for mutation in &result {
+            let expected = if mutation.key() == b"k1" || mutation.key() == b"k9" {
+                OptimisticMutationKind::LockOnly
+            } else {
+                OptimisticMutationKind::PutExisting
+            };
+            assert_eq!(mutation.kind(), expected);
         }
     }
 

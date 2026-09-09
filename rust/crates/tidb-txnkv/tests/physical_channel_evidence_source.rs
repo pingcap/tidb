@@ -71,20 +71,6 @@ fn a_success_cannot_claim_that_no_physical_channel_was_selected() {
 }
 
 #[test]
-fn explicit_shutdown_has_one_fallible_owner_and_one_drop_safety_net() {
-    let tonic = include_str!("../src/rpc/tonic_coprocessor.rs");
-    let raw = include_str!("../src/rpc/unary.rs");
-    let runtime = include_str!("../src/rpc/transport_runtime.rs");
-
-    assert!(!tonic.contains("impl Drop for TonicCoprocessorClient"));
-    assert!(!raw.contains("impl Drop for RawTransportClient"));
-    assert_eq!(runtime.matches("impl Drop for TransportRuntime").count(), 1);
-    assert!(runtime.contains("response.recv().is_err()"));
-    assert!(runtime.contains("worker.join()"));
-    assert!(runtime.contains("TransportShutdownError::WorkerPanicked"));
-}
-
-#[test]
 fn shutdown_failures_are_public_typed_and_aggregate_without_loss() {
     let error = DirectUnaryClientError::Shutdown(TransportShutdownError::Multiple(vec![
         TransportShutdownError::CommandChannelClosed,

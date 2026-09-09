@@ -21,11 +21,6 @@
 //! delegates to), the shift width rule, and unary minus -- the one operator
 //! whose Int signature can be replaced at BUILD time by a decimal one
 //! ([`unary_minus_integer`]).
-//!
-//! It is one module because these are the pieces a reader has to hold together
-//! to answer "what does Go's `isLHSUnsigned` mean for this pair", and keeping
-//! them beside the promotion hierarchy in `ops.rs` was what pushed that file
-//! past the source-size ratchet.
 
 use super::*;
 

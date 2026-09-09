@@ -431,44 +431,7 @@ impl Session {
 
     pub(crate) fn execute_statement(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
         let stmt = self.parse_at_statement_boundary(sql)?;
-        self.execute_parsed_statement(sql, stmt, false, None)
-    }
-
-    /// Executes the conservative prepared clustered-handle point-read path.
-    /// A refusal returns `None`, allowing the caller to bind and run the
-    /// complete ordinary prepared statement implementation.
-    pub fn execute_fast_prepared_point_get(
-        &mut self,
-        stmt: &Stmt,
-        params: &[tidb_datatype::Datum],
-    ) -> Result<Option<StmtOutput>, DriverError> {
-        if !self.in_transaction() {
-            self.lock_catalog()?.clear_dirty_content();
-        }
-        if let Some((path, privilege)) = fast_table_privilege_target(stmt) {
-            self.require_fast_table_privilege(path, privilege)?;
-        } else {
-            self.require_statement_table_privileges(stmt)?;
-        }
-        self.refuse_pinned_historical_read()?;
-        let Stmt::Query(query) = stmt else {
-            return Ok(None);
-        };
-        let tidb_ast::QueryStmt::Select(select) = &**query else {
-            return Ok(None);
-        };
-        let current_db = self.current_db.clone();
-        let context = self.prepared_point_get_context();
-        let result = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_fast_prepared_point_get_with_decode_context(
-                select,
-                params,
-                catalog,
-                &current_db,
-                &context,
-            )
-        })?;
-        Ok(result.map(|(columns, rows)| StmtOutput::Rows { columns, rows }))
+        self.execute_parsed_statement(sql, stmt, false)
     }
 
     /// Executes the conservative one-row prepared INSERT path.  A refusal
@@ -556,7 +519,7 @@ impl Session {
         let current_db = self.current_db.clone();
         let ctx = self
             .fast_statement_context(true, update.ignore)
-            .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
+            .with_statement_class(tidb_executor::StatementClass::Update);
         let result = self.with_catalog_mut(|catalog| {
             tidb_executor::run_fast_prepared_update(update, params, catalog, &current_db, &ctx)
         })?;
@@ -572,27 +535,31 @@ impl Session {
         stmt: Stmt,
         sql: &str,
     ) -> Result<StmtOutput, DriverError> {
-        self.execute_prepared_ast(sql, stmt, None)
+        self.execute_prepared_ast(sql, stmt)
     }
 
     pub(crate) fn execute_prepared_ast(
         &mut self,
         sql: &str,
         stmt: Stmt,
-        cached_point_get: Option<tidb_executor::PreparedPointGetExecution>,
     ) -> Result<StmtOutput, DriverError> {
         self.begin_prepared_statement_boundary(&stmt);
-        self.execute_parsed_statement(sql, stmt, true, cached_point_get)
+        self.execute_parsed_statement(sql, stmt, true)
     }
 
     /// Executes the subset Go serves through `ExecStmt.PointGet`: the cached
     /// plan has already passed the statement-shape, schema, autocommit,
     /// stale-read, binding, and hint gates. Go skips rebuilding visitInfo for
     /// this reused executor; this path likewise avoids revisiting the AST.
-    pub fn execute_cached_prepared_point_get(
+    /// A stale identity returns `None` before any row is read, so the session
+    /// can replan the retained AST within the same statement lifecycle.
+    pub(crate) fn try_execute_cached_prepared_point_get(
         &mut self,
         cached: tidb_executor::PreparedPointGetExecution,
-    ) -> Result<StmtOutput, DriverError> {
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        if !self.can_reuse_prepared_point_get(cached.plan()) {
+            return Ok(None);
+        }
         self.begin_cached_prepared_query_boundary();
         // `dirty_content` only gates scan/access-path planning. This cached
         // executor owns one handle read and the admission gate already refuses
@@ -613,12 +580,10 @@ impl Session {
             tidb_executor::run_prepared_point_get(&cached, catalog, &current_db, &ctx)
         })?;
         let Some((columns, rows)) = result else {
-            return Err(DriverError::unsupported(
-                "prepared point-get cache was invalidated during the statement",
-            ));
+            return Ok(None);
         };
         self.found_in_plan_cache = true;
-        Ok(StmtOutput::Rows { columns, rows })
+        Ok(Some(StmtOutput::Rows { columns, rows }))
     }
 
     /// Records one cached point read's table on the transaction's metadata-
@@ -773,7 +738,7 @@ impl Session {
     /// the stale execution itself (its statement is already stripped and its
     /// transaction already open).
     fn execute_parsed_statement_no_as_of(&mut self, stmt: Stmt) -> Result<StmtOutput, DriverError> {
-        self.execute_parsed_statement_inner("", stmt, false, None)
+        self.execute_parsed_statement_inner("", stmt, false)
     }
 
     fn execute_parsed_statement(
@@ -781,7 +746,6 @@ impl Session {
         sql: &str,
         stmt: Stmt,
         prepared: bool,
-        cached_point_get: Option<tidb_executor::PreparedPointGetExecution>,
     ) -> Result<StmtOutput, DriverError> {
         // Go's `Preprocess` walks the AST once per statement and answers
         // every table-shaped question from that pass (`preprocess.go`); the
@@ -815,7 +779,7 @@ impl Session {
                 }
             };
         let was_autocommit_statement = !self.in_transaction();
-        let output = self.execute_parsed_statement_inner(sql, stmt, prepared, cached_point_get)?;
+        let output = self.execute_parsed_statement_inner(sql, stmt, prepared)?;
         // Go's autocommit statement is its own transaction; its end writes
         // `LastTxnInfo` exactly as an explicit one's would -- the full
         // commit record for a statement that published, the start-only one
@@ -847,7 +811,6 @@ impl Session {
         sql: &str,
         mut stmt: Stmt,
         prepared: bool,
-        cached_point_get: Option<tidb_executor::PreparedPointGetExecution>,
     ) -> Result<StmtOutput, DriverError> {
         // Go `SelectInto` with `SelectIntoVars`: the query runs as itself and
         // its one row lands in the named user variables. Intercepted at this
@@ -860,7 +823,7 @@ impl Session {
                 if !select.into_vars.is_empty() {
                     let names = std::mem::take(&mut select.into_vars);
                     let output =
-                        self.execute_parsed_statement(sql, stmt, prepared, cached_point_get)?;
+                        self.execute_parsed_statement(sql, stmt, prepared)?;
                     let StmtOutput::Rows { rows, .. } = output else {
                         return Err(DriverError::unsupported(
                             "SELECT INTO expected a row-producing query",
@@ -1148,13 +1111,10 @@ impl Session {
                     },
                     _ => select,
                 };
-                // Go keeps YCSB-E's clustered `LIMIT 1` range on its narrow
-                // table-reader path. The bound prepared AST already contains
-                // the execute-time key, so try the equivalent range/coprocessor
-                // path before constructing the complete logical and physical
-                // tree. Every unsupported clause, hint, residual predicate,
-                // dirty table, or backend refusal remains on the ordinary
-                // planner path below.
+                // Try the bounded clustered-key reader before constructing
+                // the ordinary executor tree. Admission may inspect literals
+                // and parameters but must not evaluate computed endpoints.
+                // Both paths retain this statement's context and snapshot.
                 let current_db = self.current_db.clone();
                 let ctx = self.statement_context(false);
                 let fast_range = self.with_catalog_mut(|catalog| {
@@ -1164,22 +1124,8 @@ impl Session {
                     self.drain_eval_warnings(&ctx);
                     return Ok(StmtOutput::Rows { columns, rows });
                 }
-                if let Some(cached) = cached_point_get.as_ref() {
-                    let current_db = self.current_db.clone();
-                    let ctx = self.prepared_point_get_context();
-                    let result = self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_prepared_point_get(cached, catalog, &current_db, &ctx)
-                    })?;
-                    let Some((columns, rows)) = result else {
-                        return Err(DriverError::unsupported(
-                            "prepared point-get cache was invalidated during the statement",
-                        ));
-                    };
-                    self.found_in_plan_cache = true;
-                    return Ok(StmtOutput::Rows { columns, rows });
-                }
-                let current_db = self.current_db.clone();
-                let ctx = self.statement_context(false);
+                // Admission and ordinary execution belong to one statement:
+                // do not register a second live memory-arbitrator context.
                 let (columns, rows) = self.with_catalog_mut(|catalog| {
                     tidb_executor::run_select_meta_stmt(select, catalog, &current_db, &ctx)
                 })?;
@@ -1249,7 +1195,7 @@ impl Session {
                     // request this statement's read half issues.
                     let ctx = self
                         .statement_context_ignoring(true, update.ignore)
-                        .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
+                        .with_statement_class(tidb_executor::StatementClass::Update);
                     let output = self.with_staged_catalog(|catalog| {
                         // Bound AST, not SQL text: the text still carries the
                         // markers the binary protocol already replaced. See
@@ -1273,7 +1219,7 @@ impl Session {
                     // request this statement's read half issues.
                     let ctx = self
                         .statement_context_ignoring(true, delete.ignore)
-                        .with_statement_class(tidb_executor::StatementClass::UpdateOrDelete);
+                        .with_statement_class(tidb_executor::StatementClass::Delete);
                     let output = self.with_staged_catalog(|catalog| {
                         // Bound AST, not SQL text -- see the UPDATE arm.
                         Ok(StmtOutput::Affected(tidb_executor::run_delete_stmt(

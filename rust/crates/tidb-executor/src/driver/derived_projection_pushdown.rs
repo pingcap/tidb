@@ -51,12 +51,27 @@ pub(crate) fn expand_derived_wildcards(
     catalog: &Catalog,
     current_db: &str,
 ) -> Option<SelectStmt> {
-    let mut rewritten = select.clone();
-    let changed = rewritten
-        .from
-        .as_mut()
-        .is_some_and(|from| expand_join_derived_wildcards(from, catalog, current_db));
-    changed.then_some(rewritten)
+    match super::ast_rewrite::rewrite_derived_selects(select, &mut |child| {
+        let mut rewritten = expand_derived_wildcards(child, catalog, current_db)
+            .map_or(std::borrow::Cow::Borrowed(child), std::borrow::Cow::Owned);
+        if rewritten
+            .fields
+            .fields()
+            .iter()
+            .any(|field| matches!(field, SelectField::Wildcard(_)))
+        {
+            if let Some(fields) = expanded_fields(&rewritten, catalog, current_db) {
+                rewritten.to_mut().fields = fields.into();
+            }
+        }
+        match rewritten {
+            std::borrow::Cow::Borrowed(_) => None,
+            std::borrow::Cow::Owned(select) => Some(select),
+        }
+    }) {
+        std::borrow::Cow::Borrowed(_) => None,
+        std::borrow::Cow::Owned(select) => Some(select),
+    }
 }
 
 /// Pushes leaf-local WHERE predicates into derived SELECTs before column
@@ -96,42 +111,6 @@ fn join_contains_derived(join: &Join) -> bool {
     }
 
     node_contains_derived(&join.left) || join.right.as_ref().is_some_and(node_contains_derived)
-}
-
-fn expand_join_derived_wildcards(join: &mut Join, catalog: &Catalog, current_db: &str) -> bool {
-    let mut changed = expand_node_derived_wildcards(&mut join.left, catalog, current_db);
-    if let Some(right) = &mut join.right {
-        changed |= expand_node_derived_wildcards(right, catalog, current_db);
-    }
-    changed
-}
-
-fn expand_node_derived_wildcards(node: &mut JoinNode, catalog: &Catalog, current_db: &str) -> bool {
-    match node {
-        JoinNode::Table(_) => false,
-        JoinNode::Join(join) => expand_join_derived_wildcards(join, catalog, current_db),
-        JoinNode::Derived { subquery, .. } => {
-            let QueryStmt::Select(select) = &mut **subquery else {
-                return false;
-            };
-            let mut changed = select
-                .from
-                .as_mut()
-                .is_some_and(|from| expand_join_derived_wildcards(from, catalog, current_db));
-            if select
-                .fields
-                .fields()
-                .iter()
-                .any(|field| matches!(field, SelectField::Wildcard(_)))
-            {
-                if let Some(fields) = expanded_fields(select, catalog, current_db) {
-                    select.fields = fields.into();
-                    changed = true;
-                }
-            }
-            changed
-        }
-    }
 }
 
 fn expanded_fields(

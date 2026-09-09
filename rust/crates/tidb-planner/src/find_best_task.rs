@@ -410,14 +410,23 @@ fn merge_join_child_props(
     ])
 }
 
-/// `getHashJoins`'s per-join-type shapes, with no build/probe hints.
-fn hash_join_shapes(join_type: LogicalJoinType) -> Vec<HashJoinShape> {
+/// Go `getHashJoins`: shared build-side enumeration after resolving hints
+/// and whether the selected runtime supports building a semi join's outer side.
+pub(crate) fn hash_join_shapes(
+    join_type: LogicalJoinType,
+    force_left: bool,
+    force_right: bool,
+    semi_outer_build: bool,
+) -> Vec<HashJoinShape> {
     let shape = |inner_idx, use_outer_to_build| HashJoinShape {
         inner_idx,
         use_outer_to_build,
     };
-    match join_type {
+    let shapes = match join_type {
         // Hash join v1 for a semi join builds the right side only.
+        LogicalJoinType::Semi | LogicalJoinType::AntiSemi if semi_outer_build => {
+            vec![shape(1, false), shape(1, true)]
+        }
         LogicalJoinType::Semi
         | LogicalJoinType::AntiSemi
         | LogicalJoinType::LeftOuterSemi
@@ -425,7 +434,14 @@ fn hash_join_shapes(join_type: LogicalJoinType) -> Vec<HashJoinShape> {
         LogicalJoinType::LeftOuter => vec![shape(1, false), shape(1, true)],
         LogicalJoinType::RightOuter => vec![shape(0, true), shape(0, false)],
         LogicalJoinType::Inner => vec![shape(1, false), shape(0, false)],
-    }
+    };
+    shapes
+        .into_iter()
+        .filter(|shape| {
+            let left_build = (shape.inner_idx == 0) != shape.use_outer_to_build;
+            (!force_left || left_build) && (!force_right || !left_build)
+        })
+        .collect()
 }
 
 /// `exhaustPhysicalPlans4LogicalJoin` for a root task with no hints: every
@@ -494,6 +510,7 @@ fn enforced_merge_join_candidates(
     let left_keys: Vec<i64> = offsets.iter().map(|at| join.left_keys[*at]).collect();
     let right_keys: Vec<i64> = offsets.iter().map(|at| join.right_keys[*at]).collect();
     let child_prop = |keys: &[i64]| PhysicalProperty {
+        index_join: None,
         sort_items: keys
             .iter()
             .map(|col| SortItem { col: *col, desc })
@@ -501,6 +518,7 @@ fn enforced_merge_join_candidates(
         task_tp: TaskType::Root,
         expected_cnt: f64::MAX,
         can_add_enforcer: true,
+        no_cop_push_down: prop.no_cop_push_down,
         sort_items_for_partition: Vec::new(),
         cte_producer_status: CteProducerStatus::default(),
     };
@@ -583,10 +601,12 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
         // The OUTER side is re-planned under the SAME property. This is the
         // line that keeps a parent merge join alive above an index join.
         child_props[outer_idx] = PhysicalProperty {
+            index_join: None,
             sort_items: prop.sort_items.clone(),
             task_tp: TaskType::Root,
             expected_cnt: prop.expected_cnt,
             can_add_enforcer: false,
+            no_cop_push_down: prop.no_cop_push_down,
             sort_items_for_partition: Vec::new(),
             cte_producer_status: CteProducerStatus::default(),
         };
@@ -629,14 +649,16 @@ fn hash_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enum
         return Vec::new();
     }
     let child_prop = || PhysicalProperty {
+        index_join: None,
         sort_items: Vec::new(),
         task_tp: TaskType::Root,
         expected_cnt: f64::MAX,
         can_add_enforcer: false,
+        no_cop_push_down: prop.no_cop_push_down,
         sort_items_for_partition: Vec::new(),
         cte_producer_status: CteProducerStatus::default(),
     };
-    hash_join_shapes(join.join_type)
+    hash_join_shapes(join.join_type, false, false, false)
         .into_iter()
         .map(|shape| EnumeratedJoin {
             strategy: JoinStrategy::Hash(shape),
@@ -999,8 +1021,10 @@ fn keep_cheaper(best: &mut Option<Task>, task: Task) {
     }
 }
 
+pub mod candidate;
 pub mod coster;
 pub mod dispatch;
+pub mod index_join;
 
 #[cfg(test)]
 mod tests;

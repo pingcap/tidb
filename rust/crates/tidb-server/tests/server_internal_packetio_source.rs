@@ -182,18 +182,19 @@ fn run_compressed_ping_pair(algorithm: CompressionAlgorithm, capability: u32) {
     let mut reader = PacketIoReader::new(client.try_clone().unwrap(), algorithm).unwrap();
     for _ in 0..2 {
         writer.set_sequence(0);
+        writer.set_compressed_sequence(0);
         writer.write_packet(&[COM_PING]).unwrap();
         writer.flush().unwrap();
         reader.set_sequence(1);
         reader.set_compressed_sequence(writer.compressed_sequence().unwrap());
         let response = reader.read_packet().unwrap();
         assert_eq!(response[0], 0, "compressed COM_PING OK");
-        writer.set_compressed_sequence(reader.compressed_sequence().unwrap());
     }
 
     let mut query = vec![COM_QUERY];
     query.extend_from_slice(b"SELECT 1");
     writer.set_sequence(0);
+    writer.set_compressed_sequence(0);
     writer.write_packet(&query).unwrap();
     writer.flush().unwrap();
     reader.set_sequence(1);
@@ -203,9 +204,9 @@ fn run_compressed_ping_pair(algorithm: CompressionAlgorithm, capability: u32) {
     assert!(!definition.is_empty(), "column definition");
     assert_eq!(reader.read_packet().unwrap(), [1, b'1'], "one text row");
     assert_eq!(reader.read_packet().unwrap()[0], 0xfe, "result terminator");
-    writer.set_compressed_sequence(reader.compressed_sequence().unwrap());
 
     writer.set_sequence(0);
+    writer.set_compressed_sequence(0);
     writer.write_packet(&[COM_QUIT]).unwrap();
     writer.flush().unwrap();
     let report = worker.join().unwrap().unwrap();
@@ -213,12 +214,12 @@ fn run_compressed_ping_pair(algorithm: CompressionAlgorithm, capability: u32) {
 }
 
 #[test]
-fn live_commands_use_negotiated_zlib_and_one_outer_sequence() {
+fn live_commands_reset_negotiated_zlib_sequence_for_each_command() {
     run_compressed_ping_pair(CompressionAlgorithm::Zlib, CLIENT_COMPRESS);
 }
 
 #[test]
-fn live_commands_use_negotiated_zstd_and_one_outer_sequence() {
+fn live_commands_reset_negotiated_zstd_sequence_for_each_command() {
     run_compressed_ping_pair(
         CompressionAlgorithm::Zstd,
         CLIENT_ZSTD_COMPRESSION_ALGORITHM,

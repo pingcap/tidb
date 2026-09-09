@@ -27,13 +27,12 @@
 //! every column, no index ever covers, and `TableFullScan` wins by
 //! construction rather than by cost.
 //!
-//! [`crate::column_prune`] cannot supply it. That module NARROWS a source's
-//! output, so it must be exact in both directions and refuses every shape it
-//! cannot prove (any subquery, three or more tables, a derived table). This
-//! one only feeds the COST MODEL: the source it informs still emits the whole
-//! row, so a demand that is too wide costs a covering index as a double read
-//! and falls back to the scan that would have run anyway. That asymmetry is
-//! what lets this analysis be a name-level over-approximation and stay safe.
+//! This walk supplies both physical column pruning and access-path costing.
+//! A conservative over-approximation retains extra columns; it never omits a
+//! required input. Join leaves apply it before building their parent scopes.
+//! Single-table scans use [`crate::column_prune::prunable_columns`] to add
+//! structural constraints and a retained row column, sharing that final
+//! schema with their covering-index decision.
 //!
 //! # The over-approximation, stated
 //!
@@ -227,6 +226,44 @@ pub(crate) struct LeafDemand {
 }
 
 impl LeafDemand {
+    /// SelectLock consumes record identity even when the SELECT list does not.
+    pub(crate) fn require_lock_handles(
+        &mut self,
+        select: &SelectStmt,
+        catalog: &super::Catalog,
+        current_db: &str,
+    ) {
+        if !select.lock.as_ref().is_some_and(|lock| lock.kind == tidb_ast::LockKind::Update) {
+            return;
+        }
+        let Some(from) = &select.from else { return; };
+        let mut tables = Vec::new();
+        super::select_lock::base_tables(from, &mut tables);
+        for table_ref in tables {
+            let (database, name) = match table_ref.name.as_slice() {
+                [name] => (current_db, name.as_str()),
+                [database, name] => (database.as_str(), name.as_str()),
+                _ => continue,
+            };
+            let Some(super::TableEntry::Kv(table)) = catalog.get_in(database, name) else { continue; };
+            let visible = table_ref.alias.as_deref().unwrap_or(name).to_ascii_lowercase();
+            let names = self.qualified.entry(visible).or_default();
+            if let Some(offset) = table.pk_handle_offset() {
+                names.insert(table.columns[offset].name.to_ascii_lowercase());
+            } else if table.common_handle_offsets().is_empty() {
+                names.insert(EXTRA_HANDLE_NAME.to_owned());
+            } else {
+                names.extend(table.common_handle_offsets().iter()
+                    .map(|offset| table.columns[*offset].name.to_ascii_lowercase()));
+            }
+            // The current physical-key expression routes the selected row to
+            // its partition. Its input columns are part of the same demand.
+            if table.partition().is_some() {
+                names.extend(table.columns.iter().map(|column| column.name.to_ascii_lowercase()));
+            }
+        }
+    }
+
     /// The demand a `SELECT`'s clauses place on the leaves of its own `FROM`.
     pub(crate) fn of_select(select: &SelectStmt) -> Self {
         let mut demand = LeafDemand::default();

@@ -15,6 +15,7 @@
 //! Connected adaptive-paging continuation from the coprocessor worker.
 
 mod cop_read_task_runtime;
+mod cop_iterator;
 mod direct_unary_query_transport;
 mod forwarding;
 mod lock_recovery;
@@ -25,6 +26,7 @@ pub use cop_read_task_runtime::{
     CopReadAcceptedResponse, CopReadResponseError, CopReadTaskError, CopReadTaskReplacement,
     CopReadTaskResponse, CopReadTaskRuntime, FailedCopReadAttempt, PreparedCopReadTask,
 };
+pub use cop_iterator::CopIterator;
 pub use direct_unary_query_transport::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryResponse, DirectUnaryQueryTransport,
     DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError,

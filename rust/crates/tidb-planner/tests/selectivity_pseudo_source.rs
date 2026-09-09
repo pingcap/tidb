@@ -118,10 +118,11 @@ fn est_rows(covered: &[f64], leftover: &[ConditionKind]) -> String {
     conditions.extend_from_slice(leftover);
     let selectivity = combine_selectivity(
         &mut nodes,
-        &conditions,
+        conditions.len(),
         1.0,
         PSEUDO_ROWS as i64,
         SelectivityDefaults::default(),
+        |index| conditions[index],
     );
     explain_rows(selectivity * PSEUDO_ROWS)
 }

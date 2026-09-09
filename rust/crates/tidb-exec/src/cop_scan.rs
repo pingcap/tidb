@@ -19,7 +19,7 @@
 //!
 //! The wide path reads its tables through
 //! [`ClusterTableStorage`](tidb_executor::cluster_storage::ClusterTableStorage),
-//! whose `iter` scans the record range on the session's transaction thread
+//! whose `iter` scans the record range through the session's transaction
 //! and ships every key/value pair of it to the client. The predicate, the row
 //! cap and the column projection are then applied here, after the bytes have
 //! already crossed the network. This module makes the same scan a real
@@ -60,12 +60,9 @@
 //! [`PushdownScannerError::Unsupported`], which the storage turns into "use
 //! `iter`", so a refused shape is slower and never wrong.
 
-use std::collections::VecDeque;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::thread;
+use std::sync::{Arc, Mutex};
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -92,7 +89,6 @@ use tidb_proto::tipb::{
 use tidb_txnkv::KeyRange;
 
 use crate::dag_request::{
-    construct_aggregate_read_only_dag_req_with_conditions,
     construct_aggregated_read_only_dag_req_with_conditions,
     construct_capped_read_only_dag_req_with_conditions,
     construct_grouped_aggregate_read_only_dag_req_with_conditions, DagRequestContext, TiKvScanPlan,
@@ -103,7 +99,6 @@ enum LoweredAggregate {
         message: Aggregation,
         output_width: usize,
     },
-    Global(Vec<Expr>),
     Grouped {
         functions: Vec<Expr>,
         group_by: Vec<Expr>,
@@ -130,114 +125,14 @@ const MYSQL_TYPE_SHORT: i32 = 2;
 /// Go `mysql.TypeTiny`.
 const MYSQL_TYPE_TINY: i32 = 1;
 
-/// How many decoded rows the reader thread may run ahead of the consumer.
-///
-/// The point of the bound is that it *is* a bound: a scan holds a few batches
-/// of decoded rows, never the relation, so the streaming property the scan
-/// source has above the seam survives the thread hop below it.
-// Keep the response-channel boundary above TiKV's small type chunks so a
-// reader can amortize cross-thread wakeups while the consumer drains a full
-// scan. Index scans use Go's MaxChunkSize below: IndexLookUp's
-// `readFromChunk`/`extractTaskHandles` relies on those response boundaries to
-// grow table tasks without splitting a typed chunk.
-const BATCH_ROWS: usize = 32768;
-const INDEX_BATCH_ROWS: usize = 1024;
-const MAX_BATCHES_AHEAD: usize = 64;
-/// Full scans have no early-stop consumer. A deeper bounded queue lets TiKV
-/// response decoding overlap local join/aggregate work; scans with LIMIT keep
-/// the caller's smaller read-ahead so cancellation remains tight.
-const FULL_SCAN_MIN_BATCHES_AHEAD: usize = 16;
-
-/// A process-local pool for bounded table-lookup scans.
-///
-/// Go's `IndexLookUpExecutor` submits each table task to its persistent
-/// worker pool (`pkg/executor/distsql.go:743-745, 1432-1434`).  Rust still
-/// needs a second thread for a remote scan because the transport is
-/// intentionally thread-local, but creating a native thread for every
-/// lookup window needlessly pays pthread setup on the same hot path.  Keep
-/// this pool separate from the executor pool: an executor worker waits for
-/// the scan result, so running the scan on that same pool could convoy the
-/// producer and consumer.  Full scans retain their existing unbounded
-/// dedicated-thread policy below.
-type ScanTask = Box<dyn FnOnce() + Send + 'static>;
-
-struct ScanPool {
-    queue: Mutex<VecDeque<ScanTask>>,
-    signal: Condvar,
-}
-
-fn scan_pool() -> &'static Arc<ScanPool> {
-    static POOL: OnceLock<Arc<ScanPool>> = OnceLock::new();
-    POOL.get_or_init(|| {
-        let pool = Arc::new(ScanPool {
-            queue: Mutex::new(VecDeque::new()),
-            signal: Condvar::new(),
-        });
-        // Lookup windows are bounded and the caller limits their number to
-        // the Go table-worker width (five by default). Keep enough producers
-        // for several concurrent sessions without allowing a full scan to
-        // starve a lookup indefinitely.
-        let workers = std::thread::available_parallelism()
-            .map(|parallelism| parallelism.get().saturating_mul(2))
-            .unwrap_or(16)
-            .max(16);
-        for _ in 0..workers {
-            let shared = Arc::clone(&pool);
-            thread::Builder::new()
-                .name("cop-scan-pool".to_owned())
-                .spawn(move || scan_pool_worker(shared))
-                .expect("spawn persistent cop-scan pool worker");
-        }
-        pool
-    })
-}
-
-fn scan_pool_worker(pool: Arc<ScanPool>) {
-    loop {
-        let task = {
-            let mut queue = pool
-                .queue
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            loop {
-                if let Some(task) = queue.pop_front() {
-                    break task;
-                }
-                queue = pool
-                    .signal
-                    .wait(queue)
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-            }
-        };
-        task();
-    }
-}
-
-fn enqueue_scan<F>(task: F)
-where
-    F: FnOnce() + Send + 'static,
-{
-    let pool = scan_pool();
-    {
-        let mut queue = pool
-            .queue
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        queue.push_back(Box::new(task));
-    }
-    pool.signal.notify_one();
-}
-
 /// One coprocessor scan capability for a node's sessions.
 ///
-/// Each opened scan gets its own worker-local transport on its own thread,
-/// because the production transport is deliberately not `Send` while the
-/// storage that holds this scanner is shared between connection workers. What
-/// crosses threads is the request and the decoded rows.
+/// Each stream owns its lazy DistSQL result. Decoding runs in the consumer's
+/// `Next`, as in Go `selectResult`; independent region requests are admitted
+/// by the underlying response owner, without a second decoded-row producer.
 pub struct CopScanSource<F> {
     factory: Arc<F>,
-    /// Rows this node has received from coprocessor scans, for the receipt a
-    /// live proof reads.
+    /// Rows decoded from coprocessor responses by this node's consumers.
     rows_returned: Arc<AtomicU64>,
     /// Scans this node served remotely, against the ones it refused.
     scans_served: Arc<AtomicU64>,
@@ -275,7 +170,7 @@ impl<F> fmt::Debug for CopScanSource<F> {
 /// What a node's coprocessor scans have done so far, as plain counters.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CopScanStats {
-    /// Rows the coprocessor sent to this node.
+    /// Rows decoded from coprocessor responses, including an unread chunk tail.
     pub rows_returned: u64,
     /// Scans served remotely.
     pub scans_served: u64,
@@ -325,7 +220,7 @@ impl<F> CopScanSource<F> {
 impl<F> PushdownScanner for CopScanSource<F>
 where
     F: RealTiKvSessionTransportFactory + 'static,
-    <F::Transport as QueryTransport>::Response: 'static,
+    <F::Transport as QueryTransport>::Response: Send + 'static,
 {
     fn open(
         &self,
@@ -455,7 +350,7 @@ where
 
         let aggregate = match request.aggregate.as_ref() {
             None => None,
-            Some(PushdownPartialAggregate::Global { functions }) => {
+            Some(PushdownPartialAggregate::Global { functions, streamed }) => {
                 if lowered.len() != request.predicates.len()
                     || request.limit.is_some()
                     || request.topn.is_some()
@@ -472,7 +367,11 @@ where
                     .iter()
                     .map(|function| function.output_type.clone())
                     .collect();
-                Some(LoweredAggregate::Global(lowered))
+                Some(LoweredAggregate::Grouped {
+                    functions: lowered,
+                    group_by: Vec::new(),
+                    streamed: *streamed,
+                })
             }
             Some(PushdownPartialAggregate::Grouped {
                 group_offsets,
@@ -622,7 +521,7 @@ where
             request.statement.push_down_flags,
             // Go's table readers use chunk RPC when the store supports it.
             // The response iterator transfers decoded TypeChunks directly to
-            // this scan's bounded handoff, without per-row materialization.
+            // the consumer, without per-row materialization.
             EncodeType::Chunk,
         );
         let mut dag = match aggregate.as_ref() {
@@ -636,15 +535,6 @@ where
                 message.clone(),
                 *output_width,
             ),
-            Some(LoweredAggregate::Global(functions)) => {
-                construct_aggregate_read_only_dag_req_with_conditions(
-                    &context,
-                    scan,
-                    &conditions,
-                    functions,
-                    &output_offsets,
-                )
-            }
             Some(LoweredAggregate::Grouped {
                 functions,
                 group_by,
@@ -741,57 +631,21 @@ where
             allow_unordered: request.allow_unordered_response,
             desc: request.desc,
             field_types: field_types.clone(),
-            is_index_scan: request.index.is_some(),
             paging_min_size: request.paging_min_size,
             time_zone: request.statement.time_zone.clone(),
             warnings: request.statement.warnings.clone(),
+            cop_lite_worker: Arc::clone(&request.statement.cop_lite_worker),
         };
-        let batches_ahead = request.read_ahead_batches.clamp(1, MAX_BATCHES_AHEAD);
-        let batches_ahead = if request.limit.is_none() {
-            batches_ahead.max(FULL_SCAN_MIN_BATCHES_AHEAD)
-        } else {
-            batches_ahead
-        };
-        let (rows, batches) = sync_channel::<Result<Chunk, String>>(batches_ahead);
-        let factory = Arc::clone(&self.factory);
-        let node_rows = Arc::clone(&self.rows_returned);
-        // A bounded one-row request is consumed immediately by the caller.
-        // Serving it on this worker avoids creating and detaching a native
-        // thread for every YCSB-E scan while retaining the threaded stream for
-        // full scans, where response decoding must overlap executor work.
-        if request.limit == Some(1) {
-            serve_scan(&factory, plan, &rows, &node_rows);
-        } else if request.index.is_some() || !request.range_hints.is_empty() {
-            // Go's IndexLookUpExecutor starts both its index worker and its
-            // table workers from one persistent worker pool
-            // (`pkg/executor/distsql.go:743-745,881-1149`). Handle-grouped
-            // requests are the table-worker shape: their ranges carry one
-            // `SetTableHandles` cardinality hint per group. Keep both those
-            // requests and index scans on a persistent producer instead of
-            // creating one native thread for every lookup window. The channel
-            // remains bounded, so cancellation and back-pressure are
-            // unchanged from the dedicated-thread path.
-            enqueue_scan(move || serve_scan(&factory, plan, &rows, &node_rows));
-        } else {
-            // A dedicated thread per scan is deliberate: each serve_scan
-            // streams its WHOLE region for the query's lifetime (tens to
-            // hundreds of ms), so the one-time spawn cost amortizes to
-            // noise while the pool would convoy long streams behind short
-            // tasks and serialize concurrent region fetches.
-            thread::Builder::new()
-                .name("cop-scan".to_owned())
-                .spawn(move || serve_scan(&factory, plan, &rows, &node_rows))
-                .map_err(|error| {
-                    PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
-                })?;
-        }
+        let iter = scan_result(|| open_scan(&self.factory, plan))
+            .map_err(|error| PushdownScannerError::Backend(StorageError::Backend(error)))?;
         self.scans_served.fetch_add(1, Ordering::Relaxed);
         self.requests
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
             .push(summary);
         Ok(Box::new(CopRowStream {
-            batches: Some(batches),
+            iter: Some(iter),
+            node_rows: Arc::clone(&self.rows_returned),
             pending: None,
             pending_row: 0,
             field_types,
@@ -876,10 +730,10 @@ fn dag_summary(dag: &tidb_proto::tipb::DagRequest) -> String {
     )
 }
 
-/// Everything the reader thread needs, owned independently of the caller.
+/// Everything the lazy result needs, owned independently of the caller.
 struct RemoteScanPlan {
     dag: tidb_proto::tipb::DagRequest,
-    /// Read-only identity line for [`drain_scan`]'s env-gated trace: which
+    /// Read-only identity line for [`open_scan`]'s env-gated trace: which
     /// executors this request lowers (`IndexScan(table t, index i, ..)` vs
     /// `TableScan(..)`), and the pushed output offsets.
     summary: String,
@@ -908,43 +762,33 @@ struct RemoteScanPlan {
     /// separately carries the direction for rows inside each region.
     desc: bool,
     field_types: Vec<FieldType>,
-    /// IndexLookUp's Go decoder receives the normal MaxChunkSize (1024)
-    /// boundary; full table scans retain the larger streaming batches above.
-    is_index_scan: bool,
     /// Optional Go IndexLookUp first-window paging floor for index scans.
     paging_min_size: Option<u64>,
     time_zone: tidb_datatype::SessionTimeZone,
-    /// The statement's warning sink, carried onto the scan thread. It is an
-    /// `Arc` handler, so a warning appended here lands in the buffer
-    /// `SHOW WARNINGS` reads even though the decode happens off-thread.
+    /// The statement's warning sink, shared with `SHOW WARNINGS`.
     warnings: WarningCollector,
+    cop_lite_worker: Arc<std::sync::atomic::AtomicBool>,
 }
 
-/// Runs one coprocessor scan on its own thread, handing decoded rows back in
-/// bounded batches.
-fn serve_scan<F>(
-    factory: &Arc<F>,
-    plan: RemoteScanPlan,
-    rows: &SyncSender<Result<Chunk, String>>,
-    node_rows: &Arc<AtomicU64>,
-) where
-    F: RealTiKvSessionTransportFactory,
-    <F::Transport as QueryTransport>::Response: 'static,
-{
-    if let Err(error) = drain_scan(factory, plan, rows, node_rows) {
-        let _ = rows.send(Err(error));
-    }
+/// Go copIteratorWorker/liteCopIteratorWorker turns task panics into errors.
+fn scan_result<T>(task: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(task)).unwrap_or_else(|payload| {
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or("non-string panic payload");
+        Err(format!("coprocessor scan panicked: {message}"))
+    })
 }
 
-fn drain_scan<F>(
+fn open_scan<F>(
     factory: &Arc<F>,
     plan: RemoteScanPlan,
-    rows: &SyncSender<Result<Chunk, String>>,
-    node_rows: &Arc<AtomicU64>,
-) -> Result<(), String>
+) -> Result<tidb_distsql::SelectResponseIter, String>
 where
     F: RealTiKvSessionTransportFactory,
-    <F::Transport as QueryTransport>::Response: 'static,
+    <F::Transport as QueryTransport>::Response: Send + 'static,
 {
     use prost::Message;
 
@@ -992,7 +836,8 @@ where
         .set_dag_request(plan.envelope, plan.dag.encode_to_vec());
     let request = builder
         .build_transport_request(Arc::clone(&cancellation))
-        .map_err(|error| format!("{error:?}"))?;
+        .map_err(|error| format!("{error:?}"))?
+        .with_cop_lite_worker(plan.cop_lite_worker);
     if let Some((ranges, hints)) = trace_range_counts {
         eprintln!(
             "[XTRACE] scan_open {} | ranges={} hints={} keep_order={} allow_unordered={} desc={}",
@@ -1014,45 +859,48 @@ where
             true,
         )
         .map_err(|error| error.to_string())?;
-    let mut iter = result.into_select_iter(Vec::new());
-    let batch_rows = if plan.is_index_scan {
-        INDEX_BATCH_ROWS
-    } else {
-        BATCH_ROWS
-    };
-    loop {
-        let batch = iter
-            .next_chunk_with_required_rows(batch_rows)
-            .map_err(|error| error.to_string())?;
-        let Some(batch) = batch else {
-            break;
-        };
-        if batch.row.num_rows() != 0 {
-            let sent = batch.row.num_rows() as u64;
-            // A consumer that stopped pulling -- an early-stopping `LIMIT`, or
-            // a failed statement -- drops its receiver, and this is where the
-            // scan learns it: the rest of the relation is never read.
-            let send_result = rows.send(Ok(batch.row));
-            if send_result.is_err() {
-                break;
-            }
-            node_rows.fetch_add(sent, Ordering::Relaxed);
-        }
-    }
-    iter.close();
-    Ok(())
+    Ok(result.into_select_iter(Vec::new()))
 }
 
 /// The caller's end of one coprocessor scan.
 struct CopRowStream {
-    /// Dropping this is what tells the reader thread to stop; see
-    /// `drain_scan`.
-    batches: Option<Receiver<Result<Chunk, String>>>,
+    iter: Option<tidb_distsql::SelectResponseIter>,
+    node_rows: Arc<AtomicU64>,
     pending: Option<Chunk>,
     pending_row: usize,
     field_types: Vec<FieldType>,
     returned: u64,
     predicates_applied: bool,
+}
+
+impl CopRowStream {
+    fn pull_chunk(&mut self) -> Result<Option<Chunk>, StorageError> {
+        let Some(iter) = self.iter.as_mut() else {
+            return Ok(None);
+        };
+        // The SQL driver currently uses Go's default MaxChunkSize. Do not
+        // inflate decoded batches just to amortize a removed thread hop.
+        let result = scan_result(|| {
+            iter.next_chunk_with_required_rows(tidb_vardef::defaults::DEF_MAX_CHUNK_SIZE as usize)
+                .map(|batch| batch.map(|batch| batch.row))
+                .map_err(|error| error.to_string())
+        });
+        match result {
+            Ok(Some(batch)) => {
+                self.node_rows
+                    .fetch_add(batch.num_rows() as u64, Ordering::Relaxed);
+                Ok(Some(batch))
+            }
+            Ok(None) => {
+                self.close();
+                Ok(None)
+            }
+            Err(error) => {
+                self.close();
+                Err(StorageError::Backend(error))
+            }
+        }
+    }
 }
 
 impl PushdownRowStream for CopRowStream {
@@ -1075,20 +923,9 @@ impl PushdownRowStream for CopRowStream {
                 self.pending = None;
                 self.pending_row = 0;
             }
-            let Some(batches) = self.batches.as_ref() else {
-                return Ok(None);
-            };
-            match batches.recv() {
-                Ok(Ok(batch)) => self.pending = Some(batch),
-                Ok(Err(error)) => {
-                    self.batches = None;
-                    return Err(StorageError::Backend(error));
-                }
-                // The reader thread finished and dropped its sender.
-                Err(_) => {
-                    self.batches = None;
-                    return Ok(None);
-                }
+            match self.pull_chunk()? {
+                Some(batch) => self.pending = Some(batch),
+                None => return Ok(None),
             }
         }
     }
@@ -1116,23 +953,11 @@ impl PushdownRowStream for CopRowStream {
             self.returned += remainder.num_rows() as u64;
             return Ok(Some(remainder));
         }
-        let Some(batches) = self.batches.as_ref() else {
-            return Ok(None);
-        };
-        match batches.recv() {
-            Ok(Ok(batch)) => {
-                self.returned += batch.num_rows() as u64;
-                Ok(Some(batch))
-            }
-            Ok(Err(error)) => {
-                self.batches = None;
-                Err(StorageError::Backend(error))
-            }
-            Err(_) => {
-                self.batches = None;
-                Ok(None)
-            }
+        let batch = self.pull_chunk()?;
+        if let Some(batch) = &batch {
+            self.returned += batch.num_rows() as u64;
         }
+        Ok(batch)
     }
 
     fn rows_returned(&self) -> u64 {
@@ -1144,7 +969,9 @@ impl PushdownRowStream for CopRowStream {
     }
 
     fn close(&mut self) {
-        self.batches = None;
+        if let Some(mut iter) = self.iter.take() {
+            iter.close();
+        }
         self.pending = None;
         self.pending_row = 0;
     }
@@ -1239,16 +1066,6 @@ fn aggregation_to_pb(
         PushdownPartialAggregate::GroupBy { input_offset, .. } => {
             Some(message(vec![column_ref(*input_offset)?], Vec::new(), false))
         }
-        PushdownPartialAggregate::GroupBySum {
-            group_offset,
-            sum_offset,
-            sum_type,
-            ..
-        } => Some(message(
-            vec![column_ref(*group_offset)?],
-            vec![agg(ExprType::Sum, column_ref(*sum_offset)?, sum_type)?],
-            false,
-        )),
         PushdownPartialAggregate::Grouped {
             group_offsets,
             functions,
@@ -1272,10 +1089,10 @@ fn aggregation_to_pb(
                 .collect::<Option<Vec<_>>>()?;
             Some(message(group_by, agg_func, *streamed))
         }
-        PushdownPartialAggregate::Global { functions } => Some(message(
+        PushdownPartialAggregate::Global { functions, streamed } => Some(message(
             Vec::new(),
             lower_global_aggregate(functions, columns)?,
-            false,
+            *streamed,
         )),
     }
 }
@@ -1474,20 +1291,4 @@ pub fn requests_extra_handle(request: &PushdownScanRequest) -> bool {
         .handle_index
         .and_then(|index| request.columns.get(index))
         .is_some_and(|column| column.id == EXTRA_HANDLE_COLUMN_ID)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::mpsc::sync_channel;
-
-    use super::enqueue_scan;
-
-    #[test]
-    fn bounded_lookup_scan_pool_runs_submitted_work() {
-        let (done, received) = sync_channel(1);
-        enqueue_scan(move || done.send(()).expect("lookup producer should run"));
-        received
-            .recv()
-            .expect("persistent lookup producer should complete");
-    }
 }

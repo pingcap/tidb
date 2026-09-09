@@ -443,6 +443,12 @@ impl<L> RegionCache<L> {
         let now_seconds = cache_now_seconds();
         for (mut replacement, labels) in replacements {
             apply_observed_buckets(observed_buckets.as_ref(), &mut replacement);
+            // An epoch change replaces region metadata, not an existing
+            // store's health/resolve state. Only newly resolved stores are
+            // fresh observations; known stores remain owned by refresh.
+            replacement
+                .stores
+                .retain(|store| !next_stores.contains_key(&store.id));
             normalize_loaded(&mut next_stores, &mut replacement, &labels);
             let region = replacement.region;
             let expire_after_ttl = !replacement.down_peer_ids.is_empty();

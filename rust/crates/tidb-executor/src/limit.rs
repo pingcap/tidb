@@ -47,6 +47,27 @@ enum InlineProjection {
 }
 
 impl InlineProjection {
+    fn from_physical(output: &Schema, child: &Schema) -> Self {
+        // Go markChildrenUsedCols consumes resolved indexes, not UniqueID.
+        let mut marked = std::collections::BTreeMap::new();
+        for (original, column) in output.columns.iter().enumerate() {
+            let Ok(index) = usize::try_from(column.index) else {
+                return Self::Invalid;
+            };
+            if index >= child.len() {
+                return Self::Invalid;
+            }
+            marked.insert(index, original);
+        }
+        let mut used: Vec<_> = marked.into_iter().collect();
+        used.sort_by_key(|(_, original)| *original);
+        if used.len() == child.len() {
+            Self::Identity
+        } else {
+            Self::projected(used.into_iter().map(|(index, _)| index).collect())
+        }
+    }
+
     fn derive(output: &Schema, child: &Schema) -> Self {
         let Some(column_indexes) = child.columns_indices(&output.columns) else {
             return InlineProjection::Invalid;
@@ -54,11 +75,15 @@ impl InlineProjection {
         if column_indexes.iter().copied().eq(0..child.len()) {
             InlineProjection::Identity
         } else {
-            let column_swap_helper = ColumnSwapHelper::new(&column_indexes);
-            InlineProjection::Projected {
-                column_indexes,
-                column_swap_helper,
-            }
+            Self::projected(column_indexes)
+        }
+    }
+
+    fn projected(column_indexes: Vec<usize>) -> Self {
+        let column_swap_helper = ColumnSwapHelper::new(&column_indexes);
+        Self::Projected {
+            column_indexes,
+            column_swap_helper,
         }
     }
 
@@ -70,6 +95,7 @@ impl InlineProjection {
 /// Go `LimitExec`: skips `begin` child rows, emits rows until `end`.
 pub struct LimitExec {
     meta: ExecutorMeta,
+    inline_projection: InlineProjection,
     /// Go `begin`: the offset -- rows `[0, begin)` are skipped.
     begin: u64,
     /// Go `end`: `offset + count` -- rows `[begin, end)` are emitted.
@@ -81,7 +107,6 @@ pub struct LimitExec {
     meet_first_batch: bool,
     child: Box<dyn Executor>,
     child_result: Chunk,
-    inline_projection: InlineProjection,
 }
 
 impl LimitExec {
@@ -102,18 +127,40 @@ impl LimitExec {
     /// first call, and the statement return NOTHING.
     #[must_use]
     pub fn new(meta: ExecutorMeta, offset: u64, count: u64, child: Box<dyn Executor>) -> Self {
+        let inline_projection = InlineProjection::derive(meta.schema(), child.schema());
+        Self::with_projection(meta, offset, count, child, inline_projection)
+    }
+
+    /// Go `buildLimit`: use indexes resolved by the physical planner.
+    #[must_use]
+    pub fn from_physical(
+        meta: ExecutorMeta,
+        offset: u64,
+        count: u64,
+        child: Box<dyn Executor>,
+    ) -> Self {
+        let inline_projection = InlineProjection::from_physical(meta.schema(), child.schema());
+        Self::with_projection(meta, offset, count, child, inline_projection)
+    }
+
+    fn with_projection(
+        meta: ExecutorMeta,
+        offset: u64,
+        count: u64,
+        child: Box<dyn Executor>,
+        inline_projection: InlineProjection,
+    ) -> Self {
         let count = count.min(u64::MAX - offset);
         let child_result = child.new_chunk();
-        let inline_projection = InlineProjection::derive(meta.schema(), child.schema());
         LimitExec {
             meta,
+            inline_projection,
             begin: offset,
             end: offset + count,
             cursor: 0,
             meet_first_batch: offset == 0,
             child,
             child_result,
-            inline_projection,
         }
     }
 

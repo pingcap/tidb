@@ -442,30 +442,34 @@ pub fn append_ranges_to_point_ranges(
 
 /// The product of one column-range build: the ranges plus which conditions
 /// were CONSUMED and which REMAIN as filters (Go's trailing return pair).
+/// The conditions borrow the original slice, as Go returns `accessConditions`
+/// unchanged in either position. `E` permits both owned expressions and the
+/// borrowed references selected by column extraction without copying trees.
 #[derive(Debug)]
-pub struct ColumnRangeResult {
+pub struct ColumnRangeResult<'a, E = Expression> {
     /// The built ranges.
     pub ranges: Ranges,
     /// Go's second return: the conditions the ranges absorbed.
-    pub access_conds: Vec<Expression>,
+    pub access_conds: &'a [E],
     /// Go's third return: the conditions that stay as filters (non-empty
     /// only on the memory fallback).
-    pub remained_conds: Vec<Expression>,
+    pub remained_conds: &'a [E],
 }
 
 /// Go `buildColumnRange`.
-fn build_column_range_impl(
-    access_conditions: &[Expression],
+fn build_column_range_impl<'a, E: std::borrow::Borrow<Expression>>(
+    access_conditions: &'a [E],
     tp: &FieldType,
     table_range: bool,
     col_len: i64,
     range_max_size: i64,
-) -> Result<ColumnRangeResult, PointBuilderError> {
-    let mut builder = PointBuilder::default();
+    eval_constant: &super::points::ConstantEvaluator<'_>,
+) -> Result<ColumnRangeResult<'a, E>, PointBuilderError> {
+    let mut builder = PointBuilder::new(eval_constant);
     let new_tp = new_field_type(tp);
     let mut range_points = get_full_range();
     for cond in access_conditions {
-        let built = builder.build(cond, &new_tp, col_len, true);
+        let built = builder.build(cond.borrow(), &new_tp, col_len, true);
         range_points =
             super::points::intersection(&range_points, &built, tidb_datatype::Collation::Binary)?;
         if let Some(error) = builder.err.take() {
@@ -483,8 +487,8 @@ fn build_column_range_impl(
         // Go `RecordRangeFallback`: the conditions all REMAIN as filters.
         return Ok(ColumnRangeResult {
             ranges,
-            access_conds: Vec::new(),
-            remained_conds: access_conditions.to_vec(),
+            access_conds: &[],
+            remained_conds: access_conditions,
         });
     }
     let ranges = if col_len != UNSPECIFIED_LENGTH {
@@ -494,42 +498,75 @@ fn build_column_range_impl(
     };
     Ok(ColumnRangeResult {
         ranges,
-        access_conds: access_conditions.to_vec(),
-        remained_conds: Vec::new(),
+        access_conds: access_conditions,
+        remained_conds: &[],
     })
 }
 
 /// Go `BuildTableRange`: the int-handle PK's scan range.
-pub fn build_table_range(
-    access_conditions: &[Expression],
+pub fn build_table_range<'a>(
+    access_conditions: &'a [Expression],
     tp: &FieldType,
     range_max_size: i64,
-) -> Result<ColumnRangeResult, PointBuilderError> {
+) -> Result<ColumnRangeResult<'a>, PointBuilderError> {
+    build_table_range_in(
+        access_conditions,
+        tp,
+        range_max_size,
+        &tidb_expr::constant::Constant::eval,
+    )
+}
+
+/// Build an integer-handle range from retained conditions in this execution.
+pub fn build_table_range_in<'a>(
+    access_conditions: &'a [Expression],
+    tp: &FieldType,
+    range_max_size: i64,
+    eval_constant: &super::points::ConstantEvaluator<'_>,
+) -> Result<ColumnRangeResult<'a>, PointBuilderError> {
     build_column_range_impl(
         access_conditions,
         tp,
         true,
         UNSPECIFIED_LENGTH,
         range_max_size,
+        eval_constant,
     )
 }
 
 /// Go `BuildColumnRange`: a general column's range (a column path or a
 /// prefix-index column via `col_len`).
-pub fn build_column_range(
-    conds: &[Expression],
+pub fn build_column_range<'a, E: std::borrow::Borrow<Expression>>(
+    conds: &'a [E],
     tp: &FieldType,
     col_len: i64,
     range_mem_quota: i64,
-) -> Result<ColumnRangeResult, PointBuilderError> {
+) -> Result<ColumnRangeResult<'a, E>, PointBuilderError> {
+    build_column_range_in(
+        conds,
+        tp,
+        col_len,
+        range_mem_quota,
+        &tidb_expr::constant::Constant::eval,
+    )
+}
+
+/// Build a column range using current parameters and deferred expressions.
+pub fn build_column_range_in<'a, E: std::borrow::Borrow<Expression>>(
+    conds: &'a [E],
+    tp: &FieldType,
+    col_len: i64,
+    range_mem_quota: i64,
+    eval_constant: &super::points::ConstantEvaluator<'_>,
+) -> Result<ColumnRangeResult<'a, E>, PointBuilderError> {
     if conds.is_empty() {
         return Ok(ColumnRangeResult {
             ranges: super::points::full_range(),
-            access_conds: Vec::new(),
-            remained_conds: Vec::new(),
+            access_conds: &[],
+            remained_conds: &[],
         });
     }
-    build_column_range_impl(conds, tp, false, col_len, range_mem_quota)
+    build_column_range_impl(conds, tp, false, col_len, range_mem_quota, eval_constant)
 }
 
 #[cfg(test)]
@@ -579,7 +616,7 @@ mod tests {
         assert!(result.remained_conds.is_empty());
 
         // No conditions on a COLUMN range answers the full range.
-        let empty = build_column_range(&[], &tp, UNSPECIFIED_LENGTH, 0).expect("builds");
+        let empty = build_column_range::<Expression>(&[], &tp, UNSPECIFIED_LENGTH, 0).expect("builds");
         assert_eq!(shown(&empty), ["[NULL,+inf]"]);
 
         // `a != 3` over the table: two int-bounded ranges.

@@ -72,7 +72,7 @@ const ASYNC_COMMIT_KEYS_LIMIT: usize = 256;
 const ASYNC_COMMIT_TOTAL_KEY_SIZE_LIMIT: u64 = 4 * 1024;
 /// Go `config.DefaultConfig().TiKVClient.AsyncCommit.SafeWindow` (2s).
 const ASYNC_COMMIT_SAFE_WINDOW_MS: u64 = 2_000;
-pub(super) const MAX_LOCK_ATTEMPTS: usize = 4;
+pub(super) const MAX_COMMIT_TIMESTAMP_ATTEMPTS: usize = 4;
 
 /// Go `client.ReadTimeoutShort` (`internal/client/client.go:79`), the per-RPC
 /// deadline every cleanup and commit batch is sent under.
@@ -619,11 +619,16 @@ pub(super) fn wait_with_call(
     call: &UnaryCallContext,
     delay: Duration,
 ) -> Result<(), TransactionCause> {
-    if call.cancellation().is_cancelled() || delay > call.timeout() {
+    let remaining = call.timeout();
+    if call.cancellation().is_cancelled() || remaining.is_zero() {
         return Err(TransactionCause::Transport {
             detail: "transaction wait exceeded its deadline or was cancelled".to_owned(),
         });
     }
+    // A retry's delay is interrupted by its deadline, not rejected merely
+    // because that deadline will arrive first. Clamp here so callers cannot
+    // race two reads of the diminishing remaining time.
+    let delay = delay.min(remaining);
     if call.cancellation().wait_timeout(delay) {
         return Err(TransactionCause::Transport {
             detail: "transaction wait was cancelled".to_owned(),
@@ -755,6 +760,18 @@ mod tests {
             classify_key_error(&KvrpcKeyError::default()),
             TransactionCause::InvalidResponse { .. }
         ));
+    }
+
+    #[test]
+    fn a_retry_delay_past_the_deadline_waits_until_the_deadline() {
+        let call = UnaryCallContext::with_timeout(Duration::from_millis(30));
+        let started = std::time::Instant::now();
+        assert!(matches!(
+            wait_with_call(&call, Duration::from_secs(1)),
+            Err(TransactionCause::Transport { .. })
+        ));
+        assert!(started.elapsed() >= Duration::from_millis(20));
+        assert!(call.timeout().is_zero());
     }
 
     #[test]

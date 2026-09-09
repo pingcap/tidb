@@ -87,7 +87,9 @@ struct Database {
 /// occupies. Database and table names are case-insensitive, as in MySQL.
 #[derive(Clone, Debug)]
 pub struct Catalog {
-    databases: HashMap<String, Database>,
+    // Snapshot creation shares schema maps. Mutation detaches only the outer
+    // name map and the database it touches, retaining all other table maps.
+    databases: Arc<HashMap<String, Arc<Database>>>,
     /// Go `infoschema`'s policy map, keyed by the FOLDED policy name.
     ///
     /// A placement policy is a schema object in its own right, not an
@@ -263,7 +265,12 @@ impl Default for Catalog {
             },
         );
         let mut catalog = Catalog {
-            databases,
+            databases: Arc::new(
+                databases
+                    .into_iter()
+                    .map(|(name, database)| (name, Arc::new(database)))
+                    .collect(),
+            ),
             policies: HashMap::new(),
             next_policy_id: 0,
             next_database_id: 3,
@@ -370,21 +377,28 @@ impl TableEntry {
     /// into is excluded once, at the source. Its physical offset is unchanged
     /// by the exclusion because hidden columns are the tail (see
     /// [`crate::expression_index`]).
-    pub(crate) fn column_list(&self) -> Vec<(String, FieldType)> {
-        match self {
-            TableEntry::Mem(mem) => mem.columns.clone(),
-            TableEntry::Cte(cte) => cte.columns().to_vec(),
-            TableEntry::Kv(kv) => kv
-                .visible_columns()
-                .iter()
-                .map(|c| (c.name.clone(), c.field_type.clone()))
-                .collect(),
-            TableEntry::View(view) => view.columns.clone(),
+    pub(crate) fn columns(&self) -> impl Iterator<Item = (&str, &FieldType)> {
+        let (pairs, kv): (&[(String, FieldType)], &[crate::kv_table::KvColumn]) = match self {
+            TableEntry::Mem(mem) => (&mem.columns, &[]),
+            TableEntry::Cte(cte) => (cte.columns(), &[]),
+            TableEntry::Kv(kv) => (&[], kv.visible_columns()),
+            TableEntry::View(view) => (&view.columns, &[]),
             // Go gives a sequence a fixed one-column schema, but no statement
             // this tier accepts ever reads it: `SELECT * FROM <sequence>` is
             // refused, and `nextval` reaches the allocator directly.
-            TableEntry::Sequence(_) => Vec::new(),
-        }
+            TableEntry::Sequence(_) => (&[], &[]),
+        };
+        pairs
+            .iter()
+            .map(|(name, field_type)| (name.as_str(), field_type))
+            .chain(kv.iter().map(|column| (column.name.as_str(), &column.field_type)))
+    }
+
+    /// An owned schema for consumers that retain or modify column types.
+    pub(crate) fn column_list(&self) -> Vec<(String, FieldType)> {
+        self.columns()
+            .map(|(name, field_type)| (name.to_owned(), field_type.clone()))
+            .collect()
     }
 
     /// The table's `(name, type)` pairs in schema order, for callers outside
@@ -401,9 +415,8 @@ impl TableEntry {
     /// (`GRANT SELECT (a) ON db.t`).
     #[must_use]
     pub fn column_names(&self) -> Vec<String> {
-        self.column_list()
-            .into_iter()
-            .map(|(name, _)| name)
+        self.columns()
+            .map(|(name, _)| name.to_owned())
             .collect()
     }
 
@@ -423,6 +436,12 @@ impl TableEntry {
 }
 
 impl Catalog {
+    fn database_mut(&mut self, folded_name: &str) -> Option<&mut Database> {
+        Arc::make_mut(&mut self.databases)
+            .get_mut(folded_name)
+            .map(Arc::make_mut)
+    }
+
     /// Registers a matrix-backed `table` in the default database.
     ///
     /// # Panics
@@ -461,8 +480,7 @@ impl Catalog {
         table: TableEntry,
     ) -> Result<(), DriverError> {
         let schema = self
-            .databases
-            .get_mut(&database.to_lowercase())
+            .database_mut(&database.to_lowercase())
             .ok_or_else(|| {
                 DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(database.to_owned()))
             })?;
@@ -652,14 +670,14 @@ impl Catalog {
             return false;
         }
         self.next_database_id += 1;
-        self.databases.insert(
+        Arc::make_mut(&mut self.databases).insert(
             key,
-            Database {
+            Arc::new(Database {
                 id: self.next_database_id,
                 name: database.to_owned(),
                 charset,
                 tables: HashMap::new(),
-            },
+            }),
         );
         self.version += 1;
         true
@@ -692,7 +710,7 @@ impl Catalog {
         self.bump_metadata_version();
         let key = database.to_lowercase();
         self.next_database_id = self.next_database_id.max(id);
-        if let Some(existing) = self.databases.get_mut(&key) {
+        if let Some(existing) = self.database_mut(&key) {
             let changed =
                 existing.id != id || existing.name != database || existing.charset != charset;
             existing.id = id;
@@ -701,14 +719,14 @@ impl Catalog {
             self.version += u64::from(changed);
             return false;
         }
-        self.databases.insert(
+        Arc::make_mut(&mut self.databases).insert(
             key,
-            Database {
+            Arc::new(Database {
                 id,
                 name: database.to_owned(),
                 charset,
                 tables: HashMap::new(),
-            },
+            }),
         );
         self.version += 1;
         true
@@ -737,8 +755,7 @@ impl Catalog {
             return false;
         }
         let Some(source) = self
-            .databases
-            .get_mut(&from_database.to_lowercase())
+            .database_mut(&from_database.to_lowercase())
             .and_then(|database| database.tables.remove(&from_name.to_lowercase()))
         else {
             return false;
@@ -752,8 +769,7 @@ impl Catalog {
         let mut source = std::sync::Arc::new(source);
         // Infallible: the key was present at the top of this function and
         // nothing between here and there can remove a schema.
-        self.databases
-            .get_mut(&to_key)
+        self.database_mut(&to_key)
             .expect("destination schema was checked above")
             .tables
             .insert(to_name.to_lowercase(), source);
@@ -764,7 +780,7 @@ impl Catalog {
     /// Drops one table, reporting whether it existed.
     pub fn drop_table_in(&mut self, database: &str, name: &str) -> bool {
         self.bump_metadata_version();
-        let dropped = match self.databases.get_mut(&database.to_lowercase()) {
+        let dropped = match self.database_mut(&database.to_lowercase()) {
             Some(database) => database.tables.remove(&name.to_lowercase()).is_some(),
             None => false,
         };
@@ -776,7 +792,9 @@ impl Catalog {
     /// raises `ErrDBDropExists` (1008) unless `IF EXISTS` was written.
     pub fn drop_database(&mut self, database: &str) -> bool {
         self.bump_metadata_version();
-        let dropped = self.databases.remove(&database.to_lowercase()).is_some();
+        let dropped = Arc::make_mut(&mut self.databases)
+            .remove(&database.to_lowercase())
+            .is_some();
         self.version += u64::from(dropped);
         dropped
     }
@@ -812,8 +830,7 @@ impl Catalog {
         name: &str,
     ) -> Option<&mut TableEntry> {
         let entry = self
-            .databases
-            .get_mut(&database.to_ascii_lowercase())?
+            .database_mut(&database.to_ascii_lowercase())?
             .tables
             .get_mut(&name.to_ascii_lowercase())?;
         Some(Arc::make_mut(entry))
@@ -823,20 +840,15 @@ impl Catalog {
         self.get_in(DEFAULT_DATABASE, name)
     }
 
-    /// Every `(database, table)` in the catalog, which is how referential
-    /// integrity finds the tables that REFER to a given one -- Go keeps the
-    /// same relation as `infoschema`'s referred-foreign-key index.
-    pub(crate) fn table_paths(&self) -> Vec<(String, String)> {
-        let mut paths = Vec::new();
-        for database in self.databases.values() {
-            for name in database.tables.keys() {
-                paths.push((database.name.clone(), name.clone()));
-            }
-        }
-        // The catalog is a hash map, so a stable order has to be imposed here
-        // for a cascade to visit dependents deterministically.
-        paths.sort();
-        paths
+    /// Borrows current table metadata without copying names or resolving
+    /// them through the catalog again. Callers impose ordering only on the
+    /// entries they need; hash-map traversal itself is unordered.
+    pub(crate) fn table_entries(&self) -> impl Iterator<Item = (&str, &str, &TableEntry)> {
+        self.databases.values().flat_map(|database| {
+            database.tables.iter().map(move |(name, entry)| {
+                (database.name.as_str(), name.as_str(), entry.as_ref())
+            })
+        })
     }
 
     /// A mutable handle for the referential-integrity paths, which reach
@@ -859,8 +871,7 @@ impl Catalog {
     pub(crate) fn get_mut_in(&mut self, database: &str, name: &str) -> Option<&mut TableEntry> {
         self.version += 1;
         let entry = self
-            .databases
-            .get_mut(&database.to_ascii_lowercase())?
+            .database_mut(&database.to_ascii_lowercase())?
             .tables
             .get_mut(&name.to_ascii_lowercase())?;
         // Go's write paths build a new `TableInfo` rather than editing the
@@ -954,21 +965,19 @@ impl Catalog {
     ///
     /// A transaction stages its writes in a private COPY of this catalog
     /// rather than a membuffer, so the copy has to be told where the
-    /// transaction begins. `tidb_session` calls this at the one boundary Go's
-    /// membuffer is empty at: the start of a statement that does not continue
-    /// an already-open transaction -- which covers both an explicit `BEGIN`
-    /// (Go allocates it a fresh membuffer) and every autocommit statement (Go
-    /// discards the previous one at commit).
+    /// transaction begins. `tidb_session` clears newly opened transaction
+    /// snapshots here, including direct protocol BEGIN, and clears the shared
+    /// catalog before each autocommit statement. Neither boundary may clear
+    /// an already-open transaction's private staged-write marks.
     ///
     /// The mark itself never changes what a read RETURNS -- the staged rows
     /// are in this catalog either way, which is why read-your-own-writes works
     /// without it. It changes what a read is entitled to REORDER; see
     /// [`crate::kv_table::KvTable::has_dirty_content`].
     pub fn clear_dirty_content(&mut self) {
-        // The mark is interior-mutable (`AtomicBool`), so this walks SHARED
-        // entries without detaching any of them: a shared entry's cell can
-        // only ever hold `false` (a write detaches its entry before marking),
-        // so resetting it here cannot disturb another catalog's view.
+        // Committed snapshots can retain true marks from their former owner.
+        // Resetting these shared cells does not clear another transaction's
+        // private writes: every writer detaches its entry before marking it.
         for database in self.databases.values() {
             for entry in database.tables.values() {
                 if let TableEntry::Kv(table) = &**entry {
@@ -1070,14 +1079,14 @@ impl Catalog {
         let key = database.to_lowercase();
         if !self.databases.contains_key(&key) {
             self.next_database_id += 1;
-            self.databases.insert(
+            Arc::make_mut(&mut self.databases).insert(
                 key,
-                Database {
+                Arc::new(Database {
                     id: self.next_database_id,
                     name: database.to_owned(),
                     charset: TableCharset::default(),
                     tables: HashMap::new(),
-                },
+                }),
             );
         }
         self.register_in(database, name, TableEntry::Mem(table))
@@ -1090,14 +1099,14 @@ impl Catalog {
         let key = database.to_lowercase();
         if !self.databases.contains_key(&key) {
             self.next_database_id += 1;
-            self.databases.insert(
+            Arc::make_mut(&mut self.databases).insert(
                 key,
-                Database {
+                Arc::new(Database {
                     id: self.next_database_id,
                     name: database.to_owned(),
                     charset: TableCharset::default(),
                     tables: HashMap::new(),
-                },
+                }),
             );
         }
         self.register_in(database, name, TableEntry::Cte(table))
@@ -1141,7 +1150,7 @@ impl Catalog {
         self.bump_metadata_version();
         let folded_database = database.to_lowercase();
         let folded_name = name.to_lowercase();
-        let schema = self.databases.get_mut(&folded_database).ok_or_else(|| {
+        let schema = self.database_mut(&folded_database).ok_or_else(|| {
             DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(database.to_owned()))
         })?;
         if let Some(displaced) = schema
@@ -1177,7 +1186,7 @@ impl Catalog {
             self.bump_metadata_version();
         }
         for (database, name, table) in tables {
-            let Some(schema) = self.databases.get_mut(&database) else {
+            let Some(schema) = self.database_mut(&database) else {
                 continue;
             };
             if let Some(displaced) = schema.tables.insert(name.clone(), std::sync::Arc::new(TableEntry::Kv(table))) {
@@ -1209,7 +1218,7 @@ impl Catalog {
         }
         let mut taken = Vec::with_capacity(slots.len());
         for (folded_database, folded_name) in slots {
-            let Some(schema) = self.databases.get_mut(&folded_database) else {
+            let Some(schema) = self.database_mut(&folded_database) else {
                 continue;
             };
             let Some(entry) = schema.tables.remove(&folded_name) else {
@@ -1223,7 +1232,7 @@ impl Catalog {
         for (folded_database, folded_name, entry) in
             std::mem::take(&mut self.shadowed_by_local_temporary)
         {
-            let Some(schema) = self.databases.get_mut(&folded_database) else {
+            let Some(schema) = self.database_mut(&folded_database) else {
                 continue;
             };
             schema.tables.entry(folded_name).or_insert_with(|| entry);
@@ -1245,7 +1254,7 @@ impl Catalog {
     /// current transaction's own buffer is ever visible.
     pub fn global_temporary_table_ids(&self) -> Vec<(String, String)> {
         let mut ids = Vec::new();
-        for (folded_database, schema) in &self.databases {
+        for (folded_database, schema) in self.databases.iter() {
             for (folded_name, entry) in &schema.tables {
                 if matches!(&**entry, TableEntry::Kv(table)
                     if table.temp_table_type() == tidb_model::TempTableType::GLOBAL)
@@ -1281,7 +1290,7 @@ impl Catalog {
         {
             let mut local: Vec<(String, String)> = Vec::new();
             let mut global: Vec<(String, String)> = Vec::new();
-            for (folded_database, schema) in &self.databases {
+            for (folded_database, schema) in self.databases.iter() {
                 for (folded_name, entry) in &schema.tables {
                     let TableEntry::Kv(table) = &**entry else {
                         continue;
@@ -1322,8 +1331,7 @@ impl Catalog {
         name: &str,
     ) -> Option<&mut KvTable> {
         match self
-            .databases
-            .get_mut(database)?
+            .database_mut(database)?
             .tables
             .get_mut(name)
             .map(std::sync::Arc::make_mut)
@@ -1359,7 +1367,7 @@ impl Catalog {
     #[must_use]
     pub fn sequence_allocators(&self) -> HashMap<String, crate::sequence::SequenceAllocator> {
         let mut out = HashMap::new();
-        for (database_key, database) in &self.databases {
+        for (database_key, database) in self.databases.iter() {
             for (table_key, entry) in &database.tables {
                 if let TableEntry::Sequence(sequence) = entry.as_ref() {
                     out.insert(
@@ -1509,6 +1517,10 @@ pub(crate) struct TableResolver<'a> {
 }
 
 impl ColumnResolver for TableResolver<'_> {
+    fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
+        tidb_expr::Columns::param_value(&self.constant_context, order)
+    }
+
     fn time_zone(&self) -> tidb_expr::SessionTimeZone {
         self.zone.clone()
     }
@@ -1541,6 +1553,10 @@ impl ColumnResolver for TableResolver<'_> {
         tidb_expr::fold_constant_in_mode(expression, &self.constant_context, mode);
     }
 
+    fn eval_constant(&self, expression: &Expression) -> Result<Datum, tidb_expr::EvalError> {
+        tidb_expr::eval_expression_once(expression, &self.constant_context)
+    }
+
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
         let (qualifier, name) = match path {
             [name] => (None, name),
@@ -1557,5 +1573,69 @@ impl ColumnResolver for TableResolver<'_> {
             .iter()
             .position(|(n, _)| n.eq_ignore_ascii_case(name))
             .map(|i| (i, self.columns[i].1.clone(), (i + 1) as i64))
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn snapshots_share_untouched_schema_maps_and_isolate_mutations() {
+        let mut original = Catalog::default();
+        for database in ["working", "untouched"] {
+            original.register_mem_in(
+                database,
+                "items",
+                MemTable {
+                    columns: vec![("id".into(), FieldType::new(FieldTypeCode::LongLong))],
+                    rows: vec![vec![Datum::Int(1)]],
+                },
+            );
+        }
+        let mut snapshot = original.clone();
+        let table_name = |catalog: &Catalog, database: &str| {
+            catalog.databases[database]
+                .tables
+                .get_key_value("items")
+                .unwrap()
+                .0
+                .as_ptr()
+        };
+        for database in ["working", "untouched"] {
+            assert_eq!(
+                table_name(&original, database),
+                table_name(&snapshot, database),
+                "taking a snapshot must not copy any schema's table-name map"
+            );
+        }
+        let TableEntry::Mem(table) = snapshot.table_mut_in("working", "items").unwrap() else {
+            panic!("fixture is a memory table");
+        };
+        table.rows.push(vec![Datum::Int(2)]);
+        assert_ne!(
+            table_name(&original, "working"),
+            table_name(&snapshot, "working")
+        );
+        assert_eq!(
+            table_name(&original, "untouched"),
+            table_name(&snapshot, "untouched")
+        );
+        let TableEntry::Mem(table) = original.table_in("working", "items").unwrap() else {
+            panic!("fixture is a memory table");
+        };
+        assert_eq!(table.rows, vec![vec![Datum::Int(1)]]);
+        assert_eq!(snapshot.metadata_version(), original.metadata_version());
+        assert_eq!(snapshot.version(), original.version() + 1);
+
+        assert!(snapshot.rename_table("working", "items", "untouched", "moved"));
+        assert!(original.contains_in("working", "items"));
+        assert!(!original.contains_in("untouched", "moved"));
+        let TableEntry::Mem(table) = snapshot.table_in("untouched", "moved").unwrap() else {
+            panic!("renamed fixture is a memory table");
+        };
+        assert_eq!(table.rows, vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]);
+        assert!(snapshot.drop_database("working"));
+        assert!(original.has_database("working"));
     }
 }

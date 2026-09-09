@@ -124,8 +124,7 @@ def main() -> None:
 
     stub_lines = [
         GENERATED_HEADER,
-        "// Split into `charset_data/*.rs`, one file per table, to keep each",
-        "// part under the repo's source-size ratchet limit.",
+        "// Tables live in `charset_data/*.rs`, one file per table.",
         "",
         'include!("charset_data/known_charsets.rs");',
         'include!("charset_data/collations.rs");',

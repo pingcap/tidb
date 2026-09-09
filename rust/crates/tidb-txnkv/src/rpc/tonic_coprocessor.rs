@@ -67,6 +67,15 @@ impl TonicCoprocessorClient {
         })
     }
 
+    /// Constructs one shared admission owner with the specified connection count.
+    pub fn with_connection_count(
+        count: std::num::NonZeroUsize,
+    ) -> Result<Self, DirectUnaryClientError> {
+        Ok(Self {
+            transport: RawTransportClient::with_connection_count(count)?,
+        })
+    }
+
     /// Whether this value retains the unique worker shutdown and join authority.
     #[must_use]
     pub const fn is_transport_owner(&self) -> bool {
@@ -87,27 +96,17 @@ impl TonicCoprocessorClient {
         self.transport.submit_batch(address, entries)
     }
 
-    /// [`Self::submit_batch_commands_with_call`] without the receipt wait.
-    pub(in crate::rpc) fn submit_batch_commands_deferred(
-        &mut self,
-        address: &str,
-        entries: Vec<BatchCommandEntry>,
-        call: &UnaryCallContext,
-    ) -> Result<super::transport_runtime::DeferredReceipts, DirectUnaryClientError> {
-        self.transport.submit_batch_deferred(address, entries, call)
-    }
-
+    /// Admits call-scoped commands with an on-demand publication barrier.
     pub(in crate::rpc) fn submit_batch_commands_with_call(
         &mut self,
         address: &str,
         entries: Vec<BatchCommandEntry>,
         call: &UnaryCallContext,
-    ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
-        self.transport
-            .submit_batch_with_call(address, entries, call)
+    ) -> Result<super::transport_runtime::PublicationBarrier, DirectUnaryClientError> {
+        self.transport.submit_batch_with_call(address, entries, call)
     }
 
-    /// Returns the active BatchCommands generation for one physical/logical route.
+    /// Returns the highest active stream generation for an address/forwarding target.
     ///
     /// This is a worker barrier as well as a focused lifecycle diagnostic: all
     /// receive events accepted before it have already retired their old route.
@@ -120,7 +119,7 @@ impl TonicCoprocessorClient {
         self.transport.inspect_batch(address, forwarded_host).0
     }
 
-    /// Returns the greatest request ID allocated by the sole batch scheduler.
+    /// Returns the greatest request ID allocated across the connection fleet.
     ///
     /// This worker barrier distinguishes caller submissions from empty stream
     /// recreation after a transport failure. A stable value proves that the
@@ -155,7 +154,9 @@ impl TonicCoprocessorClient {
         self.liveness(address, DEFAULT_STORE_LIVENESS_TIMEOUT)
     }
 
-    /// Returns the active generation for focused lifecycle diagnostics.
+    /// Returns the greatest live physical-channel version for diagnostics.
+    /// Failed-attempt invalidation must use the actual request's publication,
+    /// not this address-wide snapshot when several connections are active.
     #[must_use]
     pub fn connection_version(&self, address: &str) -> Option<u64> {
         self.inspect(address).0
@@ -341,20 +342,15 @@ impl AsyncRequestDispatcher for TonicCoprocessorClient {
         }
         let body = replace_top_level_context(&request.encoded_request, &request.context)?;
         let (entry, mut pending) = BatchCoprocessorPending::entry(body, forwarded_host);
-        let receipts =
+        let barrier =
             match self.submit_batch_commands_with_call(physical_address, vec![entry], call) {
-                Ok(receipts) => receipts,
+                Ok(barrier) => barrier,
                 Err(error) => {
                     pending.cancel();
                     return Err(error);
                 }
             };
-        if !receipts.is_empty() {
-            if let Err(error) = pending.bind_publication(&receipts) {
-                pending.cancel();
-                return Err(error);
-            }
-        }
+        pending.retain_barrier(barrier);
         if call.cancellation().is_cancelled() {
             pending.cancel();
             return Err(DirectUnaryClientError::CallerCancelled);

@@ -237,7 +237,9 @@ fn unary_rpc_attaches_context_once_reuses_address_and_recreates_after_close() {
         response_size: None,
         failure: None,
     });
-    let mut client = TonicCoprocessorClient::new().unwrap();
+    let mut client =
+        TonicCoprocessorClient::with_connection_count(std::num::NonZeroUsize::new(1).unwrap())
+            .unwrap();
 
     for data in [b"first".as_slice(), b"second".as_slice()] {
         let raw = client
@@ -297,7 +299,65 @@ fn unary_rpc_attaches_context_once_reuses_address_and_recreates_after_close() {
     assert_eq!(third.physical_channel_version(), 2);
     assert_eq!(client.connection_version(&server.address), Some(2));
 
+    // connPool.Close closes the gRPC connection, including active calls, not
+    // just the pool's cached handle. Another RPCClient remains independent.
+    let entered = Arc::new(Mutex::new(Vec::new()));
+    let delayed = TestServer::start(RecordingTikv {
+        requests: Arc::new(Mutex::new(Vec::new())),
+        grpc_timeouts: Arc::clone(&entered),
+        delay: Duration::from_secs(2),
+        response_size: None,
+        failure: None,
+    });
+    let mut pending_client = client.clone();
+    let delayed_address = delayed.address.clone();
+    let (finished, result) = mpsc::channel();
+    let pending = std::thread::spawn(move || {
+        finished
+            .send(pending_client.send_request(
+                &delayed_address,
+                &request(b"in-flight"),
+                Duration::from_secs(5),
+            ))
+            .unwrap();
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while entered.lock().unwrap().is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "RPC did not enter TiKV"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let version = client.connection_version(&delayed.address).unwrap();
+    client
+        .close_address_version(&delayed.address, version)
+        .unwrap();
+    let closed_call = result.recv_timeout(Duration::from_secs(1));
+    pending.join().unwrap();
+    let error = closed_call
+        .expect("CloseAddrVer must interrupt the active RPC")
+        .unwrap_err();
+    assert_eq!(error.connection().unwrap().version(), version);
+    assert_eq!(error.connection().unwrap().address(), delayed.address);
+
+    let mut sibling = TonicCoprocessorClient::new().unwrap();
+    sibling
+        .send_request(
+            &server.address,
+            &request(b"sibling"),
+            Duration::from_secs(2),
+        )
+        .unwrap();
     client.close().unwrap();
+    sibling
+        .send_request(
+            &server.address,
+            &request(b"survives-close"),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+    sibling.close().unwrap();
     assert_eq!(client.active_address_count(), 0);
     assert_eq!(
         client
@@ -354,7 +414,9 @@ fn caller_timeout_and_malformed_body_have_typed_fail_closed_results() {
         response_size: None,
         failure: None,
     });
-    let mut client = TonicCoprocessorClient::new().unwrap();
+    let mut client =
+        TonicCoprocessorClient::with_connection_count(std::num::NonZeroUsize::new(1).unwrap())
+            .unwrap();
 
     let zero_timeout = client
         .send_request(&server.address, &request(b"zero"), Duration::ZERO)
@@ -496,7 +558,9 @@ fn delayed_exact_generation_close_cannot_close_a_newer_channel() {
         response_size: None,
         failure: Some(tonic::Code::Cancelled),
     });
-    let mut client = TonicCoprocessorClient::new().unwrap();
+    let mut client =
+        TonicCoprocessorClient::with_connection_count(std::num::NonZeroUsize::new(1).unwrap())
+            .unwrap();
 
     let first = client
         .send_request(&server.address, &request(b"first"), Duration::from_secs(2))

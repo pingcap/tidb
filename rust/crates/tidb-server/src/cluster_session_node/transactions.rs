@@ -34,18 +34,19 @@
 //! and its optimistic sibling; sysbench's parallel `oltp_read_write` was the
 //! workload that demanded the wiring.
 //!
-//! # Named gap: `SELECT ... FOR UPDATE` does not lock yet
+//! # Locking reads
 //!
 //! Go's `SelectLockExec` sits above the reader and pessimistically locks each
 //! produced row's key at the statement's `for_update_ts`, so a second
 //! transaction's `FOR UPDATE` WAITS and then reads the committed value.
-//! This tier currently drops the lock clause: the read is served from the
-//! ordinary snapshot, no key is locked, and a contender neither waits nor
-//! re-reads (measured 2026-08-17: the contender returned immediately with
-//! the pre-commit value). The pessimistic transaction it needs to lock in
-//! exists now; the remaining work is the executor-level lock step over the
-//! rows a locking READ produces, which stages no mutation for
-//! `lock_staged_keys` to see.
+//! Point and batch reads under repeatable read pre-lock their classified
+//! primary keys and consume the returned values. Other locking reads publish
+//! selected record keys from the executor; the statement owner locks those
+//! keys and retries with an advanced snapshot after a conflict. Ordinary
+//! reads keep their transaction snapshot and cannot use the lock-value cache.
+//! Read-committed reads exclude speculative absent-key prelocks. Partition,
+//! plan-shape and non-default wait exclusions remain explicit in the
+//! pre-lock classifier; they do not imply full lock-mode coverage.
 //!
 //! `LOCK IN SHARE MODE` is Go's own documented no-op and stays one.
 
@@ -231,6 +232,12 @@ pub trait OpenClusterTransaction: Send {
     /// optimistic transaction share.
     fn is_pessimistic(&self) -> bool {
         false
+    }
+
+    /// Starts a current-read statement without changing the transaction's
+    /// repeatable-read snapshot.
+    fn fresh_locking_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+        Err("only a pessimistic transaction opens a current locking snapshot".to_owned())
     }
 
     /// A read handle at an explicit statement timestamp -- the pessimistic
@@ -900,6 +907,10 @@ impl OpenClusterTransaction for SessionTransaction {
 
     fn is_pessimistic(&self) -> bool {
         SessionTransaction::is_pessimistic(self)
+    }
+
+    fn fresh_locking_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
+        SessionTransaction::fresh_locking_snapshot(self).map_err(|error| error.to_string())
     }
 
     fn snapshot_at(&self, read_ts: u64) -> Result<Box<dyn ClusterSnapshot>, String> {

@@ -14,6 +14,39 @@
 use super::*;
 use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
 
+#[test]
+fn catalog_column_iteration_borrows_visible_metadata() {
+    let mut catalog = flag_table();
+    catalog.register(
+        "memory",
+        MemTable {
+            columns: vec![("Label".into(), FieldType::new(FieldTypeCode::Varchar))],
+            rows: Vec::new(),
+        },
+    );
+    for name in ["y", "memory"] {
+        let entry = catalog.table_in("test", name).unwrap();
+        let owned = entry.column_types();
+        assert_eq!(
+            entry.column_names(),
+            owned.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>()
+        );
+        for (offset, (name, ty)) in entry.columns().enumerate() {
+            assert_eq!((name, ty), (owned[offset].0.as_str(), &owned[offset].1));
+            let (source_name, source_type) = match entry {
+                TableEntry::Kv(kv) => {
+                    let column = &kv.visible_columns()[offset];
+                    (column.name.as_str(), &column.field_type)
+                }
+                TableEntry::Mem(mem) => (mem.columns[offset].0.as_str(), &mem.columns[offset].1),
+                _ => unreachable!(),
+            };
+            assert!(std::ptr::eq(name.as_ptr(), source_name.as_ptr()));
+            assert!(std::ptr::eq(ty, source_type));
+        }
+    }
+}
+
 /// The five-column table both tests run against, with one row.
 fn flag_table() -> Catalog {
     let mut catalog = Catalog::default();

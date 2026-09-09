@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::cell::Cell;
+use std::sync::Mutex;
 use std::fmt;
 use std::time::Duration;
 
@@ -47,7 +47,7 @@ pub trait TimestampSource: fmt::Debug {
 /// One-shot injected TSO for paths that can prove they need only one value.
 #[derive(Debug)]
 pub struct FixedTimestampSource {
-    timestamp: Cell<Option<u64>>,
+    timestamp: Mutex<Option<u64>>,
 }
 
 impl FixedTimestampSource {
@@ -55,7 +55,7 @@ impl FixedTimestampSource {
     #[must_use]
     pub const fn new(timestamp: u64) -> Self {
         Self {
-            timestamp: Cell::new(Some(timestamp)),
+            timestamp: Mutex::new(Some(timestamp)),
         }
     }
 }
@@ -64,6 +64,8 @@ impl TimestampSource for FixedTimestampSource {
     fn current_ts(&self) -> Result<u64, String> {
         let timestamp = self
             .timestamp
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
             .take()
             .ok_or_else(|| "one-shot timestamp source is exhausted".to_owned())?;
         if timestamp == 0 {
@@ -1187,8 +1189,11 @@ pub(super) fn recover_lock_region_error<C, L>(
 where
     L: RegionRecoveryLoader,
 {
+    // EpochNotMatch may load store metadata. Use the shared recovery owner
+    // so that I/O runs outside the cache mutex, as on the transaction path.
     let recovered = runtime
-        .with_region_cache(|cache| cache.on_region_error(error, attempt.clone(), backoff))
+        .region_cache_handle()
+        .on_region_error(error, attempt.clone(), backoff)
         .map_err(|_| LockRecoveryError::RegionCacheLifecycle)?;
     let delay = match recovered {
         // A stale observation means a concurrent caller already refreshed

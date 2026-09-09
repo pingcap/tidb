@@ -1,0 +1,299 @@
+{
+  "status": "WIP: static metadata ownership validated locally; not whole Go package completion or live sysbench/TPC-C acceptance.",
+  "change": "Represent exact built-in charset/collation spellings using immutable static registry strings, preserving shared Arc backing for arbitrary names. FieldType constructors, setters, builders and expression CollationInfo avoid repeated string allocations. Column metadata, cast, IFNULL folding and IndexJoin forwarding accept borrowed names without eager String copies.",
+  "files": [
+    "rust/crates/tidb-datatype/src/charset.rs",
+    "rust/crates/tidb-datatype/src/lib.rs",
+    "rust/crates/tidb-datatype/src/field_type/mod.rs",
+    "rust/crates/tidb-datatype/src/field_type/builder.rs",
+    "rust/crates/tidb-model/src/column.rs",
+    "rust/crates/tidb-expr/src/expr_collation.rs",
+    "rust/crates/tidb-expr/src/aggregation/wrap_cast.rs",
+    "rust/crates/tidb-expr/src/expr_util/fold.rs",
+    "rust/crates/tidb-executor/src/physical_builder/index_join.rs",
+    "rust/docs/prepared-plan-execplan.md"
+  ],
+  "go_source": [
+    "pkg/parser/types/field_type.go: NewFieldType, SetCharset, SetCollate, Clone",
+    "pkg/expression/builtin.go: newReturnFieldTypeForBaseBuiltinFunc",
+    "pkg/expression/collation.go: collationInfo, SetCharsetAndCollation",
+    "pkg/expression/builtin_cast.go: WrapWithCastAsString",
+    "pkg/expression/constant_fold.go: ifNullHandler",
+    "pkg/executor/builder.go: IndexJoin hash-key collation forwarding"
+  ],
+  "base_commit": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "worktree": "Shared dirty hparser-integration worktree preserved. Before executable includes preceding chosen-range ownership batch. No Git or remote writes.",
+  "evidence_directory": "/private/tmp/tidb-static-metadata.4I1mRd",
+  "binaries": {
+    "before_sha256": "ed05a492d4d402785ae8e51dc29851bf714d12942928a566e52d9ed475a5a305",
+    "after_sha256": "0689ab9fe83e41b0b3154bd9f5e5949773293649a67e348e5708670524082ab5",
+    "replay_before_sha256": "c23cc62ead5b3bf31711d9d92ebb41791fa1e472e309ee5935e52d46ddf1fd92",
+    "replay_after_sha256": "1ced3a1b013b63d1d1050a47d3fbfb2748943bf241fdd34bab710030f3f966f8",
+    "source_note": "After measured build, only an import ordering change and documentation updates occurred."
+  },
+  "measurement": {
+    "scope": "One isolated Session, in-process storage, four rows; prepared bind/execute entry. 100 warmups, five rounds of 10000 operations per query per invocation, two invocations per binary.",
+    "source": "rust/benchmarks/type-metadata-sharing-baseline.json contains the unchanged benchmark source and manifest.",
+    "order": [
+      "before-a",
+      "after-a",
+      "after-b",
+      "before-b"
+    ],
+    "qualification": "No build/test/profile alongside timings. Exact rows and metadata match. Index/range/aggregate reductions appear in both invocation pairs. Sort (-1.1%) is not accepted as an independent win. Initial point (+3.2%) has strong startup drift; a longer paired point run did not reproduce it. Neither point run establishes an independent improvement. There is no host-wide quiescence guarantee; compare these paired binaries only, not absolute timings from earlier baselines. No live OLTP acceptance.",
+    "point": {
+      "before_us": [
+        1.5366292000000001,
+        1.3089000000000002,
+        1.1563667,
+        1.070625,
+        1.0197084,
+        0.9428624999999999,
+        0.9482959,
+        0.9456125,
+        0.946175,
+        0.9451875
+      ],
+      "after_us": [
+        2.4492833000000003,
+        1.3991667,
+        1.2179167,
+        1.1095083,
+        1.0603208,
+        0.9634333,
+        0.9679917,
+        0.9684333,
+        0.9687250000000001,
+        0.9713375
+      ],
+      "before_median_us": 0.98400215,
+      "after_median_us": 1.01582915,
+      "elapsed_change_percent": 3.234444152383209
+    },
+    "range": {
+      "before_us": [
+        23.6727208,
+        23.693595900000002,
+        23.9307,
+        23.796087500000002,
+        23.6876458,
+        24.1197625,
+        24.2706208,
+        24.2160708,
+        24.1486917,
+        24.0856583
+      ],
+      "after_us": [
+        23.1101167,
+        23.7558541,
+        23.4138125,
+        23.496945800000002,
+        24.1914042,
+        23.0896708,
+        23.049875,
+        23.0154875,
+        23.1693708,
+        23.0010125
+      ],
+      "before_median_us": 24.00817915,
+      "after_median_us": 23.13974375,
+      "elapsed_change_percent": -3.6172480827226683
+    },
+    "index": {
+      "before_us": [
+        39.894987500000006,
+        40.2366125,
+        40.044824999999996,
+        40.3738083,
+        40.1951584,
+        40.6741875,
+        40.666329100000006,
+        41.0706041,
+        40.3972416,
+        40.5631625
+      ],
+      "after_us": [
+        38.7282708,
+        38.6056417,
+        38.680125,
+        38.9991959,
+        39.0200916,
+        38.012129200000004,
+        38.2281542,
+        37.9068167,
+        38.0940041,
+        37.83425
+      ],
+      "before_median_us": 40.385524950000004,
+      "after_median_us": 38.41689795,
+      "elapsed_change_percent": -4.874585640368167
+    },
+    "aggregate": {
+      "before_us": [
+        36.219300000000004,
+        36.2065833,
+        36.5202916,
+        36.17015,
+        36.4067791,
+        36.2835208,
+        36.7166875,
+        36.4945667,
+        36.4736125,
+        36.6037833
+      ],
+      "after_us": [
+        35.6407791,
+        35.8514042,
+        35.6276084,
+        35.0837834,
+        35.4966167,
+        35.34475,
+        35.2108125,
+        35.6588875,
+        35.503775000000005,
+        35.1452458
+      ],
+      "before_median_us": 36.4401958,
+      "after_median_us": 35.50019585,
+      "elapsed_change_percent": -2.5795688781672266
+    },
+    "sort": {
+      "before_us": [
+        32.338375,
+        32.294425,
+        32.4067334,
+        32.4272542,
+        32.274216700000004,
+        32.534604200000004,
+        32.7695875,
+        32.5542666,
+        32.5943459,
+        32.4870792
+      ],
+      "after_us": [
+        32.009299999999996,
+        31.7974542,
+        32.372008300000005,
+        31.598229200000002,
+        31.8545667,
+        32.770995799999994,
+        32.2135208,
+        31.984724999999997,
+        32.7132375,
+        32.3920584
+      ],
+      "before_median_us": 32.4571667,
+      "after_median_us": 32.1114104,
+      "elapsed_change_percent": -1.0652695079512386
+    },
+    "long_point_control": {
+      "operations_per_round": 1000000,
+      "rounds_per_invocation": 5,
+      "before-a": [
+        1.588479667,
+        1.55320675,
+        1.55835725,
+        1.556632041,
+        1.560134667
+      ],
+      "after-a": [
+        1.53994775,
+        1.526817416,
+        1.5285034169999998,
+        1.5204368750000001,
+        1.514239417
+      ],
+      "after-b": [
+        1.51114025,
+        1.5234234590000002,
+        1.536166833,
+        1.5614575,
+        1.5304287079999999
+      ],
+      "before-b": [
+        1.522346,
+        1.5290082090000001,
+        1.560153959,
+        1.536878709,
+        1.5367736250000001
+      ],
+      "before_median_us": 1.5549193955,
+      "after_median_us": 1.5276604164999998,
+      "elapsed_change_percent": -1.7530798753227161,
+      "conclusion": "Initial apparent point regression not reproduced; treat point performance as unchanged."
+    }
+  },
+  "allocation_diagnostic": {
+    "scope": "Own isolated process, system allocator counts after warmup; 10000 constructions each. Not a production protection gate or permanent test.",
+    "result": "Zero heap allocations for parser-zero, runtime-default, builtin-result, expression-zero, binary, utf8mb4_bin, utf8mb4_general_ci, gbk_bin and gb18030_bin constructions. Separate exact-name and clone independence checks pass for BINARY, utf8mb3_bin, empty, custom_collation and utf8mb4_bin.",
+    "source": "use std::alloc::{GlobalAlloc, Layout, System};\nuse std::hint::black_box;\nuse std::sync::atomic::{AtomicUsize, Ordering};\nuse tidb_datatype::{Collation, FieldType, FieldTypeBuilder, FieldTypeCode};\nuse tidb_expr::expr_collation::CollationInfo;\n\nstruct Allocations;\nstatic COUNT: AtomicUsize = AtomicUsize::new(0);\nunsafe impl GlobalAlloc for Allocations {\n    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {\n        COUNT.fetch_add(1, Ordering::Relaxed);\n        unsafe { System.alloc(layout) }\n    }\n    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {\n        unsafe { System.dealloc(ptr, layout) }\n    }\n    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {\n        COUNT.fetch_add(1, Ordering::Relaxed);\n        unsafe { System.realloc(ptr, layout, size) }\n    }\n}\n#[global_allocator]\nstatic ALLOCATOR: Allocations = Allocations;\n\nfn measure<T>(name: &str, mut construct: impl FnMut() -> T) {\n    drop(black_box(construct()));\n    COUNT.store(0, Ordering::Relaxed);\n    for _ in 0..10000 {\n        drop(black_box(construct()));\n    }\n    let count = COUNT.load(Ordering::Relaxed);\n    println!(\"{name}: {count} allocations / 10000 constructions\");\n    assert_eq!(count, 0, \"static metadata should not allocate string backing\");\n}\n\nfn main() {\n    measure(\"parser-zero\", || FieldType::parser(black_box(FieldTypeCode::LongLong)));\n    measure(\"runtime-default\", || FieldType::new(black_box(FieldTypeCode::LongLong)));\n    measure(\"builtin-result\", || FieldTypeBuilder::new()\n        .with_code(FieldTypeCode::LongLong)\n        .charset_set(black_box(\"binary\"))\n        .collation_set(black_box(\"binary\"))\n        .build());\n    measure(\"expression-zero\", CollationInfo::default);\n    for collation in [Collation::Binary, Collation::Utf8Mb4Bin,\n        Collation::Utf8Mb4GeneralCi, Collation::GbkBin, Collation::Gb18030Bin] {\n        measure(collation.name(), || {\n            let mut info = CollationInfo::default();\n            info.set_charset_and_collation(black_box(collation.charset().name()), black_box(collation.name()));\n            info\n        });\n    }\n    for name in [\"BINARY\", \"utf8mb3_bin\", \"\", \"custom_collation\", \"utf8mb4_bin\"] {\n        let mut field = FieldType::parser(FieldTypeCode::VarString).with_collation_name(name);\n        let copied = field.clone();\n        field.set_collation_name(\"binary\");\n        assert_eq!(copied.collation_name(), name);\n        assert_eq!(field.collation_name(), \"binary\");\n    }\n    println!(\"exact spellings and clone independence preserved\");\n}\n",
+    "manifest": "[package]\nname = \"static-metadata-diagnostic\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[workspace]\n[profile.release]\nlto = \"thin\"\n[dependencies]\ntidb-datatype = { path = \"/Users/qiliu/projects/tidb/rust/crates/tidb-datatype\" }\ntidb-expr = { path = \"/Users/qiliu/projects/tidb/rust/crates/tidb-expr\" }\n[[bin]]\nname = \"static-metadata-diagnostic\"\npath = \"allocations.rs\"\n"
+  },
+  "validation": {
+    "profile": "WIP: consolidated semantic coverage; no Ready claim.",
+    "tests": {
+      "datatype_field_type": 29,
+      "datatype_charset": 4,
+      "expression_collation": 6,
+      "expression_rewriter": 67,
+      "expression_arithmetic": 10,
+      "expression_compare": 14,
+      "expression_aggregation": 37,
+      "expression_util": 11,
+      "executor_access_cost": 29,
+      "executor_dml": 10,
+      "executor_index_ranges": 18,
+      "executor_index_prefix": 13,
+      "executor_joins": 16,
+      "executor_handle_range": 8,
+      "total": 272
+    },
+    "go_fixture_topics": [
+      "table/index",
+      "explain_easy",
+      "explain_complex",
+      "util/ranger",
+      "index_join",
+      "index_merge",
+      "executor/aggregate",
+      "session/clustered_index",
+      "executor/prepared",
+      "expression/charset_and_collation",
+      "common_collation",
+      "collation_pointget",
+      "subquery",
+      "planner/core/join_reorder_through_projection",
+      "executor/update",
+      "executor/delete"
+    ],
+    "fixture_results": {
+      "matched": 3384,
+      "existing_divergences": 126,
+      "skipped": 500,
+      "comparison": "All 16 complete before/after reports identical after elapsed-time normalization."
+    },
+    "tests_added_or_removed": 0,
+    "commands_cwd": "rust/",
+    "commands": [
+      "cargo test --offline --locked --release -j12 -p tidb-datatype -p tidb-expr -p tidb-executor --lib --no-run",
+      "cargo build --offline --locked --release -j12 --target-dir /Users/qiliu/projects/tidb/rust/target --manifest-path /private/tmp/tidb-prepared-owner.ixmsOs/probe/Cargo.toml",
+      "cargo test --offline --locked --release -j12 -p difftest-result-tests --test integration_diff --no-run",
+      "cargo generate-lockfile --offline --manifest-path /private/tmp/tidb-static-metadata.4I1mRd/Cargo.toml",
+      "cargo build --offline --locked --release -j12 --target-dir /Users/qiliu/projects/tidb/rust/target --manifest-path /private/tmp/tidb-static-metadata.4I1mRd/Cargo.toml",
+      "target/release/static-metadata-diagnostic",
+      "ruby /private/tmp/tidb-static-metadata.4I1mRd/replay.rb before /private/tmp/tidb-static-metadata.4I1mRd/replay-before",
+      "bash /private/tmp/tidb-static-metadata.4I1mRd/validate.sh",
+      "for run in before-a after-a after-b before-b; do /private/tmp/tidb-static-metadata.4I1mRd/probe-${run%-*} 10000 > /private/tmp/tidb-static-metadata.4I1mRd/$run.log || exit; done",
+      "ruby /private/tmp/tidb-static-metadata.4I1mRd/timings.rb",
+      "for run in before-a after-a after-b before-b; do /private/tmp/tidb-static-metadata.4I1mRd/probe-${run%-*} 1000000 point > /private/tmp/tidb-static-metadata.4I1mRd/point-$run.log || exit; done"
+    ],
+    "test_runner_source": "#!/bin/bash\nset -euo pipefail\ncd /Users/qiliu/projects/tidb/rust\nevidence=/private/tmp/tidb-static-metadata.4I1mRd\nfor suite in field_type:: charset::; do\n  target/release/build/tidb-datatype/6796e1a2edcae71a/out/tidb_datatype-6796e1a2edcae71a \"$suite\" --test-threads=12 > \"$evidence/test-datatype-${suite//::/_}.log\" 2>&1\ndone\nfor suite in expr_collation:: rewriter:: builtin_arithmetic:: builtin_compare:: aggregation:: expr_util::; do\n  target/release/build/tidb-expr/c547695f5d95432a/out/tidb_expr-c547695f5d95432a \"$suite\" --test-threads=12 > \"$evidence/test-expr-${suite//::/_}.log\" 2>&1\ndone\nfor suite in access_cost:: driver::tests::dml:: driver::tests::index_ranges:: driver::tests::index_prefix_reads:: driver::tests::joins:: handle_range::; do\n  target/release/build/tidb-executor/25c7702b011f2820/out/tidb_executor-25c7702b011f2820 \"$suite\" --test-threads=12 > \"$evidence/test-executor-${suite//::/_}.log\" 2>&1\ndone\ncp target/release/build/difftest-result-tests/fc2a7b145e4187e6/out/integration_diff-fc2a7b145e4187e6 \"$evidence/replay-after\"\nruby \"$evidence/replay.rb\" after \"$evidence/replay-after\" > \"$evidence/fixture-comparison-final.log\" 2>&1\n"
+  },
+  "risks_and_gaps": [
+    "Static storage uses byte-identical canonical names only. Aliases, uppercase names and arbitrary spelling remain unchanged, including JSON round trips. Semantic collation lookup and process registry mutation are not cached by this representation.",
+    "Native representation layout changes; Go MemoryUsage remains its source-defined accounting, not Rust sizeof. The longer point control did not reproduce the initial slowdown.",
+    "Name setter bounds change from Into<String> to AsRef<str>; repo callers compile, but unbuilt external Rust consumers with custom conversion-only types may need adjustment.",
+    "No fresh Go server/profile, live TiKV, sysbench/TPC-C, make lint or Ready validation.",
+    "Full native prepared-plan cache activation, remaining package parity and 126 existing fixture divergences remain open."
+  ]
+}

@@ -594,11 +594,8 @@ impl Expression {
 
     /// Go `Expression.Eval(ctx, row)`: evaluate this expression against one row.
     ///
-    /// The [`Columns`](crate::context::Columns) context stands in for Go's
-    /// richer `EvalContext`; the currently ported variants (`Column`,
-    /// `Constant`, `CorrelatedColumn`) do not read it. `ScalarFunction`
-    /// evaluation (routing arguments through the builtin dispatch) is the next
-    /// unit and is reported as unsupported until then.
+    /// The context supplies current statement state, including prepared
+    /// parameters. The expression tree itself stays immutable across calls.
     pub fn eval(
         &self,
         ctx: &impl crate::context::Columns,
@@ -606,7 +603,7 @@ impl Expression {
     ) -> Result<tidb_datatype::Datum, crate::context::EvalError> {
         match self {
             Expression::Column(c) => c.eval(row),
-            Expression::Constant(c) => c.eval(),
+            Expression::Constant(c) => c.eval_on_row(ctx, row),
             Expression::CorrelatedColumn(c) => Ok(c.eval()),
             Expression::ScalarFunction(c) => c.eval(ctx, row),
         }
@@ -1228,6 +1225,25 @@ mod tests {
                 is_null_rejected(&inner_schema, &expression),
                 expected,
                 "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn prepared_deferred_expression_receives_the_current_row() {
+        let field_type = FieldType::new(FieldTypeCode::LongLong);
+        let mut column = Column::new(1, field_type.clone());
+        column.index = 0;
+        let mut constant = Constant::new(Datum::Int(99), field_type.clone());
+        constant.deferred_expr = Some(Box::new(Expression::Column(column)));
+        let expression = Expression::Constant(constant);
+        let mut input = Chunk::new_with_capacity(&[field_type], 2);
+        input.append_int64(0, 7);
+        input.append_int64(0, -3);
+        for (row, expected) in [7, -3].into_iter().enumerate() {
+            assert_eq!(
+                expression.eval(&NoColumns, input.get_row(row)).unwrap(),
+                Datum::Int(expected),
             );
         }
     }

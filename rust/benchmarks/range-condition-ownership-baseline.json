@@ -1,0 +1,242 @@
+{
+  "status": "WIP: borrowed range-condition ownership validated locally; not whole-package completion or sysbench/TPC-C throughput acceptance.",
+  "change": "Go ExtractAccessConditionsForColumn filters expression interfaces; BuildTableRange and BuildColumnRange return the original input condition slice. Rust now borrows those conditions instead of deep-copying trees. The statistics mask accepts borrowed expressions, and native table/IndexJoin planners move their existing owned conditions into the appropriate access or residual owner.",
+  "files": [
+    "rust/crates/tidb-planner/src/ranger/detacher.rs",
+    "rust/crates/tidb-planner/src/ranger/ranger.rs",
+    "rust/crates/tidb-planner/src/find_best_task/index_join/path.rs",
+    "rust/crates/tidb-planner/src/find_best_task/dispatch.rs",
+    "rust/crates/tidb-executor/src/access_cost.rs",
+    "rust/docs/prepared-plan-execplan.md"
+  ],
+  "go_source": [
+    "pkg/util/ranger/detacher.go: ExtractAccessConditionsForColumn",
+    "pkg/expression/util.go: Filter",
+    "pkg/util/ranger/ranger.go: buildColumnRange, BuildTableRange, BuildColumnRange"
+  ],
+  "base_commit": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "worktree": "Pre-existing shared dirty worktree preserved. The before executable includes the previous SELECT rewrite ownership batch. No Git or remote writes.",
+  "evidence_directory": "/private/tmp/tidb-range-ownership.lcqtXE",
+  "binaries": {
+    "before_sha256": "3a2bd1fb71bb683d601bbad832609388279afc03481eab87a70aa4e220501dc6",
+    "after_sha256": "77c24d21426c1d80b682a68c12541b9438dabf15f6e1ec7b7f1a7ec67e6b7e60"
+  },
+  "measurement": {
+    "scope": "One isolated Session, in-process storage, four rows; prepared bind/execute entry. One hundred warmups, five rounds of 10000 operations per case, two invocations per binary.",
+    "order": [
+      "before-a",
+      "after-a",
+      "after-b",
+      "before-b"
+    ],
+    "qualification": "Builds, tests and fixture replay completed before timings. Exact result rows and metadata match across all four runs. Range/index/sort show paired reductions of 1.7-2.9%. The aggregate difference is about 1% and not accepted as an independent win. The short cached-point control is noisy (including startup drift) and not accepted as either a demonstrated regression or improvement. These local measurements are not live OLTP acceptance.",
+    "point": {
+      "before_us": [
+        1.5141583,
+        1.2936042,
+        1.1467874999999998,
+        1.0610291,
+        0.9967374999999999,
+        0.9393042,
+        0.9565750000000001,
+        0.9534125,
+        0.956425,
+        0.9546291
+      ],
+      "after_us": [
+        1.54995,
+        1.5869792,
+        1.2690125,
+        1.1510958,
+        1.0627625,
+        0.95075,
+        0.9588,
+        0.9638875,
+        0.96105,
+        0.9629500000000001
+      ],
+      "before_median_us": 0.97665625,
+      "after_median_us": 1.013325,
+      "elapsed_change_percent": 3.75451956612165
+    },
+    "range": {
+      "before_us": [
+        26.20685,
+        26.7348125,
+        26.270645799999997,
+        26.5670958,
+        26.531133399999998,
+        26.3921333,
+        26.8597166,
+        26.393525,
+        26.4801541,
+        26.829104200000003
+      ],
+      "after_us": [
+        25.656566599999998,
+        25.8398625,
+        26.0088,
+        25.8973084,
+        26.011333299999997,
+        26.046725,
+        26.0796167,
+        25.4568834,
+        25.6009417,
+        25.6755958
+      ],
+      "before_median_us": 26.505643749999997,
+      "after_median_us": 25.868585449999998,
+      "elapsed_change_percent": -2.403481711324218
+    },
+    "index": {
+      "before_us": [
+        41.3143084,
+        41.6085291,
+        41.1867792,
+        41.217225,
+        41.5614042,
+        41.2894833,
+        41.2890375,
+        41.1728334,
+        40.8038542,
+        41.423420899999996
+      ],
+      "after_us": [
+        40.738970800000004,
+        40.397033300000004,
+        40.7574708,
+        40.6944292,
+        40.7095417,
+        39.9792666,
+        40.487224999999995,
+        39.9811167,
+        40.20575,
+        40.8553875
+      ],
+      "before_median_us": 41.2892604,
+      "after_median_us": 40.5908271,
+      "elapsed_change_percent": -1.6915616633326858
+    },
+    "aggregate": {
+      "before_us": [
+        38.9014917,
+        39.2323666,
+        39.1056042,
+        39.3353417,
+        40.826104099999995,
+        38.5205208,
+        39.4536708,
+        38.358883399999996,
+        38.901612500000006,
+        38.804175
+      ],
+      "after_us": [
+        38.551679199999995,
+        38.608716699999995,
+        38.4801916,
+        38.5845334,
+        38.3710625,
+        38.6831792,
+        38.6974125,
+        38.7433375,
+        38.5193417,
+        39.4978542
+      ],
+      "before_median_us": 39.00360835000001,
+      "after_median_us": 38.59662505,
+      "elapsed_change_percent": -1.0434503811748153
+    },
+    "sort": {
+      "before_us": [
+        35.650354099999994,
+        36.1957375,
+        35.813783300000004,
+        35.653800000000004,
+        35.7604416,
+        35.2103791,
+        35.7465792,
+        35.202708400000006,
+        34.915925,
+        34.768070800000004
+      ],
+      "after_us": [
+        34.6157375,
+        34.596262499999995,
+        34.4499,
+        34.6773708,
+        34.3558375,
+        35.0445834,
+        34.6576042,
+        34.6434375,
+        34.44095840000001,
+        34.772833299999995
+      ],
+      "before_median_us": 35.65207705,
+      "after_median_us": 34.6295875,
+      "elapsed_change_percent": -2.867966285852064
+    }
+  },
+  "validation": {
+    "profile": "WIP",
+    "unique_tests_passed": 117,
+    "ranger": 61,
+    "planner_callers": 27,
+    "index_join_suites": 2,
+    "index_join_qualification": "The two original Go lookup and range-fallback suites also pass separately; they are included in the 27 planner-caller tests, not counted twice.",
+    "access_cost": 29,
+    "go_fixture_topics": [
+      "table/index",
+      "explain_easy",
+      "explain_complex",
+      "util/ranger",
+      "index_join",
+      "index_merge",
+      "executor/aggregate",
+      "session/clustered_index",
+      "executor/prepared",
+      "expression/charset_and_collation",
+      "common_collation",
+      "collation_pointget",
+      "subquery",
+      "planner/core/join_reorder_through_projection"
+    ],
+    "matched": 2888,
+    "diverged": 109,
+    "skipped": 387,
+    "fixture_comparison": "All fourteen full reports are byte-identical after elapsed-time normalization, including existing divergence details. Existing recorded Go fixtures, not a fresh Go server run.",
+    "commands": [
+      "cd /Users/qiliu/projects/tidb/rust",
+      "cargo test --offline --locked --release -j12 -p tidb-planner --lib ranger::",
+      "cargo test --offline --locked --release -j12 -p tidb-planner --lib find_best_task::index_join::",
+      "target/release/build/tidb-planner/3d1b2bbdef61703f/out/tidb_planner-3d1b2bbdef61703f find_best_task:: --test-threads=12",
+      "cargo test --offline --locked --release -j12 -p tidb-executor --lib access_cost::",
+      "cargo build --offline --locked --release -j12 --target-dir /Users/qiliu/projects/tidb/rust/target --manifest-path /private/tmp/tidb-prepared-owner.ixmsOs/probe/Cargo.toml",
+      "cargo test --offline --locked --release -j12 -p difftest-result-tests --test integration_diff --no-run",
+      "INTEGRATION_TOPIC=<topic> INTEGRATION_SHOW_DIVERGENCES=1 <sealed-replay-binary> --ignored --nocapture replay_one_topic_from_env --test-threads=12",
+      "for run in before-a after-a after-b before-b; do /private/tmp/tidb-range-ownership.lcqtXE/probe-${run%-*} 10000 > /private/tmp/tidb-range-ownership.lcqtXE/$run.log || exit; done",
+      "ruby /private/tmp/tidb-range-ownership.lcqtXE/compare.rb",
+      "git -C /Users/qiliu/projects/tidb diff --check -- rust/crates/tidb-planner/src/ranger/detacher.rs rust/crates/tidb-planner/src/ranger/ranger.rs rust/crates/tidb-planner/src/find_best_task/index_join/path.rs rust/crates/tidb-planner/src/find_best_task/dispatch.rs rust/crates/tidb-executor/src/access_cost.rs"
+    ],
+    "replay_binaries": {
+      "before": "/private/tmp/tidb-range-ownership.lcqtXE/replay-before",
+      "after": "/Users/qiliu/projects/tidb/rust/target/release/build/difftest-result-tests/fc2a7b145e4187e6/out/integration_diff-fc2a7b145e4187e6"
+    }
+  },
+  "risks": [
+    "Internal Rust API results now borrow input conditions. All located production consumers compile; owned plan boundaries move their inputs after consuming ranges. No SQL semantic changes intended.",
+    "Existing Go fixture divergences remain; this is not general parity acceptance."
+  ],
+  "not_verified": [
+    "Ready make -j12 lint",
+    "live TiKV",
+    "sysbench/TPC-C throughput",
+    "fresh Go CPU profile",
+    "full prepared physical-plan/cache reuse",
+    "whole Go package completion"
+  ],
+  "reproduction": {
+    "source_reference": "rust/benchmarks/type-metadata-sharing-baseline.json: reproduction.manifest and reproduction.source (unchanged)",
+    "source_manifest": "/private/tmp/tidb-prepared-owner.ixmsOs/probe/Cargo.toml",
+    "recovery": "before.tar.gz and before-tree preserve the exact pre-change dirty production files and ExecPlan"
+  }
+}

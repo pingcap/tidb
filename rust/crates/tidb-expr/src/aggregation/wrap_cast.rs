@@ -237,15 +237,15 @@ pub fn wrap_with_cast_as_string(
     if crate::collation_derive::coercibility_of(&expr)
         == crate::expr_collation::Coercibility::EXPLICIT
     {
-        tp.set_charset_name(source.charset_name().to_owned());
-        tp.set_collation_name(source.collation_name().to_owned());
+        tp.set_charset_name(source.charset_name());
+        tp.set_collation_name(source.collation_name());
     } else if source.code() == FieldTypeCode::Bit {
         // An implicit BIT-to-string cast produces binary.
         tp.set_charset_name("binary");
         tp.set_collation_name("binary");
     } else {
-        tp.set_charset_name(connection.0.to_owned());
-        tp.set_collation_name(connection.1.to_owned());
+        tp.set_charset_name(connection.0);
+        tp.set_collation_name(connection.1);
     }
     tp.set_flen(arg_len);
     tp.set_decimal(UNSPECIFIED_LENGTH);

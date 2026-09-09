@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-09",
+  "status": "WIP: source-policy alignment, not an accepted throughput win",
+  "git_head": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "branch": "hparser-integration",
+  "source": "client-go internal/client/conn_batch.go fetchAllPendingRequests, fetchMorePendingRequests and batchSendLoop; client_test.go TestBatchPolicy",
+  "control_sha256": "8969985b8dd5afaebc949db4ba4393f9ff0e555f06d4e6d25e3d4da1149679a7",
+  "method": {
+    "fixture": "/private/tmp/tidb-live-workload.nIrZBe",
+    "workload": "sysbench oltp_read_only; 100000 rows; prepared statements; same TiKV",
+    "order_per_concurrency": ["before", "after", "after", "before"],
+    "threads": [1, 8, 32],
+    "events": [6000, 30000, 30000],
+    "warmup_events_per_trial": 1000,
+    "cpu": "ps cumulative process CPU differences over equal work; SQL and TiKV measured separately",
+    "batch_size": "TiKV request histogram counter deltas after each trial",
+    "errors_and_reconnects": 0,
+    "raw_results_include_exact_commands": true
+  },
+  "candidates": [
+    {
+      "name": "initial per-store event-loop collector",
+      "sha256": "dad4eaab4dedd5c00bdbcf41d89aebb569d28d8e02fb61dfee4a84a92cd678a9",
+      "raw": "/private/tmp/tidb-batch-owner.Lf2c27/measure.json",
+      "median_delta_percent": {
+        "1": {"tps": -0.0294, "sql_cpu": -0.4292, "tikv_cpu": 0.0739},
+        "8": {"tps": -4.3559, "sql_cpu": -18.4233, "tikv_cpu": -20.7029},
+        "32": {"tps": 0.9415, "sql_cpu": -3.2282, "tikv_cpu": -2.1087}
+      },
+      "decision": "Eight-client regression prevents acceptance. Source review also found the timer stayed armed after reaching the target and the post-yield drain was missing."
+    },
+    {
+      "name": "timer cancellation and final drain refinement",
+      "sha256": "49b0caf18d32fef492c8927cb903470bd032893f307198c60aa097c9bdc89a35",
+      "raw": "/private/tmp/tidb-batch-refined.c6OXOr/measure.json",
+      "median_delta_percent": {
+        "1": {"tps": 0.1115, "sql_cpu": -0.3968, "tikv_cpu": -0.3025},
+        "8": {"tps": -3.0694, "sql_cpu": -14.8680, "tikv_cpu": -20.2636},
+        "32": {"tps": -2.0449, "sql_cpu": -1.1595, "tikv_cpu": 2.0805}
+      },
+      "eight_client_medians": {
+        "before": {"tps": 1912.3518, "sql_cpu_seconds": 65.51, "tikv_cpu_seconds": 72.47, "batch_mean": 1.56114, "mean_latency_ms": 4.185},
+        "after": {"tps": 1853.6542, "sql_cpu_seconds": 55.77, "tikv_cpu_seconds": 57.785, "batch_mean": 3.30556, "mean_latency_ms": 4.315}
+      },
+      "decision": "CPU reductions do not establish throughput improvement. Eight-client regression remains. The 32-client control drifts from 2800.91 to 2569.70 TPS, so that tier is not acceptance-quality evidence. Do not compare candidates across different windows as a causal timing control."
+    }
+  ],
+  "parity": {
+    "sha256": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "coverage": "Six query outputs, 307 text lines, identical on Go/control/candidate before and after both measurement windows. Not exhaustive metadata, package parity or TPC-C write evidence."
+  },
+  "latency": {
+    "refined_eight_client_mean_increase_percent": 3.1063,
+    "p95_ms": null,
+    "limitation": "Every retained sysbench trial prints 95th percentile 0.00 despite multi-millisecond mean latency. This is unavailable tail-latency evidence, not zero latency. The updated objective requires both throughput and latency acceptance; verify the latency measurement path before the next acceptance run."
+  },
+  "profiles": {
+    "method": "Separate 15-second Rust Time Profiler captures and Go pprof capture at eight clients, outside the timed trials. Rust analysis uses Running state and nanosecond weights; transport root includes the LTO-inlined owner-thread closure in both binaries.",
+    "rust_summary": "/private/tmp/tidb-batch-refined.c6OXOr/cpu-summary.json",
+    "go_profile": "/private/tmp/tidb-batch-refined.c6OXOr/go-cpu.pprof",
+    "go_top": "/private/tmp/tidb-batch-refined.c6OXOr/go-top.txt",
+    "before": {"running_samples": 59696, "transport_weight_ns": 4124000000},
+    "after": {"running_samples": 49098, "transport_weight_ns": 2927000000},
+    "finding": "Transport-owner CPU weight falls; the refined collector introduces semaphore_timedwait_trap under that owner. Go batchSendLoop includes fetchMorePendingRequests, selectgo and timer/wakeup work. These CPU captures do not measure per-request waiting time or prove which wait causes the latency regression."
+  },
+  "validation": {
+    "profile": "WIP",
+    "refined": [
+      {"command": "cargo test --offline --locked --release -j12 -p tidb-txnkv --lib rpc::transport_runtime", "passed": 10, "log": "/private/tmp/tidb-batch-owner.Lf2c27/unit-refined.log"},
+      {"command": "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all batch_", "passed": 75, "log": "/private/tmp/tidb-batch-owner.Lf2c27/batch-refined.log"},
+      {"command": "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server", "result": "passed", "log": "/private/tmp/tidb-batch-owner.Lf2c27/build-refined.log"}
+    ],
+    "red_before_refinement": "/private/tmp/tidb-batch-owner.Lf2c27/timer-red.log",
+    "refined_additional_checks": "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all followed by transport_authority_concurrency_source (2 passed), tikv_active_cancellation_source (1 passed), or tikv_unary_command_source (2 passed). Logs: concurrency-refined.log, cancellation-refined.log, unary-refined.log under /private/tmp/tidb-batch-owner.Lf2c27. One concurrency case also belongs to batch_.",
+    "limitations": "Initial sandbox socket tests failed with Operation not permitted; authorized host rerun passed. One refined unit invocation used the wrong Cargo directory and was rerun correctly. Ready lint and whole-package completion are not claimed."
+  },
+  "remaining": "Measure the collection/admission/response critical path against Go and reconcile scheduler ownership without workload-specific wait tuning. Verify both throughput and latency, including a trustworthy tail-latency measurement. General prepared-plan reuse and TPC-C remain open."
+}

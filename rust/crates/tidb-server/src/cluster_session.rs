@@ -563,6 +563,16 @@ pub(crate) fn cluster_table(
     if table.is_sequence() {
         return Err("it is a sequence".to_owned());
     }
+    // Go retains ColumnInfo.Hidden separately from column identity. The
+    // executor's native layout keeps visible columns first; derive every
+    // expression/index/handle offset from this one ordering, not stored
+    // Go offsets. Stable partitioning preserves visible SQL column order.
+    let (mut columns, hidden): (Vec<_>, Vec<_>) = table
+        .cols()
+        .iter_deref()
+        .partition(|column| !column.read().hidden);
+    let visible_count = columns.len();
+    columns.extend(hidden);
     // A partitioned table is loadable when its partitioning is one this node
     // can rebuild from METADATA. `partition_spec_from_metadata` reads Go's
     // stored `PartitionInfo` -- the restored expression text, the columns,
@@ -581,7 +591,7 @@ pub(crate) fn cluster_table(
     // write to the wrong physical table.
     let partition_spec = match &table.partition {
         Some(partition) if partition.read().enable => {
-            Some(partition_spec_for(table, &partition.read())?)
+            Some(partition_spec_for(&columns, &partition.read())?)
         }
         _ => None,
     };
@@ -591,11 +601,26 @@ pub(crate) fn cluster_table(
             table.state.0
         ));
     }
-    let columns: Vec<GoShared<tidb_model::column::ColumnInfo>> =
-        table.cols().iter_deref().collect();
     if columns.is_empty() {
         return Err("it has no public columns".to_owned());
     }
+    // Go TableFromMeta rebuilds generated expressions against the complete
+    // stored schema. The wide loader does not use the bounded reader's
+    // admission rules, so it must retain this metadata itself.
+    let generated_schema = columns
+        .iter()
+        .any(|column| column.read().is_generated())
+        .then(|| {
+            let names: Vec<String> = columns
+                .iter()
+                .map(|column| column.read().name.original().to_owned())
+                .collect();
+            let types: Vec<_> = columns
+                .iter()
+                .map(|column| column.read().field_type.clone())
+                .collect();
+            (names, types)
+        });
     // The row layout is keyed by column id, so a column's *offset* is only a
     // position in the tuple the driver builds; both must come from the same
     // public-column list, which is why the offsets below are indexes into it.
@@ -609,7 +634,7 @@ pub(crate) fn cluster_table(
     // the same `system_row_write` rule the system-row writer uses; a default
     // that cannot be carried across verbatim (an expression, or
     // `CURRENT_TIMESTAMP`, whose instant is per-INSERT and not per-load)
-    // refuses the whole table by name, the way a prefix index does below.
+    // refuses the whole table by name.
     let mut kv_columns: Vec<KvColumn> = Vec::with_capacity(columns.len());
     for column in &columns {
         let column = column.read();
@@ -653,6 +678,27 @@ pub(crate) fn cluster_table(
                     })?,
             )
         };
+        let generated = if column.is_generated() {
+            let expression =
+                tidb_model::generated_expr::parse_expression(&column.generated_expr_string)
+                    .map_err(|error| {
+                        format!("its generated column {name} cannot be parsed: {}", error.message)
+                    })?;
+            let (names, types) = generated_schema.as_ref().expect("generated schema collected");
+            Some(
+                tidb_executor::generated_column::build_added_generated_column(
+                    &name,
+                    &expression,
+                    column.generated_stored,
+                    names,
+                    types,
+                    &tidb_datatype::SessionTimeZone::utc(),
+                )
+                .map_err(|error| format!("its generated column {name} cannot be built: {error:?}"))?,
+            )
+        } else {
+            None
+        };
         kv_columns.push(KvColumn {
             name,
             id: column.id,
@@ -661,15 +707,17 @@ pub(crate) fn cluster_table(
             // Go `ColumnInfo.Comment`, which `SHOW CREATE TABLE` prints and
             // `information_schema.columns.column_comment` reports.
             comment: column.comment.clone(),
-            // The cluster catalog loader refuses a generated column outright
-            // (`tidb_exec::cluster_catalog`), so a table that reaches here
-            // never has one.
-            generated: None,
+            generated,
             default_value,
             origin_default,
         });
     }
+    let hidden = kv_columns.split_off(visible_count);
     let mut kv_table = KvTable::with_storage(table.id, kv_columns, storage.clone_box());
+    kv_table.set_all_columns_public(table.columns.iter_deref().all(|column| column.read().state == SchemaState::PUBLIC));
+    for column in hidden {
+        kv_table.add_hidden_column(column);
+    }
     kv_table.set_name(table.name.original());
     // Go `TableInfo.Comment` reaches every reader of the loaded table:
     // `SHOW CREATE TABLE` prints it and
@@ -785,7 +833,7 @@ pub(crate) fn cluster_table(
         // while multi-column join NDV estimation still reads its stats.
         let clustered_primary = (table.pk_is_handle || table.is_common_handle)
             && index.name.original().eq_ignore_ascii_case("PRIMARY");
-        kv_table.add_index(kv_index(&index, &columns)?, clustered_primary);
+        kv_table.add_index(kv_index(&index, &kv_table.columns)?, clustered_primary);
         // Go `model.IndexInfo.MVIndex`: DDL set the flag when exactly one key
         // part is an ARRAY-typed hidden column, and that column's
         // `Dependences` names the source it indexes
@@ -831,17 +879,15 @@ pub(crate) fn cluster_table(
 /// from the table being loaded, so the expression binds to the same offsets
 /// the scan decodes.
 fn partition_spec_for(
-    table: &TableInfo,
+    table_columns: &[GoShared<tidb_model::column::ColumnInfo>],
     partition: &tidb_model::partition::PartitionInfo,
 ) -> Result<tidb_executor::partition_routing::PartitionSpec, String> {
-    let names: Vec<String> = table
-        .cols()
-        .iter_deref()
+    let names: Vec<String> = table_columns
+        .iter()
         .map(|column| column.read().name.original().to_owned())
         .collect();
-    let types: Vec<tidb_datatype::FieldType> = table
-        .cols()
-        .iter_deref()
+    let types: Vec<tidb_datatype::FieldType> = table_columns
+        .iter()
         .map(|column| column.read().field_type.clone())
         .collect();
     let definitions: Vec<tidb_executor::ddl::StoredPartitionDefinition> = partition
@@ -890,14 +936,14 @@ fn partition_spec_for(
 }
 
 /// Translates one stored `IndexInfo` into the executor's `KvIndex`, against
-/// the table's PUBLIC column list.
+/// the loaded executor table's full native column list.
 ///
 /// The offsets are resolved by NAME here even though `IndexColumn.Offset`
 /// carries one, because the two count different things: Go's offset is a
 /// position in `TableInfo.Columns`, and a `KvIndex`'s is a position in the
-/// public columns this loader built. They coincide only while no column is
-/// non-public, and a silent disagreement between them indexes the wrong
-/// column.
+/// native columns this loader built, with visible columns before hidden
+/// ones. Resolving against that same list also keeps backfill and normal
+/// writes from indexing different row slots.
 ///
 /// It is one function rather than a loop inside [`cluster_table`] because the
 /// `CREATE INDEX` backfill has to build the very same `KvIndex` for an index
@@ -906,7 +952,7 @@ fn partition_spec_for(
 /// answer this tier keeps hunting.
 pub(crate) fn kv_index(
     index: &tidb_model::index::IndexInfo,
-    columns: &[GoShared<tidb_model::column::ColumnInfo>],
+    columns: &[KvColumn],
 ) -> Result<KvIndex, String> {
     let mut offsets = Vec::with_capacity(index.columns.len());
     let mut prefix_lengths = Vec::with_capacity(index.columns.len());
@@ -921,7 +967,7 @@ pub(crate) fn kv_index(
         };
         let offset = columns
             .iter()
-            .position(|public| public.read().name.lowercase() == name.as_str())
+            .position(|column| column.name.eq_ignore_ascii_case(&name))
             .ok_or_else(|| {
                 format!(
                     "its index {} covers non-public column {}",
@@ -1436,6 +1482,144 @@ mod tests {
     }
 
     #[test]
+    fn loaded_hidden_columns_preserve_native_layout_and_index_values() {
+        let mut hidden = column(3, 1, "_V$_vi_0", false);
+        hidden.hidden = true;
+        hidden.generated_expr_string = "`v` + 1".to_owned();
+        let mut generated = column(4, 3, "g", false);
+        generated.generated_expr_string = "`id` + `v`".to_owned();
+        let mut catalog = loaded_catalog();
+        catalog.databases[0].tables.truncate(1);
+        let info = &mut catalog.databases[0].tables[0];
+        // A visible column may follow a hidden column in stored Go metadata.
+        info.columns = vec![
+            column(1, 0, "id", true),
+            hidden,
+            column(2, 2, "v", false),
+            generated,
+        ]
+        .into();
+        info.indices = vec![index(7, "vi", "_V$_vi_0", 1, -1)].into();
+        let (storage, _, _) = cluster_storage();
+        let table = cluster_table(info, &storage, &AutoIdSource::Unavailable).unwrap();
+        assert_eq!(table.visible_column_count(), 3);
+        assert_eq!(
+            table
+                .columns
+                .iter()
+                .map(|c| (c.name.as_str(), c.id))
+                .collect::<Vec<_>>(),
+            [("id", 1), ("v", 2), ("g", 4), ("_V$_vi_0", 3)],
+        );
+        assert_eq!(table.indexes()[0].column_offsets, [3]);
+        let (mut session, skipped) = session_with_cluster_storage(
+            &catalog,
+            &storage,
+            &StatsSnapshot::new(),
+            &LocalTableAutoIds::default(),
+        );
+        assert!(skipped.is_empty(), "{skipped:?}");
+        session.run("USE app").unwrap();
+        session
+            .run("INSERT INTO t(id,v) VALUES (1,10),(2,20)")
+            .unwrap();
+        let StmtResult::Rows(rows) = session.run("SELECT * FROM t ORDER BY id").unwrap() else {
+            panic!("rows");
+        };
+        assert_eq!(
+            rows,
+            [
+                vec![Datum::Int(1), Datum::Int(10), Datum::Int(11)],
+                vec![Datum::Int(2), Datum::Int(20), Datum::Int(22)],
+            ]
+        );
+        session.run("UPDATE t SET v=30 WHERE id=1").unwrap();
+        let StmtResult::Rows(rows) = session
+            .run("SELECT id,v,g FROM t FORCE INDEX(vi) ORDER BY id")
+            .unwrap()
+        else {
+            panic!("rows");
+        };
+        assert_eq!(
+            rows,
+            [
+                vec![Datum::Int(1), Datum::Int(30), Datum::Int(31)],
+                vec![Datum::Int(2), Datum::Int(20), Datum::Int(22)],
+            ]
+        );
+    }
+
+    #[test]
+    fn loaded_generated_columns_keep_virtual_and_stored_semantics() {
+        let mut virtual_column = column(2, 1, "v", false);
+        virtual_column.generated_expr_string = "`id` + 10".to_owned();
+        let mut stored_column = column(3, 2, "s", false);
+        stored_column.generated_expr_string = "`id` + 20".to_owned();
+        stored_column.generated_stored = true;
+        let mut catalog = loaded_catalog();
+        catalog.databases[0].tables.truncate(1);
+        catalog.databases[0].tables[0].columns =
+            vec![column(1, 0, "id", true), virtual_column, stored_column].into();
+        let (storage, _, snapshot) = cluster_storage();
+        // A stored generated value is decoded, not recomputed by the reader.
+        snapshot.lock().unwrap().data.insert(
+            tidb_tablecodec::table_key::encode_row_key_with_handle(
+                101,
+                &tidb_tablecodec::table_key::RecordHandle::Int(9),
+            ),
+            tidb_tablecodec::encode_table_row(None, &[Datum::Int(999)], &[3], true, None).unwrap(),
+        );
+        let (mut session, skipped) = session_with_cluster_storage(
+            &catalog,
+            &storage,
+            &StatsSnapshot::new(),
+            &LocalTableAutoIds::default(),
+        );
+        assert!(skipped.is_empty());
+        session.run("USE app").unwrap();
+        session.run("INSERT INTO t(id) VALUES (1),(2),(3)").unwrap();
+        let StmtResult::Rows(rows) = session.run("SELECT * FROM t ORDER BY id").unwrap() else {
+            panic!("expected rows");
+        };
+        assert_eq!(
+            rows,
+            vec![
+                vec![Datum::Int(1), Datum::Int(11), Datum::Int(21)],
+                vec![Datum::Int(2), Datum::Int(12), Datum::Int(22)],
+                vec![Datum::Int(3), Datum::Int(13), Datum::Int(23)],
+                vec![Datum::Int(9), Datum::Int(19), Datum::Int(999)],
+            ]
+        );
+        session
+            .run("UPDATE t SET id=id+10 WHERE id>=1 AND id<=3 AND v=12")
+            .unwrap();
+        session
+            .run("DELETE FROM t WHERE id>=1 AND id<=12 AND s=23")
+            .unwrap();
+        let StmtResult::Rows(rows) = session.run("SELECT * FROM t ORDER BY id").unwrap() else {
+            panic!("expected rows");
+        };
+        assert_eq!(
+            rows,
+            vec![
+                vec![Datum::Int(1), Datum::Int(11), Datum::Int(21)],
+                vec![Datum::Int(9), Datum::Int(19), Datum::Int(999)],
+                vec![Datum::Int(12), Datum::Int(22), Datum::Int(32)],
+            ]
+        );
+        let mut invalid = column(2, 1, "v", false);
+        invalid.generated_expr_string = "`missing` + 10".to_owned();
+        let mut invalid_table = catalog.databases[0].tables[0].clone();
+        invalid_table.columns = vec![column(1, 0, "id", true), invalid].into();
+        let Err(message) = cluster_table(&invalid_table, &storage, &AutoIdSource::Unavailable)
+        else {
+            panic!("an invalid generated expression must not become an ordinary column");
+        };
+        assert!(message.contains("generated column v"));
+        assert!(message.contains("missing"));
+    }
+
+    #[test]
     fn a_cluster_table_restores_its_persisted_cache_status() {
         let table = TableInfo {
             id: 302,
@@ -1450,6 +1634,22 @@ mod tests {
         let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
             .expect("the cached table is otherwise ordinary");
         assert!(loaded.is_cached());
+    }
+
+    #[test]
+    fn a_cluster_table_retains_column_publication_state_for_point_reads() {
+        let (storage, _, _) = cluster_storage();
+        for state in [SchemaState::PUBLIC, SchemaState::WRITE_ONLY] {
+            let mut value = column(2, 1, "v", false);
+            value.state = state;
+            let table = TableInfo {
+                id: 302, name: CiString::new("t"),
+                columns: vec![column(1, 0, "id", true), value].into(),
+                pk_is_handle: true, state: SchemaState::PUBLIC, ..TableInfo::default()
+            };
+            let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable).unwrap();
+            assert_eq!(loaded.all_columns_public(), state == SchemaState::PUBLIC);
+        }
     }
 
     /// Go's `getPossibleAccessPaths` attaches a clustered composite PRIMARY
@@ -1900,8 +2100,8 @@ mod tests {
         // Now the backfill's own view of the same table: no counter at all.
         let mut walked = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
             .expect("the backfill builds this table");
-        let columns: Vec<_> = table.cols().iter_deref().collect();
-        let index = kv_index(&index(1, "vi", "v", 1, -1), &columns).expect("a full-value index");
+        let index = kv_index(&index(1, "vi", "v", 1, -1), &walked.columns)
+            .expect("a full-value index");
 
         walked
             .create_index_with_context(index, &tidb_executor::StmtContext::default())
@@ -1920,47 +2120,33 @@ mod tests {
         );
     }
 
-    /// A prefix index stores each value CUT to the prefix length. Nothing on
-    /// this side of the seam cuts, so a range built from whole values is a
-    /// SUBSET of what the index holds and matches nothing -- rows would go
-    /// missing with no error. The table is refused, by name and with a reason,
-    /// rather than answering wrongly.
-    ///
-    /// Before this refusal the index loaded as an ordinary full-value one and
-    /// the planner picked it, so the query below returned zero rows.
+    /// Prefix metadata must reach both key construction and access bounds.
+    /// Equal prefixes still require the full-value residual predicate.
     #[test]
-    fn a_table_with_a_prefix_index_is_refused_by_name() {
+    fn a_loaded_prefix_index_preserves_full_value_filtering() {
         let (storage, _buffer, _snapshot) = cluster_storage();
-        let table = TableInfo {
-            id: 201,
-            name: CiString::new("p"),
-            columns: vec![column(1, 0, "id", true), column(2, 1, "s", false)].into(),
-            pk_is_handle: true,
-            state: SchemaState::PUBLIC,
-            indices: vec![index(1, "idx", "s", 1, 4)].into(),
-            ..TableInfo::default()
-        };
+        let mut catalog = ci_catalog();
+        catalog.databases[0].tables[0].indices = vec![index(1, "idx", "c", 1, 4)].into();
         let (mut session, skipped) = session_with_cluster_storage(
-            &one_table_catalog(table),
+            &catalog,
             &storage,
             &StatsSnapshot::new(),
             &LocalTableAutoIds::default(),
         );
-        assert_eq!(skipped.len(), 1);
-        assert_eq!(skipped[0].name, "app.p");
-        assert!(
-            skipped[0]
-                .reason
-                .contains("its index idx is a prefix index"),
-            "{}",
-            skipped[0].reason
-        );
+        assert!(skipped.is_empty());
         session.run("USE app").unwrap();
-        // Refused loudly: the table is not there at all, rather than there and
-        // answering with rows missing.
-        assert!(session
-            .run("SELECT id FROM p WHERE s = 'alphabet'")
-            .is_err());
+        session
+            .run("INSERT INTO ci(id,c) VALUES (1,'alphabet'),(2,'alphanumeric'),(3,'beta')")
+            .unwrap();
+        for (value, expected) in [("alphabet", 1), ("alphanumeric", 2), ("beta", 3)] {
+            let StmtResult::Rows(rows) = session
+                .run(&format!("SELECT id FROM ci FORCE INDEX(idx) WHERE c='{value}'"))
+                .unwrap()
+            else {
+                panic!("expected rows");
+            };
+            assert_eq!(rows, vec![vec![Datum::Int(expected)]]);
+        }
     }
 
     /// Go `TableInfo.Charset`/`Collate` survive the load. They are the

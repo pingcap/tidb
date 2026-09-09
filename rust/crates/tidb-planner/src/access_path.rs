@@ -31,6 +31,103 @@ use crate::{
 
 use tidb_datatype::Collation;
 
+/// Go AccessPath.SplitCorColAccessCondFromFilters. Extends an equality
+/// prefix through correlated equalities, optionally ending in a range.
+/// The caller also records Go's correlated-subquery plan-cache exclusion.
+pub fn split_correlated_access_conditions(
+    filters: &[tidb_expr::expression::Expression],
+    columns: &[tidb_expr::column::Column],
+    lengths: &[i64],
+    eq_or_in_count: usize,
+) -> (
+    Vec<tidb_expr::expression::Expression>,
+    Vec<tidb_expr::expression::Expression>,
+) {
+    use tidb_expr::expression::Expression;
+    fn matches(
+        expr: &Expression,
+        col: &tidb_expr::column::Column,
+        constant: bool,
+        range: bool,
+    ) -> bool {
+        let Expression::ScalarFunction(fun) = expr else {
+            return false;
+        };
+        if if range {
+            !["lt", "le", "gt", "ge"].contains(&fun.func_name.lowercase())
+        } else {
+            fun.func_name.lowercase() != "eq"
+        } {
+            return false;
+        }
+        let [left, right] = fun.args.as_slice() else {
+            return false;
+        };
+        for (column, value) in [(left, right), (right, left)] {
+            let Expression::Column(column) = column else {
+                continue;
+            };
+            if column.ret_type.as_ref().is_some_and(|tp| {
+                tp.eval_type() == tidb_datatype::EvalType::String
+                    && !tidb_datatype::compatible_collate(
+                        fun.collation.charset_and_collation().1,
+                        tp.collation_name(),
+                    )
+            }) {
+                return false;
+            }
+            if column.unique_id == col.unique_id
+                && if constant {
+                    matches!(value, Expression::Constant(_))
+                } else {
+                    matches!(value, Expression::CorrelatedColumn(_))
+                }
+            {
+                return true;
+            }
+        }
+        false
+    }
+    let mut access = Vec::new();
+    let mut used = vec![false; filters.len()];
+    for i in eq_or_in_count..columns.len() {
+        let mut matched = false;
+        for (j, filter) in filters.iter().enumerate() {
+            if used[j] {
+                continue;
+            }
+            let constant = matches(filter, &columns[i], true, false);
+            if i == eq_or_in_count && constant {
+                return (Vec::new(), filters.to_vec());
+            }
+            if constant || matches(filter, &columns[i], false, false) {
+                access.push(filter.clone());
+                if lengths[i] == -1 {
+                    used[j] = true;
+                }
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            if let Some((_, filter)) = filters
+                .iter()
+                .enumerate()
+                .find(|(j, filter)| !used[*j] && matches(filter, &columns[i], false, true))
+            {
+                access.push(filter.clone());
+            }
+            break;
+        }
+    }
+    let remained = filters
+        .iter()
+        .zip(used)
+        .filter_map(|(expr, used)| (!used).then(|| expr.clone()))
+        .collect();
+    (access, remained)
+}
+
 /// The access-path identity needed by Go `AccessPath.OnlyPointRange`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PointRangePath {

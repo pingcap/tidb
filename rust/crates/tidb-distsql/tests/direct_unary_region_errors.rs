@@ -53,7 +53,7 @@ fn unordered_region_retry_delivers_the_replacement_once() {
 fn cached_leader_data_is_not_ready_falls_through_without_reload_or_backoff() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
-    let retry_control = Rc::new(RecordingRetryControl::default());
+    let retry_control = Arc::new(RecordingRetryControl::default());
     let mut initial =
         location_with_second_peer(1, "a", "z", "tikv-leader:20160", "tikv-follower:20160");
     initial.peers.swap(0, 1);
@@ -94,7 +94,7 @@ fn cached_leader_data_is_not_ready_falls_through_without_reload_or_backoff() {
         "leader DataIsNotReady must not invalidate or reload the region"
     );
     assert!(
-        retry_control.sleeps.borrow().is_empty(),
+        retry_control.sleeps.lock().unwrap().is_empty(),
         "DataIsNotReady fallthrough must not back off"
     );
 }
@@ -154,7 +154,7 @@ fn known_leader_region_error_resends_immediately_in_the_same_query() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
     let first = location_with_second_peer(1, "a", "z", "tikv-old:20160", "tikv-new:20160");
-    let retry_control = Rc::new(RecordingRetryControl::default());
+    let retry_control = Arc::new(RecordingRetryControl::default());
     let transport = transport_with_loader_calls_and_config(
         Rc::clone(&calls),
         [Ok(not_leader(1, Some((102, 202)))), Ok(response(b"fresh"))],
@@ -184,7 +184,7 @@ fn known_leader_region_error_resends_immediately_in_the_same_query() {
     assert_eq!(calls.borrow()[1].address, "tikv-new:20160");
     assert_eq!(calls.borrow()[1].peer_id, 102);
     assert_eq!(calls.borrow()[1].store_id, 202);
-    assert!(retry_control.sleeps.borrow().is_empty());
+    assert!(retry_control.sleeps.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -256,7 +256,7 @@ fn batch_known_leader_region_error_republishes_the_recovered_route() {
 fn batch_connection_failure_republishes_the_cache_recovered_route() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let events = Rc::new(RefCell::new(Vec::new()));
-    let retry_control = Rc::new(RecordingRetryControl::default());
+    let retry_control = Arc::new(RecordingRetryControl::default());
     let transport = DirectUnaryQueryTransport::new_injected_batch_first(
         ScriptedClient {
             calls: Rc::clone(&calls),
@@ -320,7 +320,7 @@ fn batch_connection_failure_republishes_the_cache_recovered_route() {
             },
         ]
     );
-    assert_eq!(retry_control.sleeps.borrow().len(), 1);
+    assert_eq!(retry_control.sleeps.lock().unwrap().len(), 1);
 
     let evidence = evidence.snapshot();
     assert_eq!(evidence.batch_attempts, 2);

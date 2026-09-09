@@ -68,6 +68,78 @@ fn seed(session: &mut ClusterServerSession) {
         .expect("seed");
 }
 
+#[test]
+fn cached_prepared_index_lookup_uses_one_timestamp() {
+    use tidb_protocol::PreparedValue;
+
+    let (mut session, node) = open_session();
+    session
+        .execute_write("CREATE TABLE indexed_read (id BIGINT PRIMARY KEY, a BIGINT, v BIGINT, INDEX ia(a))")
+        .unwrap();
+    session
+        .execute_write("INSERT INTO indexed_read VALUES (1, 7, 10), (2, 7, 20), (3, 8, 30)")
+        .unwrap();
+    let statement = session
+        .prepare_general("SELECT id, v FROM indexed_read WHERE a = ?")
+        .unwrap();
+    assert!(
+        statement.prepared_ast().unwrap().point_get_plan().is_some(),
+        "exercise the retained index plan"
+    );
+    for (value, expected) in [
+        (
+            7,
+            vec![
+                vec![Datum::Int(1), Datum::Int(10)],
+                vec![Datum::Int(2), Datum::Int(20)],
+            ],
+        ),
+        (8, vec![vec![Datum::Int(3), Datum::Int(30)]]),
+        (9, Vec::new()),
+    ] {
+        let observed = opens_of(&node, || {
+            let GeneralExecuteOutcome::Rows(mut result) = session
+                .execute_general(&statement, &[PreparedValue::SignedLongLong(value)])
+                .unwrap()
+            else {
+                panic!("expected rows");
+            };
+            let source = result.source();
+            assert_eq!(source.next_batch(8).unwrap(), expected);
+            assert!(source.next_batch(8).unwrap().is_empty());
+            source.finish().unwrap();
+            source.close().unwrap();
+        });
+        assert_eq!(observed, PAID, "index and record reads need one snapshot");
+        assert_eq!(node.live.load(Ordering::Acquire), 0);
+    }
+    assert_eq!(
+        rows(&mut session, "SELECT @@last_plan_from_cache"),
+        vec![vec![Datum::Int(1)]],
+        "timestamped prefix reads must retain cache reuse",
+    );
+}
+
+#[test]
+fn prepared_cursor_retains_its_statement_overlay() {
+    let (mut session, _) = open_session();
+    seed(&mut session);
+    session.execute_write("SET tidb_init_chunk_size = 32, tidb_max_chunk_size = 1024").unwrap();
+    let prepared = session.prepare_general(
+        "SELECT /*+ SET_VAR(tidb_init_chunk_size=8) SET_VAR(tidb_max_chunk_size=128) */ v FROM t WHERE id=?",
+    ).unwrap();
+    let GeneralExecuteOutcome::Rows(mut result) = session
+        .execute_general(&prepared, &[tidb_protocol::PreparedValue::SignedLongLong(1)])
+        .unwrap() else { panic!("expected rows") };
+    let authority = result.take_cursor_materialization().unwrap();
+    assert_eq!(authority.init_chunk_size, 8);
+    assert_eq!(authority.max_chunk_size, 128);
+    assert_eq!(result.source().next_batch(8).unwrap(), vec![vec![Datum::Int(10)]]);
+    drop(result);
+    assert_eq!(rows(&mut session, "SELECT @@tidb_init_chunk_size, @@tidb_max_chunk_size"),
+        vec![vec![Datum::Int(32), Datum::Int(1024)]]);
+}
+
 // -- #140's pins, re-run against this path ---------------------------------
 
 /// The shortcut itself: an autocommit point get on the primary key opens a
@@ -87,12 +159,12 @@ fn autocommit_point_get_on_the_primary_key_takes_no_timestamp() {
     assert_eq!(node.live.load(Ordering::Acquire), 0);
 }
 
-/// YCSB workload E issues a clustered-handle range with `LIMIT 1` for every
-/// scan.  It is still a range plan (not a point-get plan), but the bounded
-/// request has one physical read and no second lookup, so it can use the same
-/// reusable latest-read transaction without changing the returned row.
+/// Go's MaxTS guard admits a proven full-key point range, not a LIMIT bound.
+/// A range reader still needs one statement timestamp when it returns one row.
 #[test]
-fn a_bounded_single_row_cluster_scan_takes_no_timestamp() {
+fn a_bounded_single_row_cluster_scan_keeps_its_statement_timestamp() {
+    use tidb_protocol::PreparedValue;
+
     let (mut session, node) = open_session();
     seed(&mut session);
 
@@ -101,8 +173,31 @@ fn a_bounded_single_row_cluster_scan_takes_no_timestamp() {
         answer = rows(&mut session, "SELECT v FROM t WHERE id >= 1 LIMIT 1");
     });
     assert_eq!(answer, vec![vec![Datum::Int(10)]]);
-    assert_eq!(opens, FREE);
+    assert_eq!(opens, PAID);
     assert_eq!(node.live.load(Ordering::Acquire), 0);
+
+    for (sql, expected) in [
+        ("SELECT v FROM t WHERE id >= ? LIMIT 1", PAID),
+        ("SELECT v FROM t WHERE id = ? LIMIT 1", FREE),
+    ] {
+        let prepared = session.prepare_general(sql).unwrap();
+        for value in [1, 2] {
+            let opens = opens_of(&node, || {
+                let GeneralExecuteOutcome::Rows(mut result) = session
+                    .execute_general(&prepared, &[PreparedValue::SignedLongLong(value)])
+                    .unwrap()
+                else {
+                    panic!("expected rows");
+                };
+                let source = result.source();
+                assert_eq!(source.next_batch(8).unwrap(), vec![vec![Datum::Int(value * 10)]]);
+                assert!(source.next_batch(8).unwrap().is_empty());
+                source.finish().unwrap();
+                source.close().unwrap();
+            });
+            assert_eq!(opens, expected, "{sql}");
+        }
+    }
 }
 
 /// The same statement through PREPARE + EXECUTE with a `?` for the handle,
@@ -220,12 +315,13 @@ fn an_aggregate_point_get_prepares_and_waits_for_one_ordinary_snapshot() {
     assert_eq!(node.live.load(Ordering::Acquire), 0);
 }
 
-/// Fix 52592 deliberately turns point/batch fast plans back into ordinary
-/// ranges. Snapshot declaration runs before the statement overlay is applied,
-/// so it must derive the SAME effective direct-AST `SET_VAR` value up front;
-/// otherwise the range read is incorrectly opened at `MaxUint64`.
+/// Fix 52592 changes the physical operator, not the one-key snapshot proof.
+/// Go `IsPointGetWithPKOrUniqueKeyByAutoCommit` admits a TableReader whose
+/// only range pins the complete non-NULL clustered key. Its optimistic
+/// provider then returns MaxTS without activating TxnCtx (so LastQueryInfo
+/// can report start_ts=0 even though the read used MaxTS).
 #[test]
-fn fix_52592_and_its_statement_overlay_gate_max_ts_before_execution() {
+fn fix_52592_preserves_max_ts_for_a_complete_clustered_key() {
     use tidb_protocol::PreparedValue;
 
     let (mut session, node) = open_session();
@@ -245,8 +341,8 @@ fn fix_52592_and_its_statement_overlay_gate_max_ts_before_execution() {
         );
     });
     assert_eq!(
-        opens, PAID,
-        "a direct ON overlay declared a point MaxTS read"
+        opens, FREE,
+        "the ON overlay still reads one complete clustered key"
     );
 
     session
@@ -258,7 +354,7 @@ fn fix_52592_and_its_statement_overlay_gate_max_ts_before_execution() {
             vec![vec![Datum::Int(10)]]
         );
     });
-    assert_eq!(opens, PAID, "persistent ON declared a point MaxTS read");
+    assert_eq!(opens, FREE, "a full-key TableReader is eligible for MaxTS");
 
     let opens = opens_of(&node, || {
         assert_eq!(
@@ -315,7 +411,7 @@ fn fix_52592_and_its_statement_overlay_gate_max_ts_before_execution() {
         }
         assert_eq!(answer, vec![vec![Datum::Int(20)]]);
     });
-    assert_eq!(opens, PAID, "prepared direct ON overlay used MaxTS");
+    assert_eq!(opens, FREE, "a prepared full-key TableReader is eligible for MaxTS");
 }
 
 /// A second equality beside the handle is NOT this tier's point get: the
@@ -532,6 +628,10 @@ fn the_statement_shape_predicate_matches_the_guard_it_ports() {
     assert!(takes("SELECT v FROM t WHERE 7 = id"));
     assert!(takes("SELECT * FROM t WHERE id = 7"));
     assert!(takes("SELECT v FROM app.t WHERE id = 7"));
+    // Go folds a positive, zero-offset LIMIT into a proven Point_Get.
+    assert!(takes("SELECT v FROM t WHERE id = 7 LIMIT 1"));
+    assert!(takes("SELECT v FROM t WHERE id = 7 LIMIT 2"));
+    assert!(takes("SELECT v FROM t WHERE id = 7 LIMIT 1 OFFSET 0"));
 
     // Not a query at all: an UPDATE's read-before-write reads the very same
     // row by the very same key, and is refused on the statement, which is the
@@ -561,7 +661,11 @@ fn the_statement_shape_predicate_matches_the_guard_it_ports() {
     // Operators Go's switch would find above the reader.
     assert!(!takes("SELECT DISTINCT v FROM t WHERE id = 7"));
     assert!(!takes("SELECT v FROM t WHERE id = 7 ORDER BY v"));
-    assert!(!takes("SELECT v FROM t WHERE id = 7 LIMIT 1"));
+    assert!(!takes("SELECT v FROM t WHERE id = 7 LIMIT 0"));
+    assert!(!takes("SELECT v FROM t WHERE id = 7 LIMIT 1 OFFSET 1"));
+    assert!(!takes("SELECT v FROM t WHERE id >= 7 LIMIT 1"));
+    assert!(!takes("SELECT v FROM t WHERE v = 7 LIMIT 1"));
+    assert!(!takes("SELECT v FROM t LIMIT 1"));
     assert!(!takes("SELECT v FROM t WHERE id = 7 FOR UPDATE"));
     assert!(!takes("SELECT v FROM t WHERE id = 7 GROUP BY v"));
     // A table with no clustered handle column has no handle to pin.

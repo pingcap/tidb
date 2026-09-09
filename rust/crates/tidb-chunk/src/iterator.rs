@@ -217,7 +217,31 @@ pub struct Iterator4List<'a> {
     row_cursor: usize,
 }
 
+/// A list iterator's cursors, detached from its borrow. The owner may retain
+/// this between executor calls while keeping the same list unchanged.
+#[derive(Clone, Copy, Debug)]
+pub struct ListIteratorPosition {
+    chk_cursor: usize,
+    row_cursor: usize,
+}
+
 impl<'a> Iterator4List<'a> {
+    /// Resume a cursor against the same unchanged list, without rescanning.
+    pub fn resume(li: &'a List, position: ListIteratorPosition) -> Self {
+        Self {
+            li,
+            chk_cursor: position.chk_cursor,
+            row_cursor: position.row_cursor,
+        }
+    }
+
+    /// Save Go's chunk and row cursor fields across a borrow boundary.
+    pub fn position(&self) -> ListIteratorPosition {
+        ListIteratorPosition {
+            chk_cursor: self.chk_cursor,
+            row_cursor: self.row_cursor,
+        }
+    }
     /// Go `NewIterator4List`.
     #[must_use]
     pub fn new(li: &'a List) -> Self {

@@ -1,0 +1,696 @@
+{
+  "status": "WIP: retained aggregate pipeline passes scoped ownership and live parity checks; timing aborted on stale-region routing error, so no speedup claim",
+  "before": {
+    "port": 53035,
+    "sha256": "a39ab966b16f9928c5b966c641c5c152dd55506b039c11d27a9ebc542d01bcf8",
+    "binary": "/private/tmp/tidb-retain-aggregate-before-QiFabL/tidb-server"
+  },
+  "after": {
+    "port": 53036,
+    "pid": 10048,
+    "sha256": "4134703e7ff6547e24f51fe66029b15aa4e5b83809bf219ef66c200f3aeef24b",
+    "build_log": "/private/tmp/tidb-retain-aggregate-build.log",
+    "includes_region_eviction_fix": false
+  },
+  "root_change": "Retain the winning aggregate executor, trace, delivered order/cost receipt, and statistics state; separate derived output mode from cost receipt collection and drop the loser before execution.",
+  "source": "pkg/planner/core/find_best_task.go:605-745 retains/stores the selected task.",
+  "validation": {
+    "profile": "WIP",
+    "red": {
+      "command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib driver::tests::aggregates::hash_aggregate_does_not_advertise_its_ordered_inputs_order",
+      "log": "/private/tmp/tidb-retain-aggregate-red.log",
+      "actual_builds": 3,
+      "expected_builds": 2
+    },
+    "ownership": {
+      "combinations": 48,
+      "log": "/private/tmp/tidb-retain-aggregate-ownership-tests-v2.log"
+    },
+    "trace": {
+      "passed": 14,
+      "log": "/private/tmp/tidb-retain-aggregate-trace-tests.log"
+    },
+    "aggregates": {
+      "passed": 33,
+      "prior_failures": 1,
+      "log": "/private/tmp/tidb-retain-aggregate-suite.log"
+    },
+    "point": {
+      "passed": 21,
+      "prior_failures": 1,
+      "log": "/private/tmp/tidb-retain-aggregate-point-tests.log"
+    },
+    "live": {
+      "go_operator_trees_matched": 15,
+      "result_cases_per_endpoint": 39,
+      "plans": "/private/tmp/tidb-retain-aggregate-plans.jsonl",
+      "rows": "/private/tmp/tidb-retain-aggregate-rows.jsonl"
+    }
+  },
+  "isolation": {
+    "status": "failed; partial samples are not a valid performance comparison",
+    "command": "/private/tmp/tidb-aggregate-isolation -before-port 53035 -after-port 53036 -modes sum,dirty-sum -count 2000 -rounds 3",
+    "exit": 1,
+    "error": "after sum 8 Error 1105 (HY000): partial aggregate response failed: Backend(\"region route failed: MissingLeader\")",
+    "error_log": "/private/tmp/tidb-retain-aggregate-isolation.err",
+    "samples": [
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 944.0939987189824,
+        "round": 0,
+        "seconds": 2.118433125,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 931.9249954817247,
+        "round": 0,
+        "seconds": 2.146095458,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 1968.34596368285,
+        "round": 0,
+        "seconds": 1.016081541,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 958.4728841697544,
+        "round": 1,
+        "seconds": 2.086652667,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 2009.5173252420118,
+        "round": 1,
+        "seconds": 0.995263875,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 959.9697417537399,
+        "round": 1,
+        "seconds": 2.083399,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 2005.4322145110568,
+        "round": 2,
+        "seconds": 0.99729125,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 958.8606431225807,
+        "round": 2,
+        "seconds": 2.085808834,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 950.6929440915395,
+        "round": 2,
+        "seconds": 2.103728667,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 4738.9887780117815,
+        "round": 0,
+        "seconds": 3.376247708,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 4600.351970054008,
+        "round": 0,
+        "seconds": 3.47799475,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 6420.703342191264,
+        "round": 0,
+        "seconds": 2.491938834,
+        "server": "go"
+      }
+    ]
+  },
+  "routing_investigation": {
+    "tikv_log": "/Users/qiliu/.tiup/data/tidb-perf-paired-nIF6JX/tikv-0/tikv.log",
+    "splits_at": "2026-09-07 14:55:57 +0800",
+    "failure_at": "2026-09-07 14:55:58 +0800",
+    "pd_health": true,
+    "source": "RegionCache::request_selector errors when the task region disappeared before creation; select_request already returns ReloadRegion when it disappears later. Pinned client-go region_request.go:974-987 rebuilds ranges when its cached RPC context is absent.",
+    "red_cache_log": "/private/tmp/tidb-region-eviction-red.log",
+    "red_transport_log": "/private/tmp/tidb-region-eviction-cop-red-v2.log",
+    "fix": "request_selector preserves the versioned task even when its cache entry is absent; select_request owns validity and returns the existing ReloadRegion outcome.",
+    "replica_policy_tests_passed": 4,
+    "request_selector_tests_passed": 16,
+    "direct_unary_tests_passed": 64,
+    "green_logs": [
+      "/private/tmp/tidb-region-eviction-selector-final.log",
+      "/private/tmp/tidb-region-eviction-request-green.log",
+      "/private/tmp/tidb-region-eviction-cop-final.log"
+    ],
+    "note": "Initial transport test attempt had a private-module import compile error; v2 is the runtime-red MissingLeader reproduction."
+  },
+  "corrected_release": {
+    "port": 53037,
+    "session": 11606,
+    "sha256": "03420212c697a2d94eb72e2ed8789ba1c5362fcd7b87147e1722e92f128a0d26",
+    "build_log": "/private/tmp/tidb-region-eviction-build.log",
+    "includes_region_eviction_fix": true,
+    "live_go_plan_matches": 15,
+    "live_go_result_cases": 39
+  },
+  "validated_isolation": {
+    "status": "completed without errors; no consistent speedup",
+    "command": "/private/tmp/tidb-aggregate-isolation -before-port 53035 -after-port 53037 -modes sum,dirty-sum -count 2000 -rounds 3",
+    "log": "/private/tmp/tidb-retain-aggregate-isolation-v2.jsonl",
+    "error_log": "/private/tmp/tidb-retain-aggregate-isolation-v2.err",
+    "exit": 0,
+    "operations": 324000,
+    "summary": [
+      {
+        "mode": "sum",
+        "clients": 1,
+        "before": 961.9689195056875,
+        "after": 959.9593551673088,
+        "go": 2037.0997461347963,
+        "percent": -0.2089011710909916,
+        "paired": [
+          -0.3850475135528053,
+          -0.2089011710909916,
+          -1.2582982925116504
+        ]
+      },
+      {
+        "mode": "sum",
+        "clients": 8,
+        "before": 4785.09210631345,
+        "after": 4716.774923352908,
+        "go": 6604.59403358989,
+        "percent": -1.4277088390922343,
+        "paired": [
+          -2.0110759825489377,
+          -1.4277088390922343,
+          -0.10335836721434566
+        ]
+      },
+      {
+        "mode": "dirty-sum",
+        "clients": 1,
+        "before": 656.1898842915771,
+        "after": 658.9702328381599,
+        "go": 1331.5292221980235,
+        "percent": 0.42371097347597697,
+        "paired": [
+          -2.3203366056489316,
+          1.9571254104332914,
+          0.42371097347597697
+        ]
+      },
+      {
+        "mode": "dirty-sum",
+        "clients": 8,
+        "before": 3970.363100562008,
+        "after": 3951.4594902210115,
+        "go": 5702.812285313733,
+        "percent": -0.47611792327811875,
+        "paired": [
+          -2.4591219352739113,
+          -0.47611792327811875,
+          0.2584418512361353
+        ]
+      }
+    ],
+    "samples": [
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 963.6895045419288,
+        "round": 0,
+        "seconds": 2.07535725,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 959.9788420663208,
+        "round": 0,
+        "seconds": 2.08337925,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 2037.0997461347963,
+        "round": 0,
+        "seconds": 0.981787958,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 959.9593551673088,
+        "round": 1,
+        "seconds": 2.083421542,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 2021.0538229369904,
+        "round": 1,
+        "seconds": 0.98958275,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 961.9689195056875,
+        "round": 1,
+        "seconds": 2.07906925,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 2038.681172053096,
+        "round": 2,
+        "seconds": 0.981026375,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 960.6522446016991,
+        "round": 2,
+        "seconds": 2.081918833,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 948.5643738109011,
+        "round": 2,
+        "seconds": 2.108449416,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 4792.927497232076,
+        "round": 0,
+        "seconds": 3.338252041,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 4696.538083474258,
+        "round": 0,
+        "seconds": 3.406764667,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 6604.59403358989,
+        "round": 0,
+        "seconds": 2.422556166,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 4716.774923352908,
+        "round": 1,
+        "seconds": 3.392148292,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 6462.493060125607,
+        "round": 1,
+        "seconds": 2.475824709,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 4785.09210631345,
+        "round": 1,
+        "seconds": 3.343718291,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 6620.980179216485,
+        "round": 2,
+        "seconds": 2.416560625,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 4738.812513014871,
+        "round": 2,
+        "seconds": 3.376373291,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 4733.91455377607,
+        "round": 2,
+        "seconds": 3.379866666,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 665.212327589529,
+        "round": 0,
+        "seconds": 3.006558834,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 649.7771624471799,
+        "round": 0,
+        "seconds": 3.077978291,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 1298.1258521551213,
+        "round": 0,
+        "seconds": 1.540682667,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 659.7445716422816,
+        "round": 1,
+        "seconds": 3.03147625,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 1331.5292221980235,
+        "round": 1,
+        "seconds": 1.502032375,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 647.0803967711411,
+        "round": 1,
+        "seconds": 3.090806042,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 1334.755441399677,
+        "round": 2,
+        "seconds": 1.498401833,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 656.1898842915771,
+        "round": 2,
+        "seconds": 3.04789825,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 658.9702328381599,
+        "round": 2,
+        "seconds": 3.035038459,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 3986.049698005353,
+        "round": 0,
+        "seconds": 4.013999125,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 3888.027875530784,
+        "round": 0,
+        "seconds": 4.115196833,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 5596.582504538404,
+        "round": 0,
+        "seconds": 2.8588875419999997,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 3951.4594902210115,
+        "round": 1,
+        "seconds": 4.049136791,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 5702.812285313733,
+        "round": 1,
+        "seconds": 2.805633291,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 3970.363100562008,
+        "round": 1,
+        "seconds": 4.029858125,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 5746.538333076255,
+        "round": 2,
+        "seconds": 2.784284916,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 3952.0674731539607,
+        "round": 2,
+        "seconds": 4.048513875,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 3962.2812694936806,
+        "round": 2,
+        "seconds": 4.038077792,
+        "server": "after"
+      }
+    ]
+  },
+  "validation_commands": [
+    "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib plan_trace::tests::",
+    "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib driver::tests::aggregates::",
+    "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib driver::tests::point_get::",
+    "cd rust && cargo test --offline --locked --release -j12 -p tidb-txnkv --test all replica_selector_source::",
+    "cd rust && cargo test --offline --locked --release -j12 -p tidb-txnkv --test all request_selector_source::",
+    "cd rust && cargo test --offline --locked --release -j12 -p tidb-distsql --test all direct_unary_",
+    "cd rust && cargo build --offline --locked --release -j12 -p tidb-server",
+    "python3 /private/tmp/tidb-aggregate-cost-policy-probe.py --ports 45000 53035 53037",
+    "python3 /private/tmp/tidb-aggregate-choice-live-rows.py --ports 45000 53035 53037"
+  ],
+  "remaining": [
+    "No stable speedup in isolated comparison; profile actual chosen/fallback pipeline before a mixed sweep",
+    "Mixed sysbench/TPC-C comparison of this increment not run",
+    "Existing DISTINCT missing cost receipt and aggregate/point failures",
+    "Ready/lint"
+  ]
+}

@@ -90,6 +90,17 @@ use crate::StmtContext;
 /// particular the staged-row rule that applies to all of them -- are the
 /// module doc above.
 pub trait TableAccess {
+    /// Checks physical partial-aggregation admission without changing the
+    /// source schema. The planner uses this before comparing candidate costs.
+    fn supports_partial_aggregate(
+        &self,
+        aggregate: &PushdownPartialAggregate,
+        ctx: &StmtContext,
+    ) -> bool {
+        let _ = (aggregate, ctx);
+        false
+    }
+
     /// Records the physical scan estimate selected by the access-path coster.
     /// It changes no rows and exists so later operator negotiation can make
     /// the same partial/final aggregation choice as the optimizer.

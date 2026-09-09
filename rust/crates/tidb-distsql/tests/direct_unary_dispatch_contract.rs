@@ -247,6 +247,83 @@ fn locked_response_publishes_the_exact_transaction_event_before_recovery() {
 }
 
 #[test]
+fn alive_scan_lock_uses_fast_backoff_capped_by_ttl() {
+    use tidb_distsql::cop_paging::{
+        LockedResponseAction, LockedResponseDelegate, LockedResponseObservation,
+    };
+    use tidb_txnkv::{lock::LockRecoveryResult, SharedReadRuntime};
+
+    #[derive(Debug)]
+    struct AliveLock;
+    impl LockedResponseDelegate<ScriptedClient, ScriptedLoader> for AliveLock {
+        fn handle_locked_response(
+            &self,
+            _: &SharedReadRuntime<ScriptedClient, ScriptedLoader>,
+            observation: LockedResponseObservation,
+        ) -> Result<LockedResponseAction, String> {
+            Ok(LockedResponseAction::RetrySameTask {
+                recovered: LockRecoveryResult {
+                    ttl: Duration::from_millis(observation.lock.lock_ttl),
+                    ..LockRecoveryResult::default()
+                },
+            })
+        }
+    }
+
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let client = ScriptedClient {
+        calls: Rc::clone(&calls),
+        responses: [20_000, 1, 0]
+            .into_iter()
+            .map(|ttl| {
+                Ok(locked_response(KvrpcLockInfo {
+                    key: b"locked-key".to_vec(),
+                    primary_lock: b"primary-key".to_vec(),
+                    lock_version: 42,
+                    lock_ttl: ttl,
+                    ..KvrpcLockInfo::default()
+                }))
+            })
+            .chain([Ok(response(b"unblocked"))])
+            .collect(),
+        events: Rc::new(RefCell::new(Vec::new())),
+        liveness: RefCell::new(VecDeque::new()),
+        batch_errors: RefCell::new(VecDeque::new()),
+        batch_ready_immediately: RefCell::new(VecDeque::new()),
+        batch_completion_gate: None,
+    };
+    let shared = SharedReadRuntime::new_injected(
+        client,
+        RegionCache::new(ScriptedLoader {
+            cluster_id: 9001,
+            calls: Rc::new(RefCell::new(Vec::new())),
+            regions: [location(1, "a", "z", "tikv-1:20160")]
+                .into_iter()
+                .collect(),
+        }),
+    );
+    let waiter = Arc::new(RecordingRetryControl::default());
+    let transport = DirectUnaryQueryTransport::with_locked_response_delegate(
+        shared,
+        DirectUnaryRuntimeConfig {
+            region_retry_waiter: waiter.clone(),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+        Arc::new(AliveLock),
+    )
+    .unwrap();
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
+    assert_eq!(result.next_raw().unwrap(), Some(b"unblocked".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), None);
+    let waits = waiter.sleeps.lock().unwrap();
+    assert_eq!(waits.len(), 2, "each live lock needs one backoff draw");
+    assert!(waits[0] > Duration::ZERO && waits[0] <= Duration::from_millis(2));
+    assert_eq!(waits[1], Duration::from_millis(1));
+    assert_eq!(calls.borrow().len(), 4);
+}
+
+#[test]
 fn pd_peer_role_witness_and_cluster_fields_have_one_context_authority() {
     for (role, encoded) in [
         (PeerRole::Voter, 0),

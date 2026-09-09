@@ -1,0 +1,335 @@
+{
+  "status": "Measured prepared range-replay increment; full sysbench/TPC-C performance goal remains active. See per-case deltas and remaining validation failure.",
+  "change": "Pass the cached access choice separately from real index hints into range enumeration. Build only the selected path, preserving current parameters and ordinary fallback for unavailable or order-incompatible paths. Remove late join filtering and synthetic forced-index replay hints.",
+  "go_source": "pkg/planner/core/plan_cache_rebuild.go:30-230",
+  "go_binary_revision": "23bff313186b8ceb61fcbe9faac43ae700e7fb14",
+  "go_source_verification": "The current plan_cache_rebuild.go matches the exact running Go binary revision. Go rebuilds ranges on cached physical nodes; Rust still caches access choices, not a complete physical plan.",
+  "binaries": {
+    "before": {
+      "pid": 7428,
+      "port": 53060,
+      "command": [
+        "/private/tmp/tidb-batching-candidate-y32gx0kp/tidb-server",
+        "--path",
+        "127.0.0.1:43379",
+        "--store",
+        "tikv",
+        "--host",
+        "127.0.0.1",
+        "--cluster-session",
+        "--lease-ms",
+        "2000",
+        "--max-connections",
+        "32",
+        "--load-privileges",
+        "--port",
+        "53060"
+      ],
+      "sha256": "4460a3ffe62c9257f5879c7de7c14a826d779875ad9941700d4e2d18f522500a",
+      "grpc_connection_count_env": "4"
+    },
+    "after": {
+      "pid": 27177,
+      "port": 53061,
+      "command": [
+        "/private/tmp/tidb-batching-candidate-g8nbe7jt/tidb-server",
+        "--path",
+        "127.0.0.1:43379",
+        "--store",
+        "tikv",
+        "--host",
+        "127.0.0.1",
+        "--cluster-session",
+        "--lease-ms",
+        "2000",
+        "--max-connections",
+        "32",
+        "--load-privileges",
+        "--port",
+        "53061"
+      ],
+      "sha256": "61bf481f07f434483da88f1d06d7059a0035edb2b735753e5788034455b15f18",
+      "grpc_connection_count_env": "4"
+    }
+  },
+  "method": {
+    "fixture": "perf_sysbench_locking_v2.sbtest1",
+    "threads": [
+      1,
+      8,
+      32
+    ],
+    "events": {
+      "1": 3000,
+      "8": 12000,
+      "32": 24000
+    },
+    "pairs_per_concurrency": 3,
+    "seed": 1,
+    "prepared_statements": "auto",
+    "workload_writes": 0,
+    "ignored_errors": 0,
+    "reconnects": 0,
+    "fixture_reset": false
+  },
+  "measurements": {
+    "range_reads": {
+      "raw_results": "/private/tmp/tidb-prepared-path-range-pairs/results.json",
+      "medians": [
+        {
+          "threads": 1,
+          "before": {
+            "tps": 870.86,
+            "sql_cpu_ms_per_transaction": 0.7466666666666697,
+            "tikv_cpu_ms_per_transaction": 0.556666666666691,
+            "commands_per_request_batch": 1.9366442518026412,
+            "commands_per_transaction": 7.9656666666666665
+          },
+          "after": {
+            "tps": 882.65,
+            "sql_cpu_ms_per_transaction": 0.7233333333333327,
+            "tikv_cpu_ms_per_transaction": 0.5700000000000122,
+            "commands_per_request_batch": 1.9392314566577302,
+            "commands_per_transaction": 7.962666666666666
+          },
+          "tps_change_percent": 1.3538341409641053,
+          "sql_cpu_change_percent": -3.1250000000004774,
+          "paired_tps_changes_percent": [
+            1.214891027260423,
+            3.5239252904462504,
+            1.3410335602833667
+          ]
+        },
+        {
+          "threads": 8,
+          "before": {
+            "tps": 4337.94,
+            "sql_cpu_ms_per_transaction": 1.179166666666665,
+            "tikv_cpu_ms_per_transaction": 0.9383333333333516,
+            "commands_per_request_batch": 1.9143590054333555,
+            "commands_per_transaction": 7.8990833333333335
+          },
+          "after": {
+            "tps": 4371.13,
+            "sql_cpu_ms_per_transaction": 1.1441666666666663,
+            "tikv_cpu_ms_per_transaction": 0.9741666666667091,
+            "commands_per_request_batch": 1.9246654618555445,
+            "commands_per_transaction": 7.899666666666667
+          },
+          "tps_change_percent": 0.7651097064505397,
+          "sql_cpu_change_percent": -2.9681978798585473,
+          "paired_tps_changes_percent": [
+            0.7551223155240372,
+            1.826681854075085,
+            0.6989492708520784
+          ]
+        },
+        {
+          "threads": 32,
+          "before": {
+            "tps": 6602.62,
+            "sql_cpu_ms_per_transaction": 1.2387500000000007,
+            "tikv_cpu_ms_per_transaction": 0.7087500000000091,
+            "commands_per_request_batch": 2.7459180418201328,
+            "commands_per_transaction": 7.889875
+          },
+          "after": {
+            "tps": 6631.37,
+            "sql_cpu_ms_per_transaction": 1.204166666666667,
+            "tikv_cpu_ms_per_transaction": 0.7299999999999803,
+            "commands_per_request_batch": 2.773833611917539,
+            "commands_per_transaction": 7.890625
+          },
+          "tps_change_percent": 0.4354332068178923,
+          "sql_cpu_change_percent": -2.7917928018836413,
+          "paired_tps_changes_percent": [
+            1.2811016129845143,
+            0.7488545332713592,
+            0.3859074125120099
+          ]
+        }
+      ]
+    },
+    "read_only": {
+      "raw_results": "/private/tmp/tidb-prepared-path-readonly-pairs/results.json",
+      "medians": [
+        {
+          "threads": 1,
+          "before": {
+            "tps": 441.17,
+            "sql_cpu_ms_per_transaction": 1.2900000000000016,
+            "tikv_cpu_ms_per_transaction": 1.0766666666665212,
+            "commands_per_request_batch": 1.2679864572557134,
+            "commands_per_transaction": 17.976
+          },
+          "after": {
+            "tps": 443.37,
+            "sql_cpu_ms_per_transaction": 1.2700000000000007,
+            "tikv_cpu_ms_per_transaction": 1.0966666666669578,
+            "commands_per_request_batch": 1.2668154587102078,
+            "commands_per_transaction": 17.972
+          },
+          "tps_change_percent": 0.49867398055172263,
+          "sql_cpu_change_percent": -1.5503875968992942,
+          "paired_tps_changes_percent": [
+            0.5977448716206979,
+            1.9311676667356226,
+            0.4533399823197337
+          ]
+        },
+        {
+          "threads": 8,
+          "before": {
+            "tps": 2042.38,
+            "sql_cpu_ms_per_transaction": 2.1850000000000023,
+            "tikv_cpu_ms_per_transaction": 1.892500000000003,
+            "commands_per_request_batch": 1.445183395149402,
+            "commands_per_transaction": 17.891666666666666
+          },
+          "after": {
+            "tps": 2035.97,
+            "sql_cpu_ms_per_transaction": 2.1516666666666637,
+            "tikv_cpu_ms_per_transaction": 1.9525000000000243,
+            "commands_per_request_batch": 1.4463615600724926,
+            "commands_per_transaction": 17.890166666666666
+          },
+          "tps_change_percent": -0.31384952849127234,
+          "sql_cpu_change_percent": -1.52555301296744,
+          "paired_tps_changes_percent": [
+            -0.045524411853958835,
+            -0.49892772157972276,
+            -0.21809235353505985
+          ]
+        },
+        {
+          "threads": 32,
+          "before": {
+            "tps": 3255.94,
+            "sql_cpu_ms_per_transaction": 2.1670833333333333,
+            "tikv_cpu_ms_per_transaction": 1.6929166666666713,
+            "commands_per_request_batch": 2.307537359131098,
+            "commands_per_transaction": 17.899375
+          },
+          "after": {
+            "tps": 3244.82,
+            "sql_cpu_ms_per_transaction": 2.1374999999999984,
+            "tikv_cpu_ms_per_transaction": 1.7466666666666697,
+            "commands_per_request_batch": 2.1791599025974024,
+            "commands_per_transaction": 17.896625
+          },
+          "tps_change_percent": -0.34152963506698386,
+          "sql_cpu_change_percent": -1.3651220919054685,
+          "paired_tps_changes_percent": [
+            -0.8821822402785728,
+            -2.378422206797426,
+            0.472096651844911
+          ]
+        }
+      ]
+    }
+  },
+  "profiles": {
+    "before": {
+      "weighted_stacks": "/private/tmp/tidb-prepared-path-sql-cpu32/before.stacks.json",
+      "samples": 99479,
+      "total_weight_ns": 99479000000,
+      "best_single_table_access_path_cpu_percent": 4.254164195458338,
+      "choose_index_range_path_cpu_percent": 4.384845042672323,
+      "commit_fast_path_source_cpu_percent": 6.946189648066426,
+      "enumerate_paths_cpu_percent": 3.6108123322510277,
+      "go_GetPlanFromPlanCache_cpu_percent": 0
+    },
+    "after": {
+      "weighted_stacks": "/private/tmp/tidb-prepared-path-sql-cpu32/after.stacks.json",
+      "samples": 94892,
+      "total_weight_ns": 94892000000,
+      "best_single_table_access_path_cpu_percent": 2.4090545040677824,
+      "choose_index_range_path_cpu_percent": 2.4396155629557814,
+      "commit_fast_path_source_cpu_percent": 4.879231125911563,
+      "enumerate_paths_cpu_percent": 1.940100324579522,
+      "go_GetPlanFromPlanCache_cpu_percent": 0
+    },
+    "go": {
+      "weighted_stacks": "/private/tmp/tidb-prepared-path-sql-cpu32/go.stacks.json",
+      "samples": 83822,
+      "total_weight_ns": 83822000000,
+      "best_single_table_access_path_cpu_percent": 0,
+      "choose_index_range_path_cpu_percent": 0,
+      "commit_fast_path_source_cpu_percent": 0,
+      "enumerate_paths_cpu_percent": 0,
+      "go_GetPlanFromPlanCache_cpu_percent": 3.4573262389348858
+    }
+  },
+  "validation": {
+    "profile": "Ready scoped checks and lint run; one independently recorded pre-existing point estimate test still fails",
+    "red": [
+      "Single-table replay chose an index despite a table pin.",
+      "Join replay built [table,index1,index2] instead of just [table]."
+    ],
+    "tests": {
+      "index_ranges": 20,
+      "access_cost": 23,
+      "joins": 16,
+      "point_get_passed": 21,
+      "point_get_failed": 1,
+      "prepared_session": 3,
+      "proof_client": 2
+    },
+    "point_get_failure": {
+      "test": "residual_selection_uses_logical_rows_over_access_rows",
+      "actual": 9.49,
+      "expected": 53.35,
+      "prior_negative_control": "/private/tmp/tidb-prelock-estimate-old-binary.log",
+      "current": "/private/tmp/tidb-prepared-path-driver__tests__point_get__.log",
+      "expectation_changed": false
+    },
+    "prepared_results": "/private/tmp/tidb-prepared-path-results.json",
+    "prepared_result_sets": 30,
+    "text_results": "/private/tmp/tidb-prepared-path-text-results.json",
+    "text_result_sets": 10,
+    "post_prepared_results": "/private/tmp/tidb-prepared-path-post-results.json",
+    "post_text_results": "/private/tmp/tidb-prepared-path-post-text-results.json",
+    "build_log": "/private/tmp/tidb-prepared-path-build.log",
+    "lint_log": "/private/tmp/tidb-prepared-path-final-lint.log",
+    "protocol_red_log": "/private/tmp/tidb-prepared-client-red.log",
+    "protocol_green_log": "/private/tmp/tidb-prepared-client-green.log",
+    "proof_client_fix": "MySQL packet sequence wraps modulo 256; regression fails at 256/257/512 before fix and passes afterward while rejecting mismatches.",
+    "commands": [
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib range_replay_builds_only_the_cached_path",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib driver::tests::index_ranges::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib access_cost::tests::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib driver::tests::joins::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib driver::tests::point_get::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-session --lib tests_prepared_path_pins::",
+      "cd rust && cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "python3 rust/scripts/test-mysql-prepared-client.py",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "python3 /private/tmp/tidb-prepared-path-results.py --output /private/tmp/tidb-prepared-path-results.json",
+      "python3 /private/tmp/tidb-prepared-path-results.py --output /private/tmp/tidb-prepared-path-post-results.json",
+      "python3 /private/tmp/tidb-shared-admission-results.py --control-port 53060 --candidate-port 53061 --output /private/tmp/tidb-prepared-path-text-results.json",
+      "python3 /private/tmp/tidb-shared-admission-results.py --control-port 53060 --candidate-port 53061 --output /private/tmp/tidb-prepared-path-post-text-results.json",
+      "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-g8nbe7jt/manifest.json --output /private/tmp/tidb-prepared-path-range-pairs --case range_reads --pair-only --pair-threads 1 8 32",
+      "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-g8nbe7jt/manifest.json --output /private/tmp/tidb-prepared-path-readonly-pairs --pair-only --pair-threads 1 8 32",
+      "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-g8nbe7jt/manifest.json --output /private/tmp/tidb-prepared-path-sql-cpu32 --case range_reads --profile \"Time Profiler\" --profile-target sql --profile-threads 32 --profile-servers before after go"
+    ]
+  },
+  "files_changed": [
+    "rust/crates/tidb-executor/src/access_cost.rs",
+    "rust/crates/tidb-executor/src/driver/access.rs",
+    "rust/crates/tidb-executor/src/driver/leaf_access.rs",
+    "rust/crates/tidb-executor/src/index_hints.rs",
+    "rust/crates/tidb-executor/src/driver/tests/index_ranges.rs",
+    "rust/scripts/mysql-prepared-client.py",
+    "rust/scripts/test-mysql-prepared-client.py",
+    "rust/docs/transport-batching-execplan.md",
+    "rust/benchmarks/prepared-range-replay-baseline.json"
+  ],
+  "limitations": [
+    "No complete physical-plan cache or whole-package completion is claimed. Other planner work still repeats on prepared executions.",
+    "Shared local host and TiKV; only matched within-window comparisons support deltas.",
+    "CPU samples are Running weights, not blocked time or transaction latency; profiled throughput is diagnostic only.",
+    "TPC-C mixed writes remain unapproved and unverified.",
+    "Result hashes and COUNT/SUM are not a full-table content hash.",
+    "No commit or push; overlapping and unrelated shared-worktree changes were preserved."
+  ]
+}

@@ -112,6 +112,7 @@ impl RegionRecoveryLoader for OneRegion {
         &mut self,
         _metadata: &RegionMetadata,
         _leader_store_id: u64,
+        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
     ) -> Result<RegionLocation, RegionLoadError> {
         Err(RegionLoadError::new(
             "unexpected-hydration",

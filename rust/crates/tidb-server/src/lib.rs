@@ -63,6 +63,7 @@ mod cluster_privileges;
 pub mod cluster_session;
 pub mod cluster_session_node;
 pub mod cluster_sysvar_seam;
+pub mod cluster_binding_seam;
 mod configured_user_store;
 pub mod connection_resultset;
 mod connection_writers;

@@ -639,11 +639,11 @@ impl ColumnInfo {
         self.field_type.set_decimal(decimal);
     }
     /// Go `SetCharset`.
-    pub fn set_charset(&mut self, charset: impl Into<String>) {
+    pub fn set_charset(&mut self, charset: impl AsRef<str>) {
         self.field_type.set_charset_name(charset);
     }
     /// Go `SetCollate`.
-    pub fn set_collate(&mut self, collate: impl Into<String>) {
+    pub fn set_collate(&mut self, collate: impl AsRef<str>) {
         self.field_type.set_collation_name(collate);
     }
     /// Go `SetElems`.

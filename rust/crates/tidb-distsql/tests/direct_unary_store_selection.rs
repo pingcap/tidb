@@ -24,7 +24,7 @@ use crate::direct_unary_client_fixture::*;
 fn unreachable_store_reselects_an_alternate_and_promotes_it_for_the_next_query() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let events = Rc::new(RefCell::new(Vec::new()));
-    let retry_control = Rc::new(RecordingRetryControl::default());
+    let retry_control = Arc::new(RecordingRetryControl::default());
     let mut runtime = InjectedQueryRuntime::new(transport_with_transport_failures(
         Rc::clone(&calls),
         [
@@ -78,14 +78,14 @@ fn unreachable_store_reselects_an_alternate_and_promotes_it_for_the_next_query()
             },
         ]
     );
-    assert_eq!(retry_control.sleeps.borrow().len(), 1);
+    assert_eq!(retry_control.sleeps.lock().unwrap().len(), 1);
 }
 
 #[test]
 fn one_store_failure_stales_later_bound_regions_without_reordering_them() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let events = Rc::new(RefCell::new(Vec::new()));
-    let retry_control = Rc::new(RecordingRetryControl::default());
+    let retry_control = Arc::new(RecordingRetryControl::default());
     let shared_leader = Store {
         id: 201,
         address: "tikv-dead:20160".to_owned(),

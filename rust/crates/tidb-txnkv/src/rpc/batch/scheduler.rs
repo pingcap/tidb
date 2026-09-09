@@ -16,6 +16,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -39,9 +40,9 @@ pub const DEFAULT_BATCH_POLICY: &str = BATCH_POLICY_STANDARD;
 
 /// One cancellation and terminal-delivery authority supplied by the caller.
 ///
-/// The scheduler stores no parallel completion state. The later async adapter
-/// implements this trait with the same once-only handle returned to the pull
-/// caller, so queue cancellation and terminal failure share one authority.
+/// The scheduler stores no parallel completion state. Each entry retains its
+/// original response channel or callback, so queue cancellation and terminal
+/// failure share one authority.
 pub trait BatchEntryCompletion: fmt::Debug + Send + Sync {
     /// Typed terminal failure accepted by this completion authority.
     type Error;
@@ -117,6 +118,10 @@ where
     /// Returns the entry's shared request progress.
     pub fn progress(&self) -> Arc<BatchRequestProgress> {
         Arc::clone(&self.progress)
+    }
+
+    pub(in crate::rpc) fn arrived_at(&self) -> Instant {
+        self.progress.arrived_at()
     }
 
     /// Returns the opaque request payload.
@@ -324,7 +329,7 @@ pub struct BatchScheduler<T, C>
 where
     C: BatchEntryCompletion,
 {
-    id_alloc: u64,
+    id_alloc: Arc<AtomicU64>,
     entries: PriorityQueue<BatchEntry<T, C>>,
 }
 
@@ -334,7 +339,7 @@ where
 {
     fn default() -> Self {
         Self {
-            id_alloc: 0,
+            id_alloc: Arc::new(AtomicU64::new(0)),
             entries: PriorityQueue::new(),
         }
     }
@@ -349,6 +354,13 @@ where
         Self::default()
     }
 
+    pub(in crate::rpc) fn with_id_allocator(id_alloc: Arc<AtomicU64>) -> Self {
+        Self {
+            id_alloc,
+            entries: PriorityQueue::new(),
+        }
+    }
+
     /// Returns the number of entries still waiting for selection.
     pub fn len(&self) -> usize {
         self.entries.len()
@@ -360,8 +372,8 @@ where
     }
 
     /// Returns the most recently allocated request ID.
-    pub const fn id_alloc(&self) -> u64 {
-        self.id_alloc
+    pub fn id_alloc(&self) -> u64 {
+        self.id_alloc.load(Ordering::Relaxed)
     }
 
     /// Queues one request for a future scheduling pass.
@@ -391,10 +403,10 @@ where
                     normal_count += 1;
                 }
 
-                self.id_alloc = self.id_alloc.wrapping_add(1);
+                let request_id = self.id_alloc.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
                 groups.push(
                     ScheduledEntry {
-                        request_id: self.id_alloc,
+                        request_id,
                         entry,
                     },
                     selected_at,

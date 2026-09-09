@@ -221,6 +221,18 @@ impl GlobalSysvars {
             .unwrap_or_else(|| crate::sysvar::effective_default(def)))
     }
 
+    /// The global-form read used by both SQL variables and expression
+    /// accessors. INSTANCE and NONE scopes have one node value; only a
+    /// SESSION-only variable has no global copy (Go error 1238).
+    pub(crate) fn get_for_global_scope(&self, name: &str) -> Result<String, VarError> {
+        let def = get_sys_var(name)
+            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        if !def.has_global_scope() && !def.has_instance_scope() && def.has_session_scope() {
+            return Err(VarError::NoGlobalCopy(name.to_ascii_lowercase()));
+        }
+        self.get(name)
+    }
+
     /// Rebuilds the read-mostly image from the two authoritative maps. Every
     /// mutating entry point calls this after releasing its map lock; readers
     /// swap in the new `Arc` wholesale.
@@ -857,6 +869,7 @@ impl SessionVars {
     /// Installs the immutable build identity supplied by the server startup.
     pub fn set_version_info(&mut self, version_info: VersionInfo) {
         self.version_info = version_info;
+        self.generation += 1;
     }
 
     /// The immutable build/config identity returned by `TIDB_VERSION()`.
@@ -888,6 +901,11 @@ impl SessionVars {
 
     /// Puts back what [`Self::snapshot_system`] recorded.
     pub fn restore_system(&mut self, snapshot: Vec<(String, Option<String>)>) {
+        // Ordinary statements have no SET_VAR overlay. An empty restore
+        // must not invalidate variable-derived caches or rebuild fix-control.
+        if snapshot.is_empty() {
+            return;
+        }
         for (key, previous) in snapshot {
             match previous {
                 Some(value) => {
@@ -908,23 +926,13 @@ impl SessionVars {
     /// this session's own copy. Go's `ErrIncorrectGlobalLocalVar` (1238) when
     /// the variable has no GLOBAL scope at all to read.
     pub fn get_global(&self, name: &str) -> Result<String, VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
-        // Go's read path for `@@global.x` does not run `validateScope`; an
-        // instance-scoped variable answers `SELECT @@global.max_connections`,
-        // which some drivers ask for at connect.
-        if !def.has_global_scope() && !def.has_instance_scope() {
-            // A NONE-scope variable (`port`, `socket`) has exactly ONE
-            // value, the node's own, and Go answers it for `@@global.x` and
-            // `SHOW GLOBAL VARIABLES` alike (`GetScopeNoneSystemVar`). Only
-            // a SESSION-only variable has no global copy to read (Go's
-            // ErrIncorrectGlobalLocalVar).
-            if def.has_session_scope() {
-                return Err(VarError::NoGlobalCopy(name.to_ascii_lowercase()));
-            }
-            return self.globals.get(name);
-        }
-        self.globals.get(name)
+        self.globals.get_for_global_scope(name)
+    }
+
+    /// Shares the currently selected global table, not its values. Account
+    /// writes may temporarily swap this owner for a scratch validation table.
+    pub(crate) fn global_sysvars(&self) -> GlobalSysvars {
+        self.globals.clone()
     }
 
     /// Sets a session system variable, validating the value as Go's

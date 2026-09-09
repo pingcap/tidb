@@ -89,6 +89,25 @@ impl<L> RegionCache<L> {
         &mut self,
         feedback: &RouteFeedback,
     ) -> Result<RouteFeedbackApplication, RegionRecoveryError> {
+        let application = self.route_feedback_application(feedback)?;
+        let region = feedback.target().region;
+        match application {
+            RouteFeedbackApplication::ProxyPublished => {
+                self.preferred_proxies
+                    .insert(region, feedback.proxy().unwrap().clone());
+            }
+            RouteFeedbackApplication::ProxyCleared => {
+                self.preferred_proxies.remove(&region);
+            }
+            RouteFeedbackApplication::Unchanged => {}
+        }
+        Ok(application)
+    }
+
+    fn route_feedback_application(
+        &self,
+        feedback: &RouteFeedback,
+    ) -> Result<RouteFeedbackApplication, RegionRecoveryError> {
         self.validate_attempt(feedback.target())?;
         let target_is_leader = self.regions.iter().any(|location| {
             location.region == feedback.target().region
@@ -115,20 +134,18 @@ impl<L> RegionCache<L> {
                 if self.preferred_proxies.get(&region) == Some(proxy) {
                     Ok(RouteFeedbackApplication::Unchanged)
                 } else {
-                    self.preferred_proxies.insert(region, proxy.clone());
                     Ok(RouteFeedbackApplication::ProxyPublished)
                 }
             }
             (Some(proxy), RouteOutcome::Failure) => {
                 if self.preferred_proxies.get(&region) == Some(proxy) {
-                    self.preferred_proxies.remove(&region);
                     Ok(RouteFeedbackApplication::ProxyCleared)
                 } else {
                     Ok(RouteFeedbackApplication::Unchanged)
                 }
             }
             (None, RouteOutcome::Success) => {
-                if self.preferred_proxies.remove(&region).is_some() {
+                if self.preferred_proxies.contains_key(&region) {
                     Ok(RouteFeedbackApplication::ProxyCleared)
                 } else {
                     Ok(RouteFeedbackApplication::Unchanged)
@@ -319,7 +336,30 @@ impl<L> RegionCache<L> {
         Ok(application)
     }
 
-    /// Creates a request-scoped selector over one exact cached region.
+    /// Successful reads normally leave canonical metadata unchanged. Inspect
+    /// the same feedback under a shared borrow; actual updates and stale
+    /// observations are re-evaluated by the exclusive success path.
+    pub(in crate::region) fn request_success_is_unchanged(&self, request: &LeaderRequest) -> bool {
+        let feedback = RouteFeedback::from_request(request, RouteOutcome::Success);
+        let application = if request.proxy().is_some()
+            || (request.cached_leader && request.read_mode == ReplicaReadMode::Leader)
+        {
+            self.route_feedback_application(&feedback)
+        } else {
+            self.validate_attempt(feedback.target())
+                .map(|()| RouteFeedbackApplication::Unchanged)
+        };
+        matches!(application, Ok(RouteFeedbackApplication::Unchanged))
+            && self
+                .stores
+                .get(&feedback.dispatch_attempt().store_id)
+                .is_some_and(|store| store.liveness == StoreLiveness::Reachable)
+            && (request.replica_read || request.stale_read || request.cached_leader)
+    }
+
+    /// Creates a request-scoped selector for one versioned task. Selection
+    /// owns cache validity: an evicted task returns `ReloadRegion` whether
+    /// eviction preceded or followed construction of its selector.
     pub fn request_selector(
         &self,
         region: RegionVerId,
@@ -328,18 +368,12 @@ impl<L> RegionCache<L> {
         if policy.stale_read && policy.mode != ReplicaReadMode::Mixed {
             return Err(RegionRouteError::UnsupportedReadPolicy);
         }
-        let Some(location) = self
+        let leader_peer_id = self
             .regions
             .iter()
             .find(|location| location.region == region)
-        else {
-            return Err(RegionRouteError::MissingLeader);
-        };
-        Ok(RequestSelector::new(
-            region,
-            policy,
-            location.leader_peer_id,
-        ))
+            .and_then(|location| location.leader_peer_id);
+        Ok(RequestSelector::new(region, policy, leader_peer_id))
     }
 
     /// Selects the next source-shaped replica and invalidates on exhaustion.
@@ -356,20 +390,44 @@ impl<L> RegionCache<L> {
         selector: &mut RequestSelector,
         now: HealthInstant,
     ) -> Result<RequestSelection, RegionRouteError> {
-        if selector.policy.stale_read && selector.policy.mode != ReplicaReadMode::Mixed {
-            return Err(RegionRouteError::UnsupportedReadPolicy);
-        }
-        if let Some(pending) = &selector.pending_attempt {
-            return Err(RegionRouteError::AttemptStillPending {
-                region: pending.region,
-                peer_id: pending.peer_id,
-            });
-        }
+        check_request_selector(selector)?;
         if selector.policy.mode != ReplicaReadMode::Leader
             && self.region_has_stale_candidate_store(selector.region)
         {
             self.mark_delayed_reload(selector.region);
         }
+        let selection = self.select_request_from_cache(selector, now)?;
+        if let RequestSelection::ReloadRegion { region } = &selection {
+            self.invalidate(*region);
+        }
+        Ok(selection)
+    }
+
+    /// A cache read can select any healthy replica without changing canonical
+    /// metadata. None requests an exclusive retry for invalidation/reload.
+    pub(in crate::region) fn try_select_request(
+        &self,
+        selector: &mut RequestSelector,
+    ) -> Option<Result<RequestSelection, RegionRouteError>> {
+        if let Err(error) = check_request_selector(selector) {
+            return Some(Err(error));
+        }
+        if selector.policy.mode != ReplicaReadMode::Leader
+            && self.region_has_stale_candidate_store(selector.region)
+        {
+            return None;
+        }
+        match self.select_request_from_cache(selector, health_now()) {
+            Ok(RequestSelection::ReloadRegion { .. }) => None,
+            result => Some(result),
+        }
+    }
+
+    fn select_request_from_cache(
+        &self,
+        selector: &mut RequestSelector,
+        now: HealthInstant,
+    ) -> Result<RequestSelection, RegionRouteError> {
         let Some(location) = self
             .regions
             .iter()
@@ -401,9 +459,9 @@ impl<L> RegionCache<L> {
         };
 
         let Some(peer) = selected else {
-            let region = selector.region;
-            self.invalidate(region);
-            return Ok(RequestSelection::ReloadRegion { region });
+            return Ok(RequestSelection::ReloadRegion {
+                region: selector.region,
+            });
         };
         let store = self
             .stores
@@ -776,4 +834,17 @@ pub(super) fn request_flags(selector: &RequestSelector, cached_leader: bool) -> 
         return (true, false);
     }
     (false, true)
+}
+
+fn check_request_selector(selector: &RequestSelector) -> Result<(), RegionRouteError> {
+    if selector.policy.stale_read && selector.policy.mode != ReplicaReadMode::Mixed {
+        return Err(RegionRouteError::UnsupportedReadPolicy);
+    }
+    if let Some(pending) = &selector.pending_attempt {
+        return Err(RegionRouteError::AttemptStillPending {
+            region: pending.region,
+            peer_id: pending.peer_id,
+        });
+    }
+    Ok(())
 }

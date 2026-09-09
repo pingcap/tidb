@@ -1222,7 +1222,7 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         }
         "sqrt" | "pow" | "power" | "exp" | "ln" | "log" | "log2" | "log10" | "sin"
         | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2" | "cot" | "radians" | "degrees"
-        | "rand" => FieldType::new(FieldTypeCode::Double),
+        | "rand" => crate::builtin_arithmetic::new_return_field_type(tidb_datatype::EvalType::Real),
         "sign" | "crc32" => int(),
         // The JSON family's value slice: JSON evaluated as VALUES. Go types
         // the first group `MysqlJson` and the second group as strings/ints.

@@ -28,9 +28,9 @@
 //! so only the order of exactly-tying rows can differ -- an order Go does not
 //! guarantee either.
 //!
-//! DEFERRED (documented): spill-to-disk partitions and the multi-way merger,
-//! the parallel sort workers/fetcher/generator pipeline, memory and disk
-//! trackers, the SQL killer, and the failpoints.
+//! DEFERRED: the parallel sort workers/fetcher/generator pipeline and its
+//! failpoints. The serial path supports spilling, memory/disk quotas and
+//! statement cancellation.
 //!
 //! Row comparison is `tidb_expr::compare_datums` — the shared,
 //! collation-aware datum comparator (Go `types/datum.go` `Datum.Compare`
@@ -573,6 +573,124 @@ mod tests {
 
     fn one_col_rows(n: i64) -> Vec<Vec<Option<i64>>> {
         (0..n).rev().map(|v| vec![Some(v)]).collect()
+    }
+
+    #[derive(Default)]
+    struct RecordMemoryCharge {
+        base: tidb_util::memory::BaseOomAction,
+        observed: std::sync::Mutex<Vec<i64>>,
+    }
+
+    impl tidb_util::memory::ActionOnExceed for RecordMemoryCharge {
+        fn action(&self, tracker: &Arc<Tracker>) {
+            self.observed.lock().unwrap().push(tracker.bytes_consumed());
+        }
+        fn set_fallback(&self, action: Option<ArcAction>) {
+            self.base.set_fallback(action);
+        }
+        fn get_fallback(&self) -> Option<ArcAction> {
+            self.base.get_fallback()
+        }
+        fn get_priority(&self) -> i64 {
+            tidb_util::memory::DEF_LOG_PRIORITY
+        }
+        fn set_finished(&self) {
+            self.base.set_finished();
+        }
+        fn is_finished(&self) -> bool {
+            self.base.is_finished()
+        }
+    }
+
+    #[test]
+    fn sort_partition_charges_complete_chunks_once() {
+        let fields = vec![long(), FieldType::new(FieldTypeCode::Varchar)];
+        let by: Vec<_> = fields
+            .iter()
+            .enumerate()
+            .map(|(index, field)| {
+                let mut column = Column::new(index as i64, field.clone());
+                column.index = index as i64;
+                SortByItem {
+                    expr: Expression::Column(column),
+                    desc: false,
+                }
+            })
+            .collect();
+        let parent = Tracker::new(0, 1);
+        let action = Arc::new(RecordMemoryCharge::default());
+        parent.set_action_on_exceed(Some(action.clone()));
+        let mut partition = SortPartition::new(
+            fields.clone(),
+            &parent,
+            StatementMemory::default().spill_storage(),
+        );
+        let mut expected = 0;
+        let mut observed = Vec::new();
+        for count in [0, 1, 17, 257] {
+            let mut chunk = Chunk::new_with_capacity(&fields, count.max(1));
+            for row in 0..count {
+                if row % 3 == 0 {
+                    chunk.append_null(0);
+                } else {
+                    chunk.append_int64(0, row as i64);
+                }
+                chunk.append_string(1, &"x".repeat(row % 19 + 1));
+            }
+            expected += chunk.memory_usage() + tidb_chunk::row::ROW_SIZE * count as i64;
+            for row in 0..count {
+                expected += size_of::<Vec<Datum>>() as i64;
+                for datum in eval_sort_key(&by, &NoColumns, chunk.get_row(row)).unwrap() {
+                    expected += datum.estimated_mem_usage() as i64;
+                }
+            }
+            partition.add(chunk, &by, &NoColumns).unwrap();
+            observed.push(expected);
+            assert_eq!(partition.mem_tracker().bytes_consumed(), expected);
+            assert_eq!(parent.bytes_consumed(), expected);
+            assert_eq!(*action.observed.lock().unwrap(), observed);
+        }
+        partition.close();
+        assert_eq!(parent.bytes_consumed(), 0);
+    }
+
+    #[test]
+    fn sort_partition_rejects_a_failed_key_batch_without_partial_rows_or_charge() {
+        use tidb_expr::scalar_function::ScalarFunction;
+
+        let fields = vec![long()];
+        let by = vec![SortByItem {
+            expr: Expression::ScalarFunction(ScalarFunction::new(
+                tidb_ast::CiString::new("abs"),
+                long(),
+                vec![col_expr(0)],
+            )),
+            desc: false,
+        }];
+        let parent = Tracker::new(0, -1);
+        let mut partition = SortPartition::new(
+            fields.clone(),
+            &parent,
+            StatementMemory::default().spill_storage(),
+        );
+        let mut first = Chunk::new_with_capacity(&fields, 1);
+        first.append_int64(0, 7);
+        partition.add(first, &by, &NoColumns).unwrap();
+        let held = parent.bytes_consumed();
+        let mut failed = Chunk::new_with_capacity(&fields, 2);
+        failed.append_int64(0, 2);
+        failed.append_int64(0, i64::MIN);
+        assert!(partition.add(failed, &by, &NoColumns).is_err());
+        assert_eq!(partition.num_rows(), 1, "failed chunk retained a row handle");
+        assert_eq!(parent.bytes_consumed(), held, "failed chunk retained a charge");
+        partition.sort(&by).unwrap();
+        assert!(partition.load_head(&by, &NoColumns).unwrap());
+        let mut output = Chunk::new_with_capacity(&fields, 1);
+        partition.take_head_into(&mut output);
+        assert_eq!(output.get_row(0).get_int64(0), 7);
+        assert!(!partition.load_head(&by, &NoColumns).unwrap());
+        partition.close();
+        assert_eq!(parent.bytes_consumed(), 0);
     }
 
     #[test]

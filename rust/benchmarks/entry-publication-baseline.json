@@ -1,0 +1,208 @@
+{
+  "date": "2026-09-09",
+  "status": "WIP; entry-owned publication identity replaces redundant ordinary-RPC acknowledgements. Overall throughput/latency goal remains active.",
+  "git_head": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "branch": "hparser-integration",
+  "cleanup": "All owned candidate and fixture supervisors stopped; all 14 SQL/status/PD/TiKV ports verified closed. Source recovery, binaries, raw results and fixture data retained. No commit, push or Git state mutation.",
+  "source": {
+    "go_module": "github.com/tikv/client-go/v2@v2.0.8-0.20260708122311-01bd8f99f4da",
+    "go": "internal/client/client_batch.go sendBatchRequest creates an entry, submits it and waits only on entry.res; batchCommandsBuilder/buildWithLimit and in-flight collection attach identity before receive.",
+    "files": [
+      "rust/crates/tidb-txnkv/src/rpc/transport_runtime.rs",
+      "rust/crates/tidb-txnkv/src/rpc/transport_runtime/batching.rs",
+      "rust/crates/tidb-txnkv/src/rpc/batch/transport.rs",
+      "rust/crates/tidb-txnkv/src/rpc/batch/coprocessor.rs",
+      "rust/crates/tidb-txnkv/src/rpc/transaction.rs",
+      "rust/crates/tidb-txnkv/src/rpc/tonic_coprocessor.rs",
+      "rust/crates/tidb-txnkv/src/rpc/unary.rs",
+      "rust/crates/tidb-txnkv/tests/optimistic_2pc_failure_branch_source.rs",
+      "rust/docs/prepared-plan-execplan.md"
+    ],
+    "root": "Ordinary submissions allocated a second mpsc channel, retained caller progress, copied packet IDs, scanned combined receipt IDs for every caller and sent a receipt even though in-flight publication already stored the exact identity on the original entry. Transaction success still depended on this receipt while Coprocessor completion already read entry progress.",
+    "change": "Ordinary call-scoped submission requests no receipt. Transaction and Coprocessor read existing entry publication state; only an explicit observer before publication uses a lazy address-local Inspect barrier. The public synchronous receipt API retains packet and per-caller boundaries. Drop the obsolete deferred receipt type and no-op pending wrapper. Keep batching policy, routing, transaction decisions and cancellation semantics.",
+    "regression": "A completed Get with a correctly published entry but a closed separate receipt channel returned InvalidRequest(successful Get completion has no publication identity) before the change. The existing transaction test was adapted and failed before implementation, then passed using entry identity.",
+    "test_sync": "The full parallel suite exposed a test that waited for a process-global detached-flush failure counter and then assumed its own secondary request had run. It failed with one observed Commit instead of two, passed alone, then passed in the full parallel suite after waiting on its own fixture's recorded commits. Production transaction behavior and the failure metric are unchanged.",
+    "recovery": "/private/tmp/tidb-entry-publication.z1hwgp/before-source.tar.gz; secondary-test-before.rs retains the pre-change test including unrelated worktree edits."
+  },
+  "binaries": {
+    "before": "5720960a024c2d0d254d6355db53c2c1bb4e4b5844c06bdb51f3724155d1f7dc",
+    "first_measured_candidate": "e0075437082118c31b8581d123f04ea0de0829fc40e6ddc70d9edfe4c316d2fb",
+    "final_candidate": "b0e20b9273d3d202bddf2e65c645acffc91cc6e781b54799e2ef54a53fa61abd",
+    "drain_only": "8969985b8dd5afaebc949db4ba4393f9ff0e555f06d4e6d25e3d4da1149679a7",
+    "sysbench": "f0822a96ba0de7354b9156c144f36353a5dbc705862e164e5b2bb041dc5cd046",
+    "cleanup_boundary": "The first measured candidate precedes internal method renaming, removal of an optimized-away no-op wrapper and test cleanup. Final eight-client measurements use the final binary. Do not silently treat first-window timing as the exact final binary's timing."
+  },
+  "first_window": {
+    "raw": "/private/tmp/tidb-entry-publication.z1hwgp/measure.json",
+    "command": "ruby /private/tmp/tidb-entry-publication.z1hwgp/measure.rb",
+    "method": "Corrected sysbench 1.0.20 prepared oltp_read_only; owned 100000-row perf_sysbench.sbtest1 fixture; fixed 6000/30000/30000 transactions at 1/8/32 clients; 1000-event warmup per trial; before/after/after/before order; seed 1; percentile 95; process CPU and TiKV request histogram deltas.",
+    "results": {
+      "1": {
+        "before": {
+          "tps": 426.4476700281201,
+          "latency_mean_ms": 2.3449999999999998,
+          "latency_p95_ms": 2.69,
+          "sql_cpu_seconds": 7.910000000000001,
+          "tikv_cpu_seconds": 8.34
+        },
+        "after": {
+          "tps": 436.4230613506473,
+          "latency_mean_ms": 2.29,
+          "latency_p95_ms": 2.59,
+          "sql_cpu_seconds": 7.775,
+          "tikv_cpu_seconds": 8.235
+        },
+        "median_delta_percent": {
+          "tps": 2.339182981553023,
+          "latency_mean_ms": -2.3454157782515916,
+          "latency_p95_ms": -3.7174721189591087,
+          "sql_cpu_seconds": -1.7067003792667568,
+          "tikv_cpu_seconds": -1.258992805755399
+        },
+        "paired_tps_delta_percent": [
+          3.1599090154168286,
+          1.5429475720188712
+        ]
+      },
+      "8": {
+        "before": {
+          "tps": 1705.6925047231557,
+          "latency_mean_ms": 4.6850000000000005,
+          "latency_p95_ms": 5.54,
+          "sql_cpu_seconds": 58.82999999999999,
+          "tikv_cpu_seconds": 65.69
+        },
+        "after": {
+          "tps": 1826.6542525056736,
+          "latency_mean_ms": 4.380000000000001,
+          "latency_p95_ms": 4.78,
+          "sql_cpu_seconds": 56.78999999999999,
+          "tikv_cpu_seconds": 64.01499999999999
+        },
+        "median_delta_percent": {
+          "tps": 7.091650309042707,
+          "latency_mean_ms": -6.5101387406616755,
+          "latency_p95_ms": -13.718411552346566,
+          "sql_cpu_seconds": -3.4676185619581856,
+          "tikv_cpu_seconds": -2.5498553813365965
+        },
+        "paired_tps_delta_percent": [
+          3.5822410872104804,
+          10.882254887104104
+        ]
+      },
+      "32": {
+        "before": {
+          "tps": 2595.0819275251583,
+          "latency_mean_ms": 12.285,
+          "latency_p95_ms": 14.89,
+          "sql_cpu_seconds": 67.18500000000002,
+          "tikv_cpu_seconds": 62.86500000000004
+        },
+        "after": {
+          "tps": 2666.569104345882,
+          "latency_mean_ms": 11.955,
+          "latency_p95_ms": 14.23,
+          "sql_cpu_seconds": 66.53999999999999,
+          "tikv_cpu_seconds": 61.44
+        },
+        "median_delta_percent": {
+          "tps": 2.754717531746609,
+          "latency_mean_ms": -2.6862026862026878,
+          "latency_p95_ms": -4.43250503693754,
+          "sql_cpu_seconds": -0.9600357222594669,
+          "tikv_cpu_seconds": -2.2667621092818613
+        },
+        "paired_tps_delta_percent": [
+          3.211037071144962,
+          2.3223050354481023
+        ]
+      }
+    },
+    "limitations": "Two samples per binary per tier; all six paired TPS directions positive, but the eight-client control varies about 7.4 percent. Do not use the large apparent eight-client gain as a stable effect size."
+  },
+  "validation": {
+    "profile": "WIP",
+    "commands": [
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --lib completed_transaction_uses_entry_publication",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --lib rpc::",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all batch_",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all transaction_send_source",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all tikv_active_cancellation_source",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all transport_authority_concurrency_source",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all secondary_commit_regroup_failure_keeps_a_determinate_committed_outcome",
+      "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "git diff --check"
+    ],
+    "cargo_working_directory": "/Users/qiliu/projects/tidb/rust",
+    "results": "Final 20 RPC unit tests and 416 topology-independent tests passed; 11 ignored. Release build passed. Initial broad run had 415 passes and one shared-metric test synchronization failure; isolated diagnosis passed; corrected parallel rerun passed.",
+    "logs": "/private/tmp/tidb-entry-publication.z1hwgp/{red,unit-final,all-final,secondary-isolated,all-final-recheck,build-final}.log",
+    "not_verified": "Ready lint, ignored real-cluster tests, whole Go package parity, and TPC-C workloads were not validated in this increment."
+  },
+  "parity": "Six result sets, 307 text lines, match Go, immediate Rust control, candidate and drain-only Rust before and after the first window: SHA256 ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c. Final-window parity is recorded separately.",
+  "remaining": "Adaptive collection still needs throughput and tail-latency acceptance against the drain-only control. General prepared physical-plan reuse and mixed-write TPC-C remain open.",
+  "final_window": {
+    "raw": "/private/tmp/tidb-entry-publication.z1hwgp/final/measure.json",
+    "command": "ruby /private/tmp/tidb-entry-publication.z1hwgp/final/measure.rb",
+    "method": "Same corrected driver and fixed 30000-event/1000-warmup method at eight clients only; order before/after/drain/drain/after/before; final cleanup binary. No profiling or builds during timed trials.",
+    "medians": {
+      "before": {
+        "tps": 1394.5675150122602,
+        "latency_mean_ms": 6.050000000000001,
+        "latency_p95_ms": 12.16,
+        "sql_cpu_seconds": 67.78,
+        "tikv_cpu_seconds": 74.52499999999992,
+        "batch_mean": 3.2192251738764686
+      },
+      "after": {
+        "tps": 1778.5181120019224,
+        "latency_mean_ms": 4.495,
+        "latency_p95_ms": 4.955,
+        "sql_cpu_seconds": 58.574999999999996,
+        "tikv_cpu_seconds": 65.91999999999996,
+        "batch_mean": 3.666921425812104
+      },
+      "drain": {
+        "tps": 1803.2205524920396,
+        "latency_mean_ms": 4.43,
+        "latency_p95_ms": 4.82,
+        "sql_cpu_seconds": 69.66499999999999,
+        "tikv_cpu_seconds": 84.25,
+        "batch_mean": 1.7027546761788397
+      }
+    },
+    "delta_percent_vs_controls": {
+      "before": {
+        "tps": 27.531875858035228,
+        "latency_mean_ms": -25.702479338842988,
+        "latency_p95_ms": -59.2516447368421,
+        "sql_cpu_seconds": -13.580702272056666,
+        "tikv_cpu_seconds": -11.546460919154612,
+        "batch_mean": 13.906956728862085
+      },
+      "drain": {
+        "tps": -1.3699067735213233,
+        "latency_mean_ms": 1.4672686230248422,
+        "latency_p95_ms": 2.8008298755186622,
+        "sql_cpu_seconds": -15.91904112538577,
+        "tikv_cpu_seconds": -21.756676557863553,
+        "batch_mean": 115.35230395261995
+      }
+    },
+    "quality": "Immediate control varies from 1714.20 to 1074.94 TPS and p95 from 5.37 to 18.95 ms; this window cannot establish a reliable gain magnitude versus that control. Candidate 1755.71/1801.33 TPS; drain-only 1803.19/1803.25 TPS. Candidate remains slower than stable drain-only controls despite lower SQL/TiKV CPU. Do not claim the earlier adaptive-collector regression is eliminated.",
+    "parity_before": {
+      "before": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+      "after": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+      "go": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+      "drain": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c"
+    },
+    "parity_after": {
+      "before": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+      "after": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+      "go": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+      "drain": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c"
+    },
+    "errors_and_reconnects": 0
+  }
+}

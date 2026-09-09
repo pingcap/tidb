@@ -1,0 +1,387 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-08",
+  "changed_files": [
+    "rust/crates/tidb-executor/src/access_cost.rs",
+    "rust/docs/transport-batching-execplan.md",
+    "rust/benchmarks/statistics-snapshot-baseline.json"
+  ],
+  "change": "Share immutable statistics-residency checkpoints through Arc, detach on a new load, and avoid requeueing resident or already pending physical statistics. Keep first-load order, fallback and delayed publication.",
+  "conclusion": "The checkpoint/restore path uses less sampled SQL CPU. This is NOT an accepted end-to-end throughput win: full read-only median TPS regresses at all tested client counts, while range results are mixed.",
+  "source": {
+    "go_revision": "23bff313186b8ceb61fcbe9faac43ae700e7fb14",
+    "go_files_verified_equal_to_running_revision": [
+      "pkg/statistics/table.go",
+      "pkg/statistics/index.go",
+      "pkg/planner/core/plan_cache.go",
+      "pkg/planner/core/plan_cache_rebuild.go"
+    ],
+    "go_load_contract": "ColumnIsLoadNeeded and IndexIsLoadNeeded skip already fully loaded items; pending requests coalesce.",
+    "remaining_plan_cache_gap": "Go lookupPlanCache -> adjustCachedPlan -> RebuildPlan4CachedPlan rebinds ranges without OptimizeAstNodeNoCache. Rust retains only access-path pins; bind_statement_markers replaces parameters with literals, and compiled Constant::eval rejects deferred/parameter constants. Reusable physical-plan and parameter-evaluation ownership are not implemented by this change."
+  },
+  "servers": {
+    "manifest": "/private/tmp/tidb-batching-candidate-r27ctgh4/manifest.json",
+    "before": {
+      "pid": 35273,
+      "port": 53066,
+      "command": [
+        "/private/tmp/tidb-batching-candidate-cgtiz4f0/tidb-server",
+        "--path",
+        "127.0.0.1:43379",
+        "--store",
+        "tikv",
+        "--host",
+        "127.0.0.1",
+        "--cluster-session",
+        "--lease-ms",
+        "2000",
+        "--max-connections",
+        "32",
+        "--load-privileges",
+        "--port",
+        "53066"
+      ],
+      "sha256": "848c7b2a8fba4483cee94584e26cdb9a260e628a68387b693838cadfbdb03c31",
+      "grpc_connection_count_env": "4"
+    },
+    "after": {
+      "pid": 55702,
+      "port": 53067,
+      "command": [
+        "/private/tmp/tidb-batching-candidate-r27ctgh4/tidb-server",
+        "--path",
+        "127.0.0.1:43379",
+        "--store",
+        "tikv",
+        "--host",
+        "127.0.0.1",
+        "--cluster-session",
+        "--lease-ms",
+        "2000",
+        "--max-connections",
+        "32",
+        "--load-privileges",
+        "--port",
+        "53067"
+      ],
+      "sha256": "d8738c3dda7dc7d8f15f2da7a53a5684b38d1416b8abb85bdc38594db12f75ed",
+      "grpc_connection_count_env": "4"
+    },
+    "go": {
+      "pid": 38104,
+      "port": 45000,
+      "sha256": "e734c80768b5cd44852b01b573bd36f30d19bb47510e0883e6017f18563cbde2"
+    },
+    "workspace_binary_matches_after": true
+  },
+  "fixture": {
+    "database": "perf_sysbench_locking_v2",
+    "table": "sbtest1",
+    "count": 100013,
+    "sum_k": 5011271921,
+    "reset": false,
+    "persistent_benchmark_writes": false
+  },
+  "validation": {
+    "profile": "Ready",
+    "scope": "Scoped ownership/statistics and planner/session checks, release server build, root lint, then SELECT-only live comparisons. No Go/Bazel dependency change.",
+    "tests": [
+      {
+        "cwd": "rust",
+        "command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib statistics_",
+        "log": "/private/tmp/tidb-stats-snapshot-red.log",
+        "passed": 3,
+        "failed": 2
+      },
+      {
+        "cwd": "rust",
+        "command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib access_cost::tests::",
+        "log": "/private/tmp/tidb-stats-snapshot-green.log",
+        "passed": 28,
+        "failed": 0
+      },
+      {
+        "cwd": "rust",
+        "command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib driver::tests::",
+        "log": "/private/tmp/tidb-stats-snapshot-driver.log",
+        "passed": 258,
+        "failed": 6
+      },
+      {
+        "cwd": "rust",
+        "command": "cargo test --offline --locked --release -j12 -p tidb-session --lib tests_analyze::",
+        "log": "/private/tmp/tidb-stats-snapshot-session.log",
+        "passed": 13,
+        "failed": 0
+      },
+      {
+        "cwd": "rust",
+        "command": "cargo test --offline --locked --release -j12 -p tidb-session --lib tests_prepared_path_pins::",
+        "log": "/private/tmp/tidb-stats-snapshot-pins.log",
+        "passed": 3,
+        "failed": 0
+      }
+    ],
+    "unique_final_passes": 302,
+    "unchanged_driver_failures": 6,
+    "driver_ignored": 1,
+    "failure_evidence": {
+      "control_log": "/private/tmp/tidb-scan-demand-driver-control.log",
+      "normalized_failure_bodies_match": true,
+      "normalization": "Remove runtime thread IDs, source line/column numbers and the RUST_BACKTRACE hint only.",
+      "names": [
+        "aggregates::tpcc_condition_six_simplifies_and_pushes_through_derived_tables",
+        "point_get::residual_selection_uses_logical_rows_over_access_rows",
+        "predicate_pushdown::a_common_dnf_equality_is_a_hash_join_key",
+        "predicate_pushdown::a_join_leaf_dnf_selection_uses_loaded_column_statistics",
+        "subqueries::explaining_a_correlated_scalar_type_reads_no_storage",
+        "subqueries::tpcc_conditions_ten_and_twelve_decorrelate_scalar_sums"
+      ]
+    },
+    "build": {
+      "cwd": "rust",
+      "command": "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "log": "/private/tmp/tidb-stats-snapshot-build.log",
+      "exit_code": 0
+    },
+    "lint": {
+      "cwd": ".",
+      "command": "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "log": "/private/tmp/tidb-stats-snapshot-lint.log",
+      "exit_code": 0
+    },
+    "diff_check": {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    "live": [
+      {
+        "case": "prepared",
+        "comparisons": 30,
+        "all_match_go_and_control": true,
+        "before_measurement": "/private/tmp/tidb-stats-snapshot-prepared-results.json",
+        "after_measurement": "/private/tmp/tidb-stats-snapshot-prepared-final-results.json",
+        "command": "python3 /private/tmp/tidb-prepared-path-results.py --control-port 53066 --candidate-port 53067 --output /private/tmp/tidb-stats-snapshot-prepared-final-results.json"
+      },
+      {
+        "case": "standard",
+        "comparisons": 10,
+        "all_match_go_and_control": true,
+        "before_measurement": "/private/tmp/tidb-stats-snapshot-standard-results.json",
+        "after_measurement": "/private/tmp/tidb-stats-snapshot-standard-final-results.json",
+        "command": "python3 /private/tmp/tidb-shared-admission-results.py --control-port 53066 --candidate-port 53067 --output /private/tmp/tidb-stats-snapshot-standard-final-results.json"
+      },
+      {
+        "case": "aggregate",
+        "comparisons": 4,
+        "all_match_go_and_control": true,
+        "before_measurement": "/private/tmp/tidb-stats-snapshot-aggregate-results.json",
+        "after_measurement": "/private/tmp/tidb-stats-snapshot-aggregate-final-results.json",
+        "command": "python3 /private/tmp/tidb-agg-fingerprint-results.py --control-port 53066 --candidate-port 53067 --output /private/tmp/tidb-stats-snapshot-aggregate-final-results.json"
+      },
+      {
+        "case": "window",
+        "comparisons": 11,
+        "all_match_go_and_control": true,
+        "before_measurement": "/private/tmp/tidb-stats-snapshot-window-results.json",
+        "after_measurement": "/private/tmp/tidb-stats-snapshot-window-final-results.json",
+        "command": "python3 /private/tmp/tidb-window-edge-results.py --control-port 53066 --candidate-port 53067 --output /private/tmp/tidb-stats-snapshot-window-final-results.json"
+      }
+    ],
+    "aggregate_and_window_before_after_explain_plans_identical": true
+  },
+  "timing": {
+    "method": "Three alternating pairs per client count, fixed seed, canonical sysbench oltp_read_only.lua and prepared protocol. No overlapping agent builds, exports or profiles. Raw results retain every command and per-process CPU delta.",
+    "host_limitations": "Non-quiescent macOS desktop: mds_stores, mds, mediaanalysisd and other processes remain active. No daemons stopped; raw top_cpu records retain interference. Small deltas are not attributed solely to code.",
+    "zero_writes_errors_reconnects": true,
+    "experiments": [
+      {
+        "case": "range_reads",
+        "raw_results": "/private/tmp/tidb-stats-snapshot-range-pairs/results.json",
+        "command": "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-r27ctgh4/manifest.json --output /private/tmp/tidb-stats-snapshot-range-pairs --case range_reads --pair-only --pair-threads 1 8 32",
+        "results": [
+          {
+            "threads": 1,
+            "before": {
+              "trials": 3,
+              "tps": 912.42,
+              "sql_cpu_ms_per_tx": 0.6733333333333344,
+              "tikv_cpu_ms_per_tx": 0.5100000000002183
+            },
+            "after": {
+              "trials": 3,
+              "tps": 901.86,
+              "sql_cpu_ms_per_tx": 0.6799999999999997,
+              "tikv_cpu_ms_per_tx": 0.5199999999998303
+            },
+            "pair_tps_change_percent": [
+              -1.1573617413033421,
+              1.6561339932826602,
+              -3.922785471648804
+            ],
+            "tps_change_percent": -1.1573617413033421,
+            "sql_cpu_change_percent": 0.9900990099007911,
+            "tikv_cpu_change_percent": 1.960784313648567
+          },
+          {
+            "threads": 8,
+            "before": {
+              "trials": 3,
+              "tps": 4595.68,
+              "sql_cpu_ms_per_tx": 1.0583333333333336,
+              "tikv_cpu_ms_per_tx": 0.8291666666667273
+            },
+            "after": {
+              "trials": 3,
+              "tps": 4516.69,
+              "sql_cpu_ms_per_tx": 1.0466666666666664,
+              "tikv_cpu_ms_per_tx": 0.8591666666666242
+            },
+            "pair_tps_change_percent": [
+              -2.3196617610484638,
+              2.3287713799945875,
+              -2.2719162343766253
+            ],
+            "tps_change_percent": -1.7187880792396526,
+            "sql_cpu_change_percent": -1.1023622047244608,
+            "tikv_cpu_change_percent": 3.6180904522486124
+          },
+          {
+            "threads": 32,
+            "before": {
+              "trials": 3,
+              "tps": 7029.68,
+              "sql_cpu_ms_per_tx": 1.138333333333333,
+              "tikv_cpu_ms_per_tx": 0.6470833333333607
+            },
+            "after": {
+              "trials": 3,
+              "tps": 7112.2,
+              "sql_cpu_ms_per_tx": 1.1183333333333334,
+              "tikv_cpu_ms_per_tx": 0.6570833333333516
+            },
+            "pair_tps_change_percent": [
+              -3.4958917048855676,
+              2.3429428236763528,
+              1.7686773091538655
+            ],
+            "tps_change_percent": 1.173879892114571,
+            "sql_cpu_change_percent": -1.7569546120058233,
+            "tikv_cpu_change_percent": 1.545396007725519
+          }
+        ]
+      },
+      {
+        "case": "read_only",
+        "raw_results": "/private/tmp/tidb-stats-snapshot-readonly-pairs/results.json",
+        "command": "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-r27ctgh4/manifest.json --output /private/tmp/tidb-stats-snapshot-readonly-pairs --case read_only --pair-only --pair-threads 1 8 32",
+        "results": [
+          {
+            "threads": 1,
+            "before": {
+              "trials": 3,
+              "tps": 448.16,
+              "sql_cpu_ms_per_tx": 1.2266666666666595,
+              "tikv_cpu_ms_per_tx": 1.0499999999998788
+            },
+            "after": {
+              "trials": 3,
+              "tps": 444.6,
+              "sql_cpu_ms_per_tx": 1.2200000000000084,
+              "tikv_cpu_ms_per_tx": 1.069999999999709
+            },
+            "pair_tps_change_percent": [
+              -0.7943591574437692,
+              -0.8884523517199816,
+              -0.03552792272677463
+            ],
+            "tps_change_percent": -0.7943591574437692,
+            "sql_cpu_change_percent": -0.5434782608682909,
+            "tikv_cpu_change_percent": 1.9047619047459552
+          },
+          {
+            "threads": 8,
+            "before": {
+              "trials": 3,
+              "tps": 2054.05,
+              "sql_cpu_ms_per_tx": 2.0558333333333323,
+              "tikv_cpu_ms_per_tx": 1.9074999999999516
+            },
+            "after": {
+              "trials": 3,
+              "tps": 2009.48,
+              "sql_cpu_ms_per_tx": 2.0424999999999995,
+              "tikv_cpu_ms_per_tx": 2.0416666666666665
+            },
+            "pair_tps_change_percent": [
+              -3.4154537993463463,
+              -1.3624642322672353,
+              -2.169859545775432
+            ],
+            "tps_change_percent": -2.169859545775432,
+            "sql_cpu_change_percent": -0.6485610052695323,
+            "tikv_cpu_change_percent": 7.033639143733605
+          },
+          {
+            "threads": 32,
+            "before": {
+              "trials": 3,
+              "tps": 3224.85,
+              "sql_cpu_ms_per_tx": 2.1120833333333335,
+              "tikv_cpu_ms_per_tx": 1.794999999999997
+            },
+            "after": {
+              "trials": 3,
+              "tps": 3212.24,
+              "sql_cpu_ms_per_tx": 2.0854166666666663,
+              "tikv_cpu_ms_per_tx": 1.8187499999999848
+            },
+            "pair_tps_change_percent": [
+              1.0943144642386438,
+              -0.7474284937415643,
+              -4.116644503961197
+            ],
+            "tps_change_percent": -0.39102593919096984,
+            "sql_cpu_change_percent": -1.2625764450582277,
+            "tikv_cpu_change_percent": 1.3231197771580883
+          }
+        ]
+      }
+    ]
+  },
+  "profiles": {
+    "command": "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-r27ctgh4/manifest.json --output /private/tmp/tidb-stats-snapshot-profile --case range_reads --profile 'Time Profiler' --profile-target sql --profile-threads 32 --profile-servers before after",
+    "raw_results": "/private/tmp/tidb-stats-snapshot-profile/results.json",
+    "method": "Matched 32-client range reads, 30-second workload with a 12-second Time Profiler capture after five seconds. Weighted unions count each stack once; all retained samples are Running. Profiled TPS is diagnostic, not acceptance evidence.",
+    "before": {
+      "path": "/private/tmp/tidb-stats-snapshot-profile/before.stacks.json",
+      "pid": "35273",
+      "samples": 94567,
+      "states": {
+        "Running": 94567
+      },
+      "checkpoint_percent": 1.2647117916397899,
+      "restore_percent": 0.9326720737678048,
+      "checkpoint_restore_union_percent": 2.197383865407595
+    },
+    "after": {
+      "path": "/private/tmp/tidb-stats-snapshot-profile/after.stacks.json",
+      "pid": "55702",
+      "samples": 91084,
+      "states": {
+        "Running": 91084
+      },
+      "checkpoint_percent": 1.061657371217777,
+      "restore_percent": 0.23604584778885424,
+      "checkpoint_restore_union_percent": 1.2977032190066313
+    },
+    "within_path_cpu_share_reduction_percent": 40.94326260259861
+  },
+  "limitations": [
+    "No full-suite all-green claim; six pre-existing driver failures remain.",
+    "The shared catalog checkpoint/restore boundary is not transactional across concurrent planners; copy-on-write preserves snapshots but does not solve that existing ownership limitation.",
+    "No reusable whole physical-plan cache, broad throughput win, or mixed-write TPC-C verification is claimed.",
+    "No fixture reset, persistent benchmark write, commit or push occurred."
+  ],
+  "goal_status": "active"
+}

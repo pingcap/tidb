@@ -1,0 +1,43 @@
+{
+  "workload": "oltp_read_write",
+  "scope": "Local prepared mixed-workload comparison; not full sysbench or TPC-C acceptance",
+  "base_commit": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "change": "Use the existing per-region TxnLockFast backoff for scan lock recovery; remaining TTL is a ceiling, not the sleep duration",
+  "machine": "Apple M4 Max, 128 GiB RAM, Darwin 24.6.0",
+  "compiler": "rustc 1.100.0-nightly (c656540d6 2026-08-21)",
+  "build": "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+  "sysbench_version": "1.0.20",
+  "cluster": "One local PD, TiKV, Go TiDB; v9.0.0-beta.2.pre-nightly",
+  "data": {"tables": 1, "rows": 100000, "analyzed": true, "state": "Shared dataset previously exercised by mixed workloads; not a fresh MVCC history"},
+  "protocol": "prepared",
+  "threads": 2,
+  "sample_seconds": 30,
+  "rounds": 3,
+  "random_seed": 1,
+  "server_options": "--store tikv --cluster-session --lease-ms 2000 --max-connections 32 --load-privileges",
+  "order": [["before", "after", "go"], ["after", "go", "before"], ["go", "before", "after"]],
+  "before": {
+    "binary_sha256": "34e9d46405d603b33257c691e8d7b35f4dcdf974d5a464261b3e2c201db0db1d",
+    "transactions": [5941, 1782, 3317],
+    "seconds": [43.4601, 44.7270, 48.0490],
+    "max_latency_ms": [20021.01, 20028.34, 20023.91],
+    "median_tps": 69.03369476992238
+  },
+  "after": {
+    "binary_sha256": "e0455e43ccdc114d870378aa89d673d8cc4f7fd958027b181e38708a8da680a4",
+    "transactions": [11244, 10923, 10821],
+    "seconds": [30.0062, 30.0057, 30.0066],
+    "max_latency_ms": [16.05, 16.10, 17.69],
+    "median_tps": 364.0308341415131
+  },
+  "go": {
+    "transactions": [12895, 12493, 12895],
+    "seconds": [30.0025, 30.0042, 30.0057],
+    "max_latency_ms": [15.61, 16.98, 17.14],
+    "median_tps": 429.7516805140356
+  },
+  "errors": 0,
+  "reconnects": 0,
+  "reproduce": "python3 rust/scripts/compare-sysbench.py --server before:53004 --server after:53005 --server go:45000 --database perf_sysbench_clean --workload oltp_read_write --threads 2 --seconds 30 --rounds 3 --table-size 100000",
+  "notes": "Both Rust binaries include the locked-unwritten-secondary cleanup, unique scan-ready queue, and scan panic error propagation. Only the scan lock-backoff change differs. No builds or profiling ran during these nine samples. TPS uses actual elapsed time, including the pre-change overruns. No samples were discarded."
+}

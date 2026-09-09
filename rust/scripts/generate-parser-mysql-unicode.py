@@ -105,8 +105,8 @@ func main() {{
 
 def read_module_source(root: Path, module_name: str) -> str:
     """Read a checked-in Rust module's full source, whether it's a single
-    `<module_name>.rs` file or has been split into `<module_name>/*.rs` parts
-    (see the source-size ratchet split playbook). Concatenating the parts is
+    `<module_name>.rs` file or has been split into `<module_name>/*.rs` parts.
+    Concatenating the parts is
     equivalent to the pre-split single file for regex-based verification."""
     single = root / f"{module_name}.rs"
     if single.exists():

@@ -284,6 +284,66 @@ fn caller_owned_sink_receives_packets_without_a_response_vec() {
 }
 
 #[test]
+fn binary_rows_reuse_one_encoding_buffer_across_batches() {
+    #[derive(Default)]
+    struct RowBufferSink {
+        packets: usize,
+        row_buffers: Vec<usize>,
+    }
+    impl ResultSetSink for RowBufferSink {
+        fn write_payload(&mut self, payload: &[u8]) -> Result<(), SinkWriteError> {
+            // One-column binary LONG rows have a header, bitmap and four bytes.
+            if payload.len() == 6 && payload[0] == 0 {
+                self.row_buffers.push(payload.as_ptr() as usize);
+            }
+            self.packets += 1;
+            Ok(())
+        }
+        fn packets_written(&self) -> usize {
+            self.packets
+        }
+    }
+    let mut source = Source {
+        events: [
+            Ok(vec![vec![Datum::Int(7)], vec![Datum::Int(8)]]),
+            Ok(vec![vec![Datum::Int(9)], vec![Datum::Int(10)]]),
+        ].into(),
+        ..Source::default()
+    };
+    let mut sink = RowBufferSink::default();
+    let outcome = tidb_server::connection_resultset::write_connection_binary_result_set_to_sink(
+        &mut source, &mut sink, ResultSetOptions::default(), 2,
+    ).unwrap();
+    assert_eq!(outcome.rows_written, 4);
+    assert_eq!(sink.row_buffers.len(), 4);
+    assert!(sink.row_buffers.iter().all(|ptr| *ptr == sink.row_buffers[0]));
+    assert_eq!(source.close_calls, 1);
+}
+
+#[test]
+fn binary_row_errors_preserve_preceding_rows_and_reject_extra_cells() {
+    for invalid_row in [
+        vec![],
+        vec![Datum::Int(8), Datum::Int(9)],
+        vec![Datum::MinNotNull],
+    ] {
+        let mut source = Source {
+            events: [Ok(vec![vec![Datum::Int(7)], invalid_row])].into(),
+            ..Source::default()
+        };
+        let mut sink = Sink::default();
+        let error = tidb_server::connection_resultset::write_connection_binary_result_set_to_sink(
+            &mut source, &mut sink, ResultSetOptions::default(), 32,
+        ).unwrap_err();
+        assert!(!error.retryable);
+        assert!(error.bytes_escaped);
+        assert_eq!(source.log, ["next", "columns", "finish", "close"]);
+        assert_eq!(sink.payloads.len(), 4, "metadata and exactly the valid row");
+        assert_eq!(sink.payloads.last().unwrap(), &[0, 0, 7, 0, 0, 0]);
+    }
+}
+
+#[test]
 fn finish_error_suppresses_terminal_eof_and_write_failure_is_nonretryable() {
     let mut source = Source {
         finish_error: Some("finish failed".to_owned()),

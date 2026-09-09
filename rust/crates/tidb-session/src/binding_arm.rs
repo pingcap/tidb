@@ -27,19 +27,35 @@ use tidb_executor::DriverError;
 use crate::binding::{self, Binding, SOURCE_MANUAL, STATUS_ENABLED};
 use crate::{Session, StmtOutput};
 
-/// A GLOBAL binding is a ROW in `mysql.bind_info` (bootstrapped by
-/// `crate::bootstrap`), written and read with the same statements Go's
-/// `bindingOperator` issues -- CREATE marks the older rows for the same
-/// normalized statement `deleted` and inserts a fresh `enabled` row, DROP is
-/// an UPDATE to `deleted`, and both SHOW and the plan-time match read the
-/// live rows back and re-derive digests/table names/hints by parsing the
-/// stored SQL, exactly as Go's cache load does. There is deliberately no
-/// second in-memory copy to drift from the table: with one process, the
-/// table IS the cache.
+/// Persisted binding projection. Cluster sessions match against a node-owned
+/// committed cache; standalone in-memory sessions read their local catalog.
 const BIND_INFO_COLUMNS: &str = "original_sql, bind_sql, default_db, status, create_time, \
      update_time, charset, collation, source, sql_digest";
 
 impl Session {
+    /// Install the node's committed global-binding cache.
+    pub fn set_global_binding_cache(&mut self, cache: crate::binding_cache::SharedBindingCache) {
+        self.global_binding_cache = Some(cache);
+    }
+
+    /// Install the cluster's independent global-binding transaction owner.
+    pub fn set_global_binding_writer(
+        &mut self,
+        writer: std::sync::Arc<dyn binding::GlobalBindingWriter>,
+    ) {
+        self.global_binding_writer = Some(writer);
+    }
+
+    fn with_global_binding_storage(
+        &mut self,
+        mut operation: impl FnMut(&mut Self) -> Result<u64, DriverError>,
+    ) -> Result<u64, DriverError> {
+        match self.global_binding_writer.clone() {
+            Some(writer) => writer.execute(&mut operation),
+            None => operation(self),
+        }
+    }
+
     /// Go `SQLBindExec.setBindingStatus[ByDigest]` over
     /// `bindingOperator.SetBindingStatus`: one UPDATE flipping the row
     /// between `enabled` and `disabled`, guarded by the CURRENT status --
@@ -70,20 +86,22 @@ impl Session {
                 STATUS_ENABLED,
             ),
         };
-        self.gc_global_bindings()?;
-        let now = self.global_binding_timestamp();
-        let changed = self.bind_info_exec(
-            "UPDATE mysql.bind_info SET status = ?, update_time = ? \
+        let changed = self.with_global_binding_storage(|storage| {
+            storage.gc_global_bindings()?;
+            let now = storage.global_binding_timestamp();
+            storage.bind_info_exec(
+                "UPDATE mysql.bind_info SET status = ?, update_time = ? \
              WHERE sql_digest = ? AND update_time < ? AND status IN (?, ?)",
-            &[
-                Datum::new_string(new_status.to_owned()),
-                Datum::new_string(now.clone()),
-                Datum::new_string(digest),
-                Datum::new_string(now),
-                Datum::new_string(old_status0.to_owned()),
-                Datum::new_string(old_status1.to_owned()),
-            ],
-        )?;
+                &[
+                    Datum::new_string(new_status.to_owned()),
+                    Datum::new_string(now.clone()),
+                    Datum::new_string(digest.clone()),
+                    Datum::new_string(now),
+                    Datum::new_string(old_status0.to_owned()),
+                    Datum::new_string(old_status1.to_owned()),
+                ],
+            )
+        })?;
         if changed == 0 {
             // Go wraps `errors.NewNoStackError(...)` as an ordinary 1105.
             self.append_warning(
@@ -169,7 +187,10 @@ impl Session {
             hints: binding::collect_hints(hinted),
         };
         if create.scope == BindingScope::Global {
-            self.create_global_binding(&binding)?;
+            self.with_global_binding_storage(|storage| {
+                storage.create_global_binding(&binding)?;
+                Ok(0)
+            })?;
         } else {
             self.session_bindings.create(binding);
         }
@@ -303,22 +324,25 @@ impl Session {
         if drop.scope == BindingScope::Global {
             // Go `bindingOperator.DropBinding`: a drop is an UPDATE to
             // `deleted`, and the affected count is the answer.
-            self.gc_global_bindings()?;
-            let now = self.global_binding_timestamp();
-            let mut dropped = 0u64;
-            for digest in &digests {
-                dropped += self.bind_info_exec(
-                    "UPDATE mysql.bind_info SET status = ?, update_time = ? \
+            let dropped = self.with_global_binding_storage(|storage| {
+                storage.gc_global_bindings()?;
+                let now = storage.global_binding_timestamp();
+                let mut dropped = 0u64;
+                for digest in &digests {
+                    dropped += storage.bind_info_exec(
+                        "UPDATE mysql.bind_info SET status = ?, update_time = ? \
                      WHERE sql_digest = ? AND update_time < ? AND status != ?",
-                    &[
-                        Datum::new_string("deleted".to_owned()),
-                        Datum::new_string(now.clone()),
-                        Datum::new_string(digest.clone()),
-                        Datum::new_string(now.clone()),
-                        Datum::new_string("deleted".to_owned()),
-                    ],
-                )?;
-            }
+                        &[
+                            Datum::new_string("deleted".to_owned()),
+                            Datum::new_string(now.clone()),
+                            Datum::new_string(digest.clone()),
+                            Datum::new_string(now.clone()),
+                            Datum::new_string("deleted".to_owned()),
+                        ],
+                    )?;
+                }
+                Ok(dropped)
+            })?;
             return Ok(StmtOutput::Affected(dropped));
         }
         let dropped = digests
@@ -437,14 +461,16 @@ impl Session {
     /// nothing matched, so a session with no bindings pays one map-emptiness
     /// test and nothing else.
     pub(crate) fn bind_statement_hints(&mut self, stmt: &Stmt) -> Option<Stmt> {
-        // The Go shape is a cache-size test before any digest is computed;
-        // here the global "cache" is the table itself, so its side of the
-        // test is a row count (see [`Self::has_global_binding_rows`]).
-        if self.session_bindings.is_empty() && !self.has_global_binding_rows() {
-            return None;
-        }
         // Go gates the whole step on `SessionVars.UsePlanBaselines`.
         if !self.session_bool("tidb_use_plan_baselines", true) {
+            return None;
+        }
+        let global = self.global_binding_cache.as_ref().map(|cache| cache.load());
+        let has_global = match &global {
+            Some(cache) => cache.size() != 0,
+            None => self.has_global_binding_rows(),
+        };
+        if self.session_bindings.is_empty() && !has_global {
             return None;
         }
         let no_db_digest = binding::no_db_digest(stmt);
@@ -463,6 +489,11 @@ impl Session {
             fuzzy_enabled,
         ) {
             Some(matched) => matched.hints.clone(),
+            None if global.is_some() => global
+                .as_ref()?
+                .matching_binding(&no_db_digest, &table_names, &self.current_db, fuzzy_enabled)?
+                .hints
+                .clone(),
             None => {
                 let global = self.load_global_bindings().ok()?;
                 global
@@ -477,11 +508,15 @@ impl Session {
         Some(bound)
     }
 
-    /// Whether this session has any SQL bindings.  Prepared fast paths refuse
+    /// Whether session or global SQL bindings can affect this plan. Prepared fast paths refuse
     /// the optimization while bindings exist, because a matching binding can
     /// replace the statement's access hints before planning.
-    pub fn has_session_bindings(&self) -> bool {
+    pub fn has_plan_bindings(&self) -> bool {
         !self.session_bindings.is_empty()
+            || self
+                .global_binding_cache
+                .as_ref()
+                .is_some_and(|cache| cache.load().size() != 0)
     }
 
     /// Whether `@@last_plan_from_binding` should report a hit, which is the
@@ -627,13 +662,16 @@ impl Session {
         })
     }
 
-    /// Reads the live global bindings back out of `mysql.bind_info`,
-    /// re-deriving the matcher's inputs by PARSING the stored `bind_sql` --
-    /// which is exactly how Go's `LoadFromStorageToCache` rebuilds its cache
-    /// rows, and what keeps this tier from needing a second copy that could
-    /// drift from the table. `builtin` and `deleted` rows are skipped as Go
-    /// skips them.
+    /// Materialize the published bindings for SHOW. Standalone in-memory
+    /// sessions without a node cache decode their local catalog instead.
     fn load_global_bindings(&mut self) -> Result<binding::SessionBindings, DriverError> {
+        if let Some(shared) = &self.global_binding_cache {
+            let mut loaded = binding::SessionBindings::default();
+            for binding in shared.load().get_all_bindings() {
+                loaded.create(binding.clone());
+            }
+            return Ok(loaded);
+        }
         if !self.has_global_binding_rows() {
             return Ok(binding::SessionBindings::default());
         }
@@ -648,44 +686,11 @@ impl Session {
         })?;
         let mut loaded = binding::SessionBindings::default();
         for row in rows {
-            let text = |index: usize| crate::datum_text(row.get(index)?);
-            let Some(status) = text(3) else { continue };
-            // Live rows only: `SHOW GLOBAL BINDINGS` lists `disabled` rows
-            // (measured) and the match filter skips them by status; the
-            // `builtin` lock row and `deleted` tombstones never load, as in
-            // Go's cache.
-            let status = match status.as_str() {
-                s if s == STATUS_ENABLED => STATUS_ENABLED,
-                s if s == binding::STATUS_USING => binding::STATUS_USING,
-                s if s == binding::STATUS_DISABLED => binding::STATUS_DISABLED,
-                _ => continue,
-            };
-            let (Some(original_sql), Some(bind_sql), Some(db), Some(sql_digest)) =
-                (text(0), text(1), text(2), text(9))
-            else {
-                continue;
-            };
-            // A row whose bind_sql no longer parses matches nothing; Go
-            // drops such rows from the cache with a warning.
-            let Ok(hinted) = tidb_parser::parse_with_sql_mode(&bind_sql, self.scanner_sql_mode())
-            else {
-                continue;
-            };
-            loaded.create(Binding {
-                original_sql,
-                bind_sql,
-                db,
-                status,
-                charset: text(6).unwrap_or_default(),
-                collation: text(7).unwrap_or_default(),
-                source: SOURCE_MANUAL,
-                sql_digest,
-                create_time: text(4).unwrap_or_default(),
-                update_time: text(5).unwrap_or_default(),
-                no_db_digest: binding::no_db_digest(&hinted),
-                table_names: binding::collect_table_names(&hinted),
-                hints: binding::collect_hints(&hinted),
-            });
+            if let Some(binding) = Binding::from_storage_row(&row, self.scanner_sql_mode()) {
+                if binding.status != binding::STATUS_DELETED {
+                    loaded.create(binding);
+                }
+            }
         }
         Ok(loaded)
     }

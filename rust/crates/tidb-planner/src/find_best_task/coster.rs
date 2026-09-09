@@ -29,6 +29,7 @@
 //!   row prices at the source's `MIN_ROW_SIZE` floor. Widths shift
 //!   absolute numbers, not the operator-shape comparisons the dispatcher
 //!   makes between plans over the SAME data.
+//!   IndexJoin's hash-table width uses Go's no-histogram type-width branch.
 //! * The reader arms divide by `DistSQLScanConcurrency` exactly as Go's
 //!   `getPlanCostVer24Physical{Table,Index}Reader` do — the divisor is what
 //!   makes pushed-down work cheap enough for a partial-aggregate push to
@@ -72,6 +73,20 @@ impl TaskCoster for Ver2Coster {
 }
 
 impl Ver2Coster {
+    /// Cost native tasks with the current optimizer session options.
+    #[must_use]
+    pub fn new(
+        factors: Ver2Factors,
+        session_factors: CostFactorVars,
+        session: CostSessionOpts,
+    ) -> Self {
+        Self {
+            factors,
+            session_factors,
+            session,
+        }
+    }
+
     fn rows(plan: &PhysicalPlan) -> f64 {
         plan.stats_info().map_or(1.0, |stats| stats.row_count())
     }
@@ -84,9 +99,86 @@ impl Ver2Coster {
         total
     }
 
+    fn number_of_ranges(plan: &PhysicalPlan) -> usize {
+        match plan {
+            PhysicalPlan::TableScan(scan) => scan.ranges.len(),
+            PhysicalPlan::IndexScan(scan) => scan.ranges.len(),
+            PhysicalPlan::TableReader(reader) => reader
+                .table_plan
+                .as_deref()
+                .map_or(0, Self::number_of_ranges),
+            PhysicalPlan::IndexReader(reader) => reader
+                .index_plan
+                .as_deref()
+                .map_or(0, Self::number_of_ranges),
+            PhysicalPlan::IndexLookUpReader(reader) => {
+                reader
+                    .index_plan
+                    .as_deref()
+                    .map_or(0, Self::number_of_ranges)
+                    + reader
+                        .table_plan
+                        .as_deref()
+                        .map_or(0, Self::number_of_ranges)
+            }
+            _ => plan.children().iter().map(Self::number_of_ranges).sum(),
+        }
+    }
+
+    fn type_row_size(plan: &PhysicalPlan) -> f64 {
+        plan.schema()
+            .into_iter()
+            .flat_map(|schema| &schema.columns)
+            .filter_map(|column| column.ret_type.as_ref())
+            .map(|field_type| tidb_chunk::codec::estimate_type_width(field_type).max(0) as f64)
+            .sum()
+    }
+
     fn price(&self, plan: &PhysicalPlan) -> CostVer2 {
         let rows = Self::rows(plan);
         match plan {
+            PhysicalPlan::IndexJoin(index_join) => {
+                use crate::find_best_task::LogicalJoinType as J;
+                let join = &index_join.join;
+                let build = &plan.children()[1 - join.inner_child_idx];
+                let probe = &plan.children()[join.inner_child_idx];
+                let scalar = |conditions: &[tidb_expr::expression::Expression]| {
+                    conditions
+                        .iter()
+                        .map(|condition| {
+                            matches!(
+                                condition,
+                                tidb_expr::expression::Expression::ScalarFunction(_)
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                };
+                crate::plan_cost_ver2::index_join_cost(
+                    None,
+                    crate::plan_cost_ver2::IndexJoinInput {
+                        build_rows: Self::rows(build),
+                        build_row_size: Self::type_row_size(build),
+                        probe_rows_one: Self::rows(probe),
+                        probe_row_size: Self::type_row_size(probe),
+                        num_right_join_keys: join.right_join_keys.len(),
+                        num_left_join_keys: join.left_join_keys.len(),
+                        num_ranges: Self::number_of_ranges(probe) as f64,
+                        is_semi_join: matches!(
+                            join.join_type,
+                            J::Semi | J::AntiSemi | J::LeftOuterSemi | J::AntiLeftOuterSemi
+                        ),
+                        kind: crate::plan_cost_ver2::IndexJoinKind::IndexJoin,
+                    },
+                    (
+                        &scalar(&join.left_conditions),
+                        &scalar(&join.right_conditions),
+                    ),
+                    (&self.factors, &self.session_factors),
+                    &self.session,
+                    TaskType::Root,
+                    (&self.price(build), &self.price(probe)),
+                )
+            }
             // `getPlanCostVer24PhysicalTableScan`, Go's own body over the
             // ported input struct: this slice's scans carry full ranges and
             // no probe RangeInfo, and the penalty inputs default exactly as

@@ -1,0 +1,284 @@
+{
+  "status": "WIP: measured isolated prepared-execution improvement; not a sysbench/TPC-C throughput claim or whole-package completion.",
+  "change": "FieldType and CollationInfo share immutable charset/collation bytes through Arc<str>, matching Go's string-header copies. Setters replace only their own handle; exact spellings, hashes, serialization and ENUM/SET sharing remain unchanged.",
+  "go_source": [
+    "pkg/parser/types/field_type.go: FieldType, Clone and DeepCopy",
+    "pkg/expression/collation.go: collationInfo",
+    "pkg/expression/column.go: Column.Clone"
+  ],
+  "base_commit": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "worktree": "Both binaries include the same pre-existing dirty shared worktree; only this increment's three production files differ.",
+  "evidence_directory": "/private/tmp/tidb-prepared-owner.ixmsOs",
+  "binaries": {
+    "before_sha256": "2703cfd949ebc9185eb82f75987a024659f58468004d2fd8e04fe590fbb5c229",
+    "after_sha256": "511567a0330c2bd096e685cc793e47fd703e191adfc90e3f82f6563a5521e0bb"
+  },
+  "measurement": {
+    "scope": "Single Session, in-process storage, four rows; current prepared bind/execute entry, no network or live service. One hundred warmups; five rounds of 10000 operations per case, two invocations per binary.",
+    "order": [
+      "before-c",
+      "after-c",
+      "after-d",
+      "before-d"
+    ],
+    "acceptance": "Use only c/d runs, after builds, tests and profiles completed. Earlier a/b runs overlapped compilation and are excluded. Exact result lines match across all four retained runs. Point control is too short to support a separate speedup claim.",
+    "point": {
+      "before_us": [
+        1.5163458,
+        1.5204833000000002,
+        1.5173125,
+        1.5123834,
+        1.5170082999999999,
+        1.5306125,
+        1.5319833,
+        1.6127291,
+        1.6517,
+        1.6578708999999998
+      ],
+      "after_us": [
+        1.4812958,
+        1.4869292,
+        1.4828208,
+        1.4829167,
+        1.4791166,
+        1.4107083,
+        1.4018958,
+        1.412475,
+        1.41145,
+        1.4081084000000001
+      ],
+      "before_median_us": 1.5255479,
+      "after_median_us": 1.4457958,
+      "elapsed_change_percent": -5.227767676124762
+    },
+    "range": {
+      "before_us": [
+        51.1324375,
+        50.999862500000006,
+        50.91575,
+        51.6555125,
+        51.0206375,
+        51.7973041,
+        52.0049542,
+        51.69185409999999,
+        51.7195708,
+        51.197366699999996
+      ],
+      "after_us": [
+        47.1841666,
+        46.3184416,
+        46.7692125,
+        46.3366416,
+        46.367079100000005,
+        46.4236791,
+        46.5931875,
+        46.4405167,
+        46.7909666,
+        46.4384084
+      ],
+      "before_median_us": 51.426439599999995,
+      "after_median_us": 46.43946255,
+      "elapsed_change_percent": -9.697301794153358
+    },
+    "index": {
+      "before_us": [
+        82.2128208,
+        81.9231791,
+        81.83555,
+        81.96221249999999,
+        81.8709125,
+        82.4486834,
+        82.4276334,
+        81.8403042,
+        82.9560875,
+        83.3477292
+      ],
+      "after_us": [
+        67.6436791,
+        66.5637083,
+        67.04534170000001,
+        67.9330166,
+        68.0003459,
+        67.864375,
+        67.5391833,
+        67.5912542,
+        67.5491667,
+        67.38482499999999
+      ],
+      "before_median_us": 82.08751665,
+      "after_median_us": 67.57021044999999,
+      "elapsed_change_percent": -17.685157003711115
+    },
+    "aggregate": {
+      "before_us": [
+        76.87365,
+        76.90951249999999,
+        77.2723875,
+        77.2075625,
+        76.9223125,
+        77.09360000000001,
+        76.7499,
+        78.2208542,
+        76.72705839999999,
+        75.7240709
+      ],
+      "after_us": [
+        67.84445,
+        67.2767334,
+        66.9398333,
+        67.33511250000001,
+        67.9210959,
+        68.2471583,
+        69.06705000000001,
+        68.3009708,
+        68.2924917,
+        68.4853791
+      ],
+      "before_median_us": 76.91591249999999,
+      "after_median_us": 68.08412709999999,
+      "elapsed_change_percent": -11.482390461141579
+    },
+    "sort": {
+      "before_us": [
+        68.44033329999999,
+        68.6712959,
+        68.5050417,
+        68.4798334,
+        68.4686334,
+        69.04279580000001,
+        68.46433329999999,
+        68.5204125,
+        68.5130209,
+        68.91572500000001
+      ],
+      "after_us": [
+        61.9975625,
+        61.333608399999996,
+        61.646800000000006,
+        61.3804583,
+        61.2821791,
+        62.480054100000004,
+        62.1049833,
+        61.8705584,
+        62.114229200000004,
+        61.8418125
+      ],
+      "before_median_us": 68.5090313,
+      "after_median_us": 61.85618545,
+      "elapsed_change_percent": -9.710903400264549
+    }
+  },
+  "validation": {
+    "profile": "WIP",
+    "unit_tests": {
+      "field_type": 29,
+      "expr_collation": 6
+    },
+    "go_fixture_topics": 11,
+    "matched": 2482,
+    "diverged": 109,
+    "skipped": 371,
+    "unchanged_prior_topics": [
+      "table/index",
+      "explain_easy",
+      "util/ranger",
+      "index_join",
+      "index_merge",
+      "executor/aggregate",
+      "session/clustered_index"
+    ],
+    "additional_topics": [
+      "executor/prepared",
+      "expression/charset_and_collation",
+      "common_collation",
+      "collation_pointget"
+    ],
+    "qualification": "The seven prior topics have byte-identical normalized reports including 67 divergence details. The four added topics have 42 divergences; no exact pre-change replay was saved for those topics, so they are not classified as new or unchanged.",
+    "commands": [
+      "cargo test --offline --locked --release -j12 -p tidb-datatype --lib field_type::",
+      "cargo test --offline --locked --release -j12 -p tidb-expr --lib expr_collation::",
+      "cargo test --offline --locked --release -j12 -p difftest-result-tests --test integration_diff --no-run",
+      "INTEGRATION_TOPIC=<topic> INTEGRATION_SHOW_DIVERGENCES=1 target/release/build/difftest-result-tests/fc2a7b145e4187e6/out/integration_diff-fc2a7b145e4187e6 --ignored --nocapture replay_one_topic_from_env --test-threads=12",
+      "git diff --check"
+    ]
+  },
+  "profiling": {
+    "command": "bash /Users/qiliu/.codex/skills/instruments/scripts/sample-quick.sh --launch -d 8 -o <output> -- <sealed-binary> 200000 range",
+    "before": "range-before.sample",
+    "after": "range-after.sample",
+    "interpretation": "FieldType drop-glue inclusive sample count in the executor specialization fell from 341 to 41. Equal-duration samples execute different numbers of operations; these are causal diagnostics, not per-operation time or throughput."
+  },
+  "not_verified": [
+    "Ready make lint",
+    "live TiKV",
+    "sysbench",
+    "TPC-C",
+    "multiclient Arc contention",
+    "fresh Go CPU profile"
+  ],
+  "reproduction": {
+    "build": "CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo build --offline --locked --release -j12 --manifest-path /private/tmp/tidb-prepared-owner.ixmsOs/probe/Cargo.toml",
+    "run": "<sealed-binary> 10000",
+    "initial_lockfile": "The new temporary standalone workspace generated its Cargo.lock with an offline release -j12 build; subsequent builds used --locked.",
+    "manifest": [
+      "[package]",
+      "name = \"prepared-owner-probe\"",
+      "version = \"0.0.0\"",
+      "edition = \"2021\"",
+      "[workspace]",
+      "[profile.release]",
+      "lto = \"thin\"",
+      "[dependencies]",
+      "tidb-session = { path = \"/Users/qiliu/projects/tidb/rust/crates/tidb-session\" }",
+      "tidb-datatype = { path = \"/Users/qiliu/projects/tidb/rust/crates/tidb-datatype\" }",
+      "[[bin]]",
+      "name = \"prepared-owner-probe\"",
+      "path = \"main.rs\""
+    ],
+    "source": [
+      "use tidb_session::Session;",
+      "use tidb_datatype::Datum;",
+      "fn main() {",
+      "    let mut session = Session::new();",
+      "    for sql in [\"create database probe\", \"use probe\",",
+      "        \"create table t (id bigint primary key, k bigint, v varchar(40), key ik(k))\",",
+      "        \"insert into t values (1,11,'one'),(2,12,'two'),(3,13,'three'),(4,14,'four')\"] {",
+      "        session.run(sql).unwrap();",
+      "    }",
+      "    let count = std::env::args().nth(1).map(|v| v.parse::<usize>().unwrap()).unwrap_or(3000);",
+      "    let filter = std::env::args().nth(2);",
+      "    for (name, sql, params) in [",
+      "        (\"point\", \"select v from t where id=?\", vec![Datum::Int(2)]),",
+      "        (\"range\", \"select v from t where id between ? and ?\", vec![Datum::Int(1),Datum::Int(3)]),",
+      "        (\"index\", \"select v from t where k between ? and ?\", vec![Datum::Int(11),Datum::Int(13)]),",
+      "        (\"aggregate\", \"select sum(k) from t where id between ? and ?\", vec![Datum::Int(1),Datum::Int(3)]),",
+      "        (\"sort\", \"select v from t where id between ? and ? order by k\", vec![Datum::Int(1),Datum::Int(3)]),",
+      "    ] {",
+      "        if filter.as_ref().is_some_and(|f| f != name) { continue }",
+      "        let prepared = session.prepare_ast(sql).unwrap();",
+      "        for _ in 0..100 {",
+      "            let bound = prepared.bind_for_execution(&session, &params).unwrap();",
+      "            std::hint::black_box(session.run_bound_prepared(bound).unwrap());",
+      "        }",
+      "        let bound = prepared.bind_for_execution(&session, &params).unwrap();",
+      "        println!(\"RESULT {name} {:?}\", session.run_bound_prepared(bound).unwrap());",
+      "        for round in 0..5 {",
+      "            let start = std::time::Instant::now();",
+      "            for _ in 0..count {",
+      "                let bound = prepared.bind_for_execution(&session, &params).unwrap();",
+      "                std::hint::black_box(session.run_bound_prepared(bound).unwrap());",
+      "            }",
+      "            println!(\"TIME {name} {round} {} {count}\", start.elapsed().as_nanos());",
+      "        }",
+      "    }",
+      "}"
+    ]
+  },
+  "results": [
+    "RESULT point Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })]] }\n",
+    "RESULT range Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n",
+    "RESULT index Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n",
+    "RESULT aggregate Rows { columns: [(\"sum(k)\", FieldType { code: NewDecimal, flags: 128, flen: 41, decimal: 0, collation: Binary, charset_name: \"binary\", collation_name: \"binary\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[Decimal(Decimal { negative: false, digits: DecimalDigits([51, 54]), scale: 0, storage_scale: 0, declared_shape: Some((41, 0)) })]] }\n",
+    "RESULT sort Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n"
+  ]
+}

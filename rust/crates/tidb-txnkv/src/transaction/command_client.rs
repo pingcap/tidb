@@ -63,81 +63,58 @@ pub fn detached_flush_failures() -> u64 {
     DETACHED_FLUSH_FAILURES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// One queued detached flush: the requests to publish and the shared
-/// transport-owner authority they must serialize against.
-struct DetachedFlushJob {
-    requests: Vec<OwnedTransactionCommitRequest>,
-    client_authority: std::sync::Arc<std::sync::Mutex<TonicCoprocessorClient>>,
+/// Retained executor for independent detached continuations. Network waiting
+/// suspends a task; it never occupies a worker or holds the client mutex.
+fn detached_flush_runtime() -> Option<&'static tokio::runtime::Runtime> {
+    static RUNTIME: std::sync::OnceLock<Result<tokio::runtime::Runtime, std::io::Error>> =
+        std::sync::OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .thread_name("txn-secondary-flush")
+            .enable_time()
+            .build()
+    }).as_ref().ok()
 }
 
-static DETACHED_FLUSH_QUEUE: std::sync::OnceLock<
-    std::sync::mpsc::Sender<DetachedFlushJob>,
-> = std::sync::OnceLock::new();
-
-fn detached_flush_sender() -> &'static std::sync::mpsc::Sender<DetachedFlushJob> {
-    DETACHED_FLUSH_QUEUE.get_or_init(|| {
-        let (sender, receiver) =
-            std::sync::mpsc::channel::<DetachedFlushJob>();
-        // Go hands the secondary-mutation flush to the transaction's own
-        // goroutine (client-go `2pc.go :: twoPhaseCommitter.execute` ->
-        // `commitMutations`), so no store resource is created or torn down
-        // per COMMIT. The rust equivalent of that cheap continuation is ONE
-        // persistent worker draining a queue -- not an OS thread spawned and
-        // joined per commit, whose arena bind/flush and scheduler entry
-        // showed up as `txn-secondary-flush` samples on every commit under
-        // load. Jobs run in submission order; today's per-commit threads
-        // raced arbitrarily, so FIFO is not a semantic change.
-        std::thread::Builder::new()
-            .name("txn-secondary-flush".to_owned())
-            .spawn(move || {
-                while let Ok(job) = receiver.recv() {
-                    run_detached_flush(job.requests, job.client_authority);
-                }
-            })
-            .expect("spawn the persistent detached-secondary flusher");
-        sender
-    })
-}
-
-fn run_detached_flush(
+async fn run_detached_flush(
     requests: Vec<OwnedTransactionCommitRequest>,
-    client_authority: std::sync::Arc<std::sync::Mutex<TonicCoprocessorClient>>,
+    mut client: TonicCoprocessorClient,
+    _client_authority: std::sync::Arc<std::sync::Mutex<TonicCoprocessorClient>>,
 ) {
-    // Holding the shared authority (not a clone) keeps the
-    // transport owner alive even when the transaction and its
-    // runtime are already dropped; the lock serializes this flush
-    // against any concurrent user of the same authority.
-    let mut client = match client_authority.lock() {
-        Ok(client) => client,
-        Err(poisoned) => poisoned.into_inner(),
-    };
+    // The captured owner outlives every pending response, just as Go's store
+    // wait group retains spawned work. The request clone has no shutdown power.
     let call = UnaryCallContext::with_timeout(DETACHED_SECONDARY_COMMIT_BUDGET);
-    let refs: Vec<TransactionCommitRequest> = requests
-        .iter()
-        .map(|request| TransactionCommitRequest {
-            address: &request.address,
-            request: request.request.clone(),
-            context: request.context.clone(),
-        })
-        .collect();
-    for published in client.publish_commits(&refs, &call) {
-        match published {
-            PublishedCommand::Response(response) => {
-                if response.response.region_error.is_some()
-                    || response.response.error.is_some()
-                {
-                    // The transaction is committed either way —
-                    // Go logs and moves on; an unmaterialized
-                    // secondary write record resolves through
-                    // the primary lock on read.
-                    DETACHED_FLUSH_FAILURES
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                }
+    let mut pending = Vec::with_capacity(requests.len());
+    for request in requests {
+        match client.begin_transaction_commit(
+            &request.address, None, &request.request, &request.context, &call,
+        ) {
+            Ok(request) => pending.push(request),
+            Err(_) => {
+                DETACHED_FLUSH_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
+        }
+    }
+    // Admit all region batches before awaiting any response. Other transaction
+    // tasks continue while these requests are in flight.
+    for mut request in pending {
+        let result = tokio::time::timeout_at(
+            tokio::time::Instant::from_std(call.deadline()),
+            std::future::poll_fn(|cx| request.poll_complete(cx)),
+        ).await;
+        let failed = match result {
+            Ok(Ok(Ok(response))) =>
+                response.response.region_error.is_some() || response.response.error.is_some(),
             _ => {
-                DETACHED_FLUSH_FAILURES
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                request.cancel();
+                true
             }
+        };
+        if failed {
+            // Primary success already decided the outcome. Secondary errors
+            // are diagnostic, not rollback or an undetermined primary.
+            DETACHED_FLUSH_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }
@@ -237,6 +214,16 @@ pub struct TransactionPessimisticLockRequest<'a> {
     pub address: &'a str,
     /// Region-scoped PessimisticLock request.
     pub request: KvrpcPessimisticLockRequest,
+    /// Region context stamped with the transaction's resolved locks.
+    pub context: KvrpcContext,
+}
+
+/// One region's pessimistic lock cleanup in a concurrently published round.
+pub struct TransactionPessimisticRollbackRequest<'a> {
+    /// Physical TiKV leader address selected by the region cache.
+    pub address: &'a str,
+    /// Region-scoped rollback request.
+    pub request: KvrpcPessimisticRollbackRequest,
     /// Region context stamped with the transaction's resolved locks.
     pub context: KvrpcContext,
 }
@@ -431,6 +418,26 @@ pub trait TransactionCommandClient {
         call: &UnaryCallContext,
     ) -> PublishedCommand<KvrpcPessimisticRollbackResponse>;
 
+    /// Publishes independent region cleanups before waiting for their replies.
+    /// Alternate clients retain the scalar capability's sequential behavior.
+    fn publish_pessimistic_rollbacks(
+        &mut self,
+        requests: &[TransactionPessimisticRollbackRequest<'_>],
+        call: &UnaryCallContext,
+    ) -> Vec<PublishedCommand<KvrpcPessimisticRollbackResponse>> {
+        requests
+            .iter()
+            .map(|request| {
+                self.publish_pessimistic_rollback(
+                    request.address,
+                    &request.request,
+                    &request.context,
+                    call,
+                )
+            })
+            .collect()
+    }
+
     /// Publishes one TxnHeartBeat extending the primary lock's TTL.
     fn publish_txn_heart_beat(
         &mut self,
@@ -475,51 +482,19 @@ impl TransactionCommandClient for TonicCoprocessorClient {
         requests: &[TransactionBatchGetRequest<'_>],
         call: &UnaryCallContext,
     ) -> Vec<PublishedCommand<KvrpcBatchGetResponse>> {
-        let mut results = std::iter::repeat_with(|| None)
-            .take(requests.len())
-            .collect::<Vec<Option<PublishedCommand<KvrpcBatchGetResponse>>>>();
-        let mut pending = Vec::with_capacity(requests.len());
-
-        // Admission is synchronous only up to the transport publication
-        // receipt. Keeping each pending completion alive lets the worker
-        // overlap requests routed to different regions (and addresses).
-        for (index, request) in requests.iter().enumerate() {
-            match self.begin_transaction_batch_get(
-                request.address,
-                None,
-                &request.request,
-                &request.context,
-                call,
-            ) {
-                Ok(pending_request) => pending.push((index, pending_request)),
-                Err(error) => {
-                    results[index] = Some(PublishedCommand::BeforePublication(error.to_string()));
-                }
-            }
-        }
-
-        for (index, mut pending_request) in pending {
-            let publication = pending_request
-                .publication()
-                .expect("Stage A binds a nonzero publication before pending escapes")
-                .clone();
-            results[index] = Some(match pending_request.complete(call) {
-                Ok(Ok(response)) => PublishedCommand::Response(response),
-                Ok(Err(error)) => PublishedCommand::AfterPublication {
-                    publication,
-                    error: error.to_string(),
-                },
-                Err(error) => PublishedCommand::AfterPublication {
-                    publication,
-                    error: error.to_string(),
-                },
-            });
-        }
-
-        results
-            .into_iter()
-            .map(|result| result.expect("every admitted BatchGet has a completion result"))
-            .collect()
+        complete_published_batch(
+            requests.iter().map(|request| {
+                self.begin_transaction_batch_get(
+                    request.address,
+                    None,
+                    &request.request,
+                    &request.context,
+                    call,
+                )
+                .map_err(|error| error.to_string())
+            }),
+            call,
+        )
     }
 
     fn publish_transaction_scan(
@@ -555,52 +530,19 @@ impl TransactionCommandClient for TonicCoprocessorClient {
         requests: &[TransactionPrewriteRequest<'_>],
         call: &UnaryCallContext,
     ) -> Vec<PublishedCommand<KvrpcPrewriteResponse>> {
-        let mut results = std::iter::repeat_with(|| None)
-            .take(requests.len())
-            .collect::<Vec<Option<PublishedCommand<KvrpcPrewriteResponse>>>>();
-        let mut pending = Vec::with_capacity(requests.len());
-
-        // Admission is synchronous only up to the transport publication
-        // receipt. Keeping each pending completion alive lets the worker
-        // overlap the region batches, which is what makes a multi-region
-        // commit cost one round trip instead of one per region.
-        for (index, request) in requests.iter().enumerate() {
-            match self.begin_transaction_prewrite(
-                request.address,
-                None,
-                &request.request,
-                &request.context,
-                call,
-            ) {
-                Ok(pending_request) => pending.push((index, pending_request)),
-                Err(error) => {
-                    results[index] = Some(PublishedCommand::BeforePublication(error.to_string()));
-                }
-            }
-        }
-
-        for (index, mut pending_request) in pending {
-            let publication = pending_request
-                .publication()
-                .expect("Stage A binds a nonzero publication before pending escapes")
-                .clone();
-            results[index] = Some(match pending_request.complete(call) {
-                Ok(Ok(response)) => PublishedCommand::Response(response),
-                Ok(Err(error)) => PublishedCommand::AfterPublication {
-                    publication,
-                    error: error.to_string(),
-                },
-                Err(error) => PublishedCommand::AfterPublication {
-                    publication,
-                    error: error.to_string(),
-                },
-            });
-        }
-
-        results
-            .into_iter()
-            .map(|result| result.expect("every admitted Prewrite has a completion result"))
-            .collect()
+        complete_published_batch(
+            requests.iter().map(|request| {
+                self.begin_transaction_prewrite(
+                    request.address,
+                    None,
+                    &request.request,
+                    &request.context,
+                    call,
+                )
+                .map_err(|error| error.to_string())
+            }),
+            call,
+        )
     }
 
     fn publish_commit(
@@ -622,53 +564,19 @@ impl TransactionCommandClient for TonicCoprocessorClient {
         requests: &[TransactionCommitRequest<'_>],
         call: &UnaryCallContext,
     ) -> Vec<PublishedCommand<KvrpcCommitResponse>> {
-        let mut results = std::iter::repeat_with(|| None)
-            .take(requests.len())
-            .collect::<Vec<Option<PublishedCommand<KvrpcCommitResponse>>>>();
-        let mut pending = Vec::with_capacity(requests.len());
-
-        // Admission is synchronous only up to the transport publication
-        // receipt. Keeping each pending completion alive lets the worker
-        // overlap the region batches, which is what makes a multi-region
-        // secondary-commit phase cost one round trip instead of one per
-        // region — Go `commitRegions`.
-        for (index, request) in requests.iter().enumerate() {
-            match self.begin_transaction_commit(
-                request.address,
-                None,
-                &request.request,
-                &request.context,
-                call,
-            ) {
-                Ok(pending_request) => pending.push((index, pending_request)),
-                Err(error) => {
-                    results[index] = Some(PublishedCommand::BeforePublication(error.to_string()));
-                }
-            }
-        }
-
-        for (index, mut pending_request) in pending {
-            let publication = pending_request
-                .publication()
-                .expect("Stage A binds a nonzero publication before pending escapes")
-                .clone();
-            results[index] = Some(match pending_request.complete(call) {
-                Ok(Ok(response)) => PublishedCommand::Response(response),
-                Ok(Err(error)) => PublishedCommand::AfterPublication {
-                    publication,
-                    error: error.to_string(),
-                },
-                Err(error) => PublishedCommand::AfterPublication {
-                    publication,
-                    error: error.to_string(),
-                },
-            });
-        }
-
-        results
-            .into_iter()
-            .map(|result| result.expect("every admitted Commit has a completion result"))
-            .collect()
+        complete_published_batch(
+            requests.iter().map(|request| {
+                self.begin_transaction_commit(
+                    request.address,
+                    None,
+                    &request.request,
+                    &request.context,
+                    call,
+                )
+                .map_err(|error| error.to_string())
+            }),
+            call,
+        )
     }
 
     fn publish_commits_detached(
@@ -682,15 +590,11 @@ impl TransactionCommandClient for TonicCoprocessorClient {
         if requests.is_empty() {
             return true;
         }
-        // Enqueue onto the persistent flusher instead of spawning an OS
-        // thread per COMMIT. A send failure means the worker is gone (it is
-        // never taken down once started); report the job as not accepted,
-        // exactly as a spawn failure did.
-        detached_flush_sender().send(DetachedFlushJob {
-            requests,
-            client_authority,
-        })
-        .is_ok()
+        let Some(runtime) = detached_flush_runtime() else {
+            return false;
+        };
+        runtime.spawn(run_detached_flush(requests, self.clone(), client_authority));
+        true
     }
 
     fn publish_pessimistic_locks(
@@ -698,52 +602,19 @@ impl TransactionCommandClient for TonicCoprocessorClient {
         requests: &[TransactionPessimisticLockRequest<'_>],
         call: &UnaryCallContext,
     ) -> Vec<PublishedCommand<KvrpcPessimisticLockResponse>> {
-        let mut results = std::iter::repeat_with(|| None)
-            .take(requests.len())
-            .collect::<Vec<Option<PublishedCommand<KvrpcPessimisticLockResponse>>>>();
-        let mut pending = Vec::with_capacity(requests.len());
-
-        // Admission is synchronous only up to the transport publication
-        // receipt. Keeping each pending completion alive lets the worker
-        // overlap the region batches, so a multi-region locking statement
-        // costs one round trip instead of one per region — Go `lockKeys`.
-        for (index, request) in requests.iter().enumerate() {
-            match self.begin_transaction_pessimistic_lock(
-                request.address,
-                None,
-                &request.request,
-                &request.context,
-                call,
-            ) {
-                Ok(pending_request) => pending.push((index, pending_request)),
-                Err(error) => {
-                    results[index] = Some(PublishedCommand::BeforePublication(error.to_string()));
-                }
-            }
-        }
-
-        for (index, mut pending_request) in pending {
-            let publication = pending_request
-                .publication()
-                .expect("Stage A binds a nonzero publication before pending escapes")
-                .clone();
-            results[index] = Some(match pending_request.complete(call) {
-                Ok(Ok(response)) => PublishedCommand::Response(response),
-                Ok(Err(error)) => PublishedCommand::AfterPublication {
-                    publication,
-                    error: error.to_string(),
-                },
-                Err(error) => PublishedCommand::AfterPublication {
-                    publication,
-                    error: error.to_string(),
-                },
-            });
-        }
-
-        results
-            .into_iter()
-            .map(|result| result.expect("every admitted PessimisticLock has a completion result"))
-            .collect()
+        complete_published_batch(
+            requests.iter().map(|request| {
+                self.begin_transaction_pessimistic_lock(
+                    request.address,
+                    None,
+                    &request.request,
+                    &request.context,
+                    call,
+                )
+                .map_err(|error| error.to_string())
+            }),
+            call,
+        )
     }
 
     fn publish_batch_rollback(
@@ -801,6 +672,42 @@ impl TransactionCommandClient for TonicCoprocessorClient {
             call,
         )
     }
+
+    fn publish_pessimistic_rollbacks(
+        &mut self,
+        requests: &[TransactionPessimisticRollbackRequest<'_>],
+        call: &UnaryCallContext,
+    ) -> Vec<PublishedCommand<KvrpcPessimisticRollbackResponse>> {
+        complete_published_batch(
+            requests.iter().map(|request| {
+                self.begin_transaction_pessimistic_rollback(
+                    request.address,
+                    None,
+                    &request.request,
+                    &request.context,
+                    call,
+                )
+                .map_err(|error| error.to_string())
+            }),
+            call,
+        )
+    }
+}
+
+fn complete_published_batch<R>(
+    pending: impl Iterator<Item = Result<TransactionBatchPending<R>, String>>,
+    call: &UnaryCallContext,
+) -> Vec<PublishedCommand<R>>
+where
+    R: Message + Default,
+{
+    // Go doActionOnBatches overlaps region requests. Consume every admission
+    // before waiting on any response, retaining caller order and sibling errors.
+    let pending = pending.collect::<Vec<_>>();
+    pending
+        .into_iter()
+        .map(|request| complete_published(request, call))
+        .collect()
 }
 
 fn complete_published<R>(
@@ -814,86 +721,62 @@ where
         Ok(pending) => pending,
         Err(error) => return PublishedCommand::BeforePublication(error),
     };
-    // The publication is read AFTER the response, never before it. Reading it
-    // here used to resolve the deferred receipt and park the caller, which put
-    // the submit round trip straight back on the critical path -- the wait the
-    // deferral exists to remove.
+    // Go sendBatchRequest waits directly on the response. Only a failure needs
+    // the ordered publication observation to distinguish an unpublished entry
+    // from an attempt that may already have been applied by TiKV.
     let completed = pending.complete(call);
     let error = match completed {
         Ok(Ok(response)) => return PublishedCommand::Response(response),
         Ok(Err(error)) => error.to_string(),
         Err(error) => error.to_string(),
     };
-    let publication = pending
-        .publication()
-        .expect("Stage A binds a nonzero publication before pending escapes")
-        .clone();
-    PublishedCommand::AfterPublication { publication, error }
+    match pending.publication().cloned() {
+        Some(publication) => PublishedCommand::AfterPublication { publication, error },
+        None => PublishedCommand::BeforePublication(error),
+    }
 }
 
 #[cfg(test)]
-mod detached_flusher_tests {
+mod tests {
     use super::*;
 
-    fn flush_threads() -> usize {
-        std::fs::read_dir("/proc/self/task")
-            .map(|entries| {
-                entries
-                    .filter_map(std::result::Result::ok)
-                    .filter(|entry| {
-                        // /proc comm truncates to 15 chars.
-                        std::fs::read_to_string(format!("{}/comm", entry.path().display()))
-                            .map(|comm| comm.trim().starts_with("txn-secondary"))
-                            .unwrap_or(false)
-                    })
-                    .count()
-            })
-            .unwrap_or(0)
-    }
-
-    fn one_request() -> OwnedTransactionCommitRequest {
-        OwnedTransactionCommitRequest {
-            address: "127.0.0.1:9".to_owned(),
-            request: KvrpcCommitRequest::default(),
-            context: KvrpcContext::default(),
-        }
-    }
-
-    /// Go hands the secondary flush to the transaction's goroutine, so the
-    /// rust port must not create a store resource per COMMIT either: N
-    /// detached publishes enqueue onto exactly ONE persistent worker.
     #[test]
-    fn repeated_detached_flushes_reuse_one_worker_thread() {
-        let before = flush_threads();
-        let client = TonicCoprocessorClient::new().expect("client constructs without a socket");
-        let authority = std::sync::Arc::new(std::sync::Mutex::new(client));
-        let mut client = authority.lock().expect("fresh authority is unlocked");
-        let first = client.publish_commits_detached(
-            vec![one_request()],
-            std::sync::Arc::clone(&authority),
-        );
-        let second = client.publish_commits_detached(
-            vec![one_request()],
-            std::sync::Arc::clone(&authority),
-        );
-        drop(client);
-        assert!(first, "first detached publish must be accepted");
-        assert!(second, "second detached publish must be accepted");
-        // Both jobs reach the worker (each fails against the dead address and
-        // lands in the failure counter) -- the queue really drained.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while DETACHED_FLUSH_FAILURES.load(std::sync::atomic::Ordering::Relaxed) < 2 {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "both queued flushes should have been attempted"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(10));
+    fn transaction_admission_errors_remain_before_publication() {
+        // Go sendBatchRequest returns connection/admission errors to its caller;
+        // queuing an entry does not imply that any request reached TiKV.
+        let mut client = TonicCoprocessorClient::new().unwrap();
+        let address = "http://[invalid";
+        macro_rules! check_batch {
+            ($method:ident, $request:ident) => {
+                let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
+                let results = client.$method(
+                    &[$request {
+                        address,
+                        request: Default::default(),
+                        context: Default::default(),
+                    }],
+                    &call,
+                );
+                assert_eq!(results.len(), 1);
+                assert!(matches!(&results[0], PublishedCommand::BeforePublication(error) if !error.is_empty()));
+            };
         }
-        let after = flush_threads();
-        assert_eq!(
-            after,
-            before + 1,
-            "exactly one persistent flusher thread, not one per commit"
+        check_batch!(publish_transaction_batch_gets, TransactionBatchGetRequest);
+        check_batch!(publish_prewrites, TransactionPrewriteRequest);
+        check_batch!(publish_commits, TransactionCommitRequest);
+        check_batch!(publish_pessimistic_locks, TransactionPessimisticLockRequest);
+        check_batch!(
+            publish_pessimistic_rollbacks,
+            TransactionPessimisticRollbackRequest
         );
+        assert!(matches!(
+            client.publish_commit(
+                address,
+                &Default::default(),
+                &Default::default(),
+                &UnaryCallContext::with_timeout(Duration::from_secs(2)),
+            ),
+            PublishedCommand::BeforePublication(error) if !error.is_empty()
+        ));
     }
 }

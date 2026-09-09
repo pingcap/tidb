@@ -1,0 +1,877 @@
+{
+  "status": "WIP observations only; no accepted performance win. statistics_column_binding_followup records the latest live comparison.",
+  "statistics_column_binding_followup": {
+    "status": "WIP: source-aligned local statistics binding reuse; throughput differences are below acceptance",
+    "source": "pkg/planner/core/stats.go initStats ID2UniqueID; pkg/planner/cardinality/selectivity.go recursive Selectivity shares HistColl",
+    "scope": "Share physical-offset/UniqueID mapping inside one statistics derivation, including DNF, pseudo and string-match paths. No cross-execution or cross-pruning cache.",
+    "manifest": "/private/tmp/tidb-batching-candidate-f58diddf/manifest.json",
+    "control_sha256": "da424a99c6a45b833240b4341f8f36dab5ad27d80ece02dbfca393d35796430d",
+    "candidate_sha256": "1b0e8dab921ce539de99cfface15b1262d85d516205ff4c64d224c29ac3c0b98",
+    "validation": {
+      "profile": "WIP",
+      "replay_matches": 1095,
+      "replay_divergences": 4,
+      "replay_skips": 23,
+      "replay_comparison": "All six reports and divergence details identical to prior replay after excluding elapsed times; PlanProperty is not full plan equality",
+      "prepared_result_sets_matching_go": 30,
+      "artifacts": "/private/tmp/tidb-statistics-columns.dDczpg"
+    },
+    "fixed_work": {
+      "method": "Three rotating trials per server, one client, seed 1, exactly 3000 read-only transactions per trial; CPU includes two-second metric publication delay; no concurrent build/profile",
+      "raw_results": "/private/tmp/tidb-statistics-columns.dDczpg/fixed-work/results.json",
+      "median_tps": {
+        "before": 410.79,
+        "after": 412.98,
+        "go": 395.06
+      },
+      "median_sql_cpu_seconds": {
+        "before": 4.14,
+        "after": 4.12,
+        "go": 7.7
+      },
+      "sql_cpu_change_percent": -0.48309178743960457,
+      "tps_change_percent": 0.533119111955016
+    },
+    "eight_clients": {
+      "method": "Three rotating 15-second read-only trials per server, prepared mode auto, seed 1, four gRPC connections, no concurrent build/profile",
+      "raw_results": "/private/tmp/tidb-statistics-columns.dDczpg/sysbench-8/results.json",
+      "summary": [
+        {
+          "server": "before",
+          "workload": "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+          "median_tps": 1851.2643463655875,
+          "min_tps": 1827.5492045295493,
+          "max_tps": 1854.8263474650264,
+          "samples": 3
+        },
+        {
+          "server": "after",
+          "workload": "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+          "median_tps": 1854.7844227167604,
+          "min_tps": 1845.095673849148,
+          "max_tps": 1860.4542667484204,
+          "samples": 3
+        },
+        {
+          "server": "go",
+          "workload": "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+          "median_tps": 1810.7958597431334,
+          "min_tps": 1800.441212735186,
+          "max_tps": 1819.0422234811876,
+          "samples": 3
+        }
+      ],
+      "tps_change_percent": 0.19014444685241383
+    },
+    "commands": [
+      "cargo test --offline --locked --release -j12 -p difftest-result-tests --test integration_diff --no-run",
+      "cargo test --offline --locked --release -j12 -p tidb-executor --lib --no-run",
+      "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "python3 /private/tmp/tidb-prepared-path-results.py --control-port 53073 --candidate-port 53074 --output /private/tmp/tidb-statistics-columns.dDczpg/live-parity.json",
+      "caffeinate -i python3 /private/tmp/tidb-statistics-columns.dDczpg/fixed-work.py",
+      "caffeinate -i python3 scripts/compare-sysbench.py --server before:53073 --server after:53074 --server go:45000 --database perf_sysbench_locking_v2 --workload /opt/homebrew/share/sysbench/oltp_read_only.lua --threads 8 --seconds 15 --rounds 3 --table-size 100000 --tables 1 --ps-mode auto --output /private/tmp/tidb-statistics-columns.dDczpg/sysbench-8"
+    ],
+    "limitations": [
+      "Sub-percent differences are not an accepted performance win; no accepted baseline change.",
+      "General prepared physical-plan reuse and whole-Go-package parity remain incomplete.",
+      "No mixed-write TPC-C, full behavioral suite, root lint or push; existing replay discrepancies remain.",
+      "Shared TiKV metric counters include background traffic and asynchronous publication; not used for per-statement request attribution."
+    ]
+  },
+  "owned_cnf_followup": {
+    "status": "WIP: awake candidate median is 2.41 percent below control at 8 clients; no accepted win",
+    "scope": "Accumulated shared DataSource StatsInfo and owned CNF changes since the compiled-owner control; not an isolated CNF benchmark or whole-package completion claim",
+    "manifest": "/private/tmp/tidb-batching-candidate-kkk_ng4s/manifest.json",
+    "control_sha256": "648e6057abec05d4d0a2c722276014398fd3d1838b4f76402b9c419ae3a46552",
+    "candidate_sha256": "da424a99c6a45b833240b4341f8f36dab5ad27d80ece02dbfca393d35796430d",
+    "go_sha256": "e734c80768b5cd44852b01b573bd36f30d19bb47510e0883e6017f18563cbde2",
+    "method": "Retained fixture, read-only sysbench, 8 clients, three rotating 15-second trials per server, four gRPC connections. No concurrent build or profiling during timing. No fixture reset. Repeated the whole set after confirmed laptop sleep invalidated the first set. Idle sleep inhibited only for the rerun command; no system power settings changed.",
+    "raw_results": "/private/tmp/tidb-owned-cnf-sysbench-8-awake/results.json",
+    "rejected_results": "/private/tmp/tidb-owned-cnf-sysbench-8/results.json",
+    "rejection_reason": "macOS sleep/wake log corroborates interrupted trials: nominal 15-second Go samples lasted 246.8977 and 743.1123 seconds. Reject the entire first timing set, not just unfavorable samples.",
+    "sleep_evidence": "/private/tmp/tidb-owned-cnf-sleep-evidence.log",
+    "median_tps": {"before": 1813.9466686216617, "after": 1770.2140705393085, "go": 1754.8430950492805},
+    "fixed_work": {
+      "status": "WIP diagnostic; lower candidate SQL CPU but no accepted throughput gain",
+      "command": "caffeinate -i python3 /private/tmp/tidb-owned-cnf-fixed-work.py",
+      "results": "/private/tmp/tidb-owned-cnf-fixed-work/results.json",
+      "method": "One sysbench client, seed 1, exactly 3000 read-only transactions per trial; three rotating rounds across control/candidate/Go. Each trial completed 42000 reads and 6000 transaction-control statements, with zero writes, errors or reconnects. SQL CPU snapshots include the two-second post-run metric publication interval. No build or profiler ran concurrently.",
+      "median_tps": {"before": 406.01, "after": 403.70, "go": 395.61},
+      "median_sql_cpu_seconds": {"before": 4.27, "after": 4.18, "go": 7.58},
+      "candidate_vs_control": {"sql_cpu_percent": -2.107728337236534, "tps_percent": -0.5689515036575519},
+      "session_settings": {"tidb_distsql_scan_concurrency": 15, "tidb_enable_paging": "ON", "tidb_init_chunk_size": 32, "tidb_max_chunk_size": 1024, "tidb_min_paging_size": 128, "tidb_max_paging_size": 50000},
+      "session_settings_equal_across_servers": true,
+      "median_aggregate_batch_commands": {"before": 66306, "after": 66336, "go": 66214},
+      "limitations": [
+        "Aggregate TiKV metrics include unrelated background traffic and asynchronous publication; two-second snapshots do not establish exact per-statement RPC or scanned-key counts",
+        "TiKV process CPU was not present under the metric name selected by this harness; only SQL process CPU is measured here",
+        "Single-client evidence does not resolve the earlier eight-client regression",
+        "Bounded EXPLAIN ANALYZE comparison did not execute: automatic approval review rejected after its remote connection failed"
+      ],
+      "source_checks": [
+        "Installed oltp_common.lua draws IDs from sysbench.rand using one client and fixed seed; default range_size is 100 and the transaction has ten point reads plus four range reads",
+        "Rust cop_scan explicitly builds Chunk encoding; RequestContext.enable_chunk_rpc=false is not evidence that this path uses row encoding",
+        "Rust cop_scan creates a stock DistSqlContext rather than forwarding all session settings, but the inspected benchmark settings match those stock defaults; this mismatch has not been established as the regression cause"
+      ]
+    },
+    "profiles": {
+      "method": "Separate 45-second read-only workloads, eight clients, 15-second Time Profiler captures for candidate, Go and control. Go also has a pprof capture. Profiled TPS is not throughput acceptance. Inclusive category weights overlap and cannot be added; sampling is not proof of the cause of the 2.41 percent timing regression.",
+      "weighted_stack_comparison": "/private/tmp/tidb-owned-cnf-profile-comparison.json",
+      "candidate_stats_callchains": "/private/tmp/tidb-owned-cnf-stats-callchains.txt",
+      "before": {"samples": 63012, "weight_seconds": 63.012, "rewrite_seconds": 0.951, "expression_clone_seconds": 0.236, "access_commit_seconds": 1.941},
+      "after": {"samples": 60437, "weight_seconds": 60.437, "rewrite_seconds": 0.366, "expression_clone_seconds": 0.122, "access_commit_seconds": 2.118, "datasource_statistics_seconds": 1.117},
+      "go": {"samples": 62645, "weight_seconds": 62.645, "cached_range_rebuild_seconds": 0.302, "uncached_optimization_seconds": 0.170},
+      "interpretation": "The intended rewrite/clone sampled costs fell, but access commitment did not. Candidate stacks explicitly show execute_general -> run_bound_prepared_internal -> run_select_traced_with_delivery_choice_inner -> commit_fast_path_source -> data_source_statistics -> selectivity/histogram lookup and expression rewriting. Go retains a physical plan and rebuilds ranges. This identifies remaining repeated work, not the full throughput-regression cause. In diagnostic intervals candidate SQL CPU per transaction fell while TiKV CPU per transaction rose; fixed-work storage/transport comparison remains needed.",
+      "workload_plans": "/private/tmp/tidb-owned-cnf-workload-plans.json",
+      "control_candidate_five_text_plans_equal": true,
+      "plan_limitation": "Identical five representative text EXPLAIN plans do not prove identical execution-time prepared requests or storage work."
+    },
+    "correctness": {
+      "ordered_prepared_result_sets_matching_go": 30,
+      "text_result_sets_matching_go": 10,
+      "point_cache_status": "Go and candidate: miss/hit/hit with changed parameters",
+      "fixture_count": 100013,
+      "fixture_sum_k": 5011271921,
+      "prepared_results": "/private/tmp/tidb-owned-cnf-live-parity.json",
+      "text_results": "/private/tmp/tidb-owned-cnf-live-text-parity.json",
+      "cache_results": "/private/tmp/tidb-owned-cnf-cache-parity.json"
+    },
+    "commands": [
+      "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "python3 /private/tmp/tidb-owner-comparison-cluster.py",
+      "python3 /private/tmp/tidb-owner-candidate.py --port 53073 --connections 4 --binary /Users/qiliu/projects/tidb/rust/target/release/tidb-server --baseline-manifest /private/tmp/tidb-owner-cluster-bigsn6f8/manifest.json",
+      "python3 /private/tmp/tidb-prepared-path-results.py --control-port 53072 --candidate-port 53073 --output /private/tmp/tidb-owned-cnf-live-parity.json",
+      "python3 /private/tmp/tidb-prepared-owner-parity.py --candidate-port 53073 --output /private/tmp/tidb-owned-cnf-cache-parity.json",
+      "python3 /private/tmp/tidb-shared-admission-results.py --control-port 53072 --candidate-port 53073 --output /private/tmp/tidb-owned-cnf-live-text-parity.json",
+      "caffeinate -i python3 rust/scripts/compare-sysbench.py --server before:53072 --server after:53073 --server go:45000 --database perf_sysbench_locking_v2 --workload /opt/homebrew/share/sysbench/oltp_read_only.lua --threads 8 --seconds 15 --rounds 3 --table-size 100000 --tables 1 --ps-mode auto --output /private/tmp/tidb-owned-cnf-sysbench-8-awake",
+      "caffeinate -i python3 /private/tmp/tidb-readonly-paired-profile.py --pid 16556 --port 53073 --stem /private/tmp/tidb-owned-cnf-profile-after",
+      "caffeinate -i python3 /private/tmp/tidb-readonly-paired-profile.py --pid 15989 --port 45000 --pprof-port 51080 --stem /private/tmp/tidb-owned-cnf-profile-go",
+      "caffeinate -i python3 /private/tmp/tidb-readonly-paired-profile.py --pid 16027 --port 53072 --stem /private/tmp/tidb-owned-cnf-profile-before"
+    ],
+    "limitations": ["Three short trials on a shared laptop, not performance acceptance", "No fresh 1- or 32-client timing set", "No mixed-write TPC-C run", "Selected result checks do not prove full Go parity", "No root lint or Ready claim"]
+  },
+  "compiled_owner_followup": {
+    "status": "WIP measurement and source comparison; no accepted performance win",
+    "scope": "Native compiled statistics, joined-leaf predicate reuse, and ordinary SELECT trace ownership accumulated after the DataSource-estimate control",
+    "control": {
+      "port": 53072,
+      "pid": 61847,
+      "sha256": "2b1b9d6000c501852ccb16cb617b48d8e4cc058ad9ad50715c80d4a910713a25"
+    },
+    "candidate": {
+      "port": 53073,
+      "pid": 31455,
+      "sha256": "648e6057abec05d4d0a2c722276014398fd3d1838b4f76402b9c419ae3a46552"
+    },
+    "go": {
+      "port": 45000,
+      "pid": 38104,
+      "sha256": "e734c80768b5cd44852b01b573bd36f30d19bb47510e0883e6017f18563cbde2"
+    },
+    "manifest": "/private/tmp/tidb-batching-candidate-iemcrfe3/manifest.json",
+    "method": "SELECT-only oltp_read_only, 4 gRPC connections, 5-second warmup per server, three rotating before/after/Go 10-second trials at 1/8/32 clients. No concurrent build, profiling or trace export during unprofiled measurement. No fixture reset.",
+    "commands": [
+      "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "python3 /private/tmp/tidb-prepared-path-results.py --control-port 53072 --candidate-port 53073 --output /private/tmp/tidb-compiled-owners-prepared-results.json",
+      "python3 /private/tmp/tidb-shared-admission-results.py --control-port 53072 --candidate-port 53073 --output /private/tmp/tidb-compiled-owners-text-results.json",
+      "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-iemcrfe3/manifest.json --output /private/tmp/tidb-compiled-owners-readonly-triples --case read_only --triple-threads 1 8 32 --pair-seconds 10",
+      "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-iemcrfe3/manifest.json --output /private/tmp/tidb-compiled-owners-readonly-profile --case read_only --profile 'Time Profiler' --profile-target sql --profile-threads 32 --profile-servers before after go",
+      "python3 /private/tmp/tidb-shared-admission-results.py --control-port 53072 --candidate-port 53073 --output /private/tmp/tidb-compiled-owners-postprofile-results.json"
+    ],
+    "raw_results": "/private/tmp/tidb-compiled-owners-readonly-triples/results.json",
+    "measurements": [
+      {
+        "threads": 1,
+        "before": {
+          "tps": [
+            428.85,
+            424.37,
+            428.97
+          ],
+          "median_tps": 428.85,
+          "median_sql_cpu_us_per_txn": 1211.8387322302467,
+          "median_tikv_cpu_us_per_txn": 1032.3933814962224,
+          "req_batches": [
+            1.0000327798993658,
+            1.0265832422948322,
+            1.0269490525211462
+          ]
+        },
+        "after": {
+          "tps": [
+            421.03,
+            420.31,
+            420.67
+          ],
+          "median_tps": 420.67,
+          "median_sql_cpu_us_per_txn": 1253.5680304471932,
+          "median_tikv_cpu_us_per_txn": 1046.6222645094713,
+          "req_batches": [
+            1.02687902768039,
+            1.0271327549024525,
+            1.0268379037375999
+          ]
+        },
+        "go": {
+          "tps": [
+            433.77,
+            435.04,
+            435.46
+          ],
+          "median_tps": 435.04,
+          "median_sql_cpu_us_per_txn": 1900.7124798895718,
+          "median_tikv_cpu_us_per_txn": 1080.89421525667,
+          "req_batches": [
+            1.0019820191225204,
+            1.0018321382316706,
+            1.002560617077103
+          ]
+        },
+        "candidate_vs_control_percent": -1.9074268392211713
+      },
+      {
+        "threads": 8,
+        "before": {
+          "tps": [
+            1979.14,
+            1867.11,
+            1884.11
+          ],
+          "median_tps": 1884.11,
+          "median_sql_cpu_us_per_txn": 2096.4203542190567,
+          "median_tikv_cpu_us_per_txn": 2386.610789878606,
+          "req_batches": [
+            1.2092323025012774,
+            1.4739372534866335,
+            1.4703798113688504
+          ]
+        },
+        "after": {
+          "tps": [
+            1865.05,
+            1807.91,
+            1817.56
+          ],
+          "median_tps": 1817.56,
+          "median_sql_cpu_us_per_txn": 2110.152256362338,
+          "median_tikv_cpu_us_per_txn": 2491.6176551421836,
+          "req_batches": [
+            1.2592174517381354,
+            1.4672871999540347,
+            1.4639601158323148
+          ]
+        },
+        "go": {
+          "tps": [
+            1936,
+            1898.62,
+            1907.47
+          ],
+          "median_tps": 1907.47,
+          "median_sql_cpu_us_per_txn": 2184.96201205134,
+          "median_tikv_cpu_us_per_txn": 2241.642537509963,
+          "req_batches": [
+            1.421763690005037,
+            1.8495462852771167,
+            1.8710024230170574
+          ]
+        },
+        "candidate_vs_control_percent": -3.532171688489527
+      },
+      {
+        "threads": 32,
+        "before": {
+          "tps": [
+            2854.81,
+            2585.09,
+            2482.7
+          ],
+          "median_tps": 2585.09,
+          "median_sql_cpu_us_per_txn": 2445.610540830398,
+          "median_tikv_cpu_us_per_txn": 2282.442163321593,
+          "req_batches": [
+            2.5059666097965505,
+            2.5271842686322996,
+            2.4104458274638763
+          ]
+        },
+        "after": {
+          "tps": [
+            2719.18,
+            2642.89,
+            2388.68
+          ],
+          "median_tps": 2642.89,
+          "median_sql_cpu_us_per_txn": 2385.514106465308,
+          "median_tikv_cpu_us_per_txn": 2189.7892482813354,
+          "req_batches": [
+            2.4510842503002315,
+            2.4913577200102375,
+            2.4713963163401704
+          ]
+        },
+        "go": {
+          "tps": [
+            2575.88,
+            2723.55,
+            2599.76
+          ],
+          "median_tps": 2599.76,
+          "median_sql_cpu_us_per_txn": 2298.553519768569,
+          "median_tikv_cpu_us_per_txn": 2277.8582869346183,
+          "req_batches": [
+            5.10081145860406,
+            5.675674854701201,
+            5.309976223499109
+          ]
+        },
+        "candidate_vs_control_percent": 2.235898943557091
+      }
+    ],
+    "live_parity": {
+      "prepared_result_sets": 30,
+      "ordinary_result_sets": 10,
+      "postprofile_ordinary_result_sets": 10,
+      "fixture_row_count": 100013,
+      "fixture_sum_k": 5011271921
+    },
+    "profiles": {
+      "raw_results": "/private/tmp/tidb-compiled-owners-readonly-profile/results.json",
+      "weighted_stacks": "/private/tmp/tidb-compiled-owners-readonly-profile/{before,after,go}.stacks.json",
+      "summary": {
+        "before": {
+          "sample_count": 78341,
+          "sampled_weight_seconds": 78.341,
+          "sampled_duration_seconds": 12.704001125,
+          "states": {
+            "Running": 78341
+          },
+          "categories": {
+            "select_driver_including_execution": {
+              "weight_seconds": 15.789,
+              "percent": 20.15419767427018
+            },
+            "selectivity": {
+              "weight_seconds": 0.719,
+              "percent": 0.9177825149027967
+            },
+            "selectivity_expression_clone": {
+              "weight_seconds": 0,
+              "percent": 0
+            },
+            "selectivity_rewrite": {
+              "weight_seconds": 0,
+              "percent": 0
+            },
+            "expression_clone": {
+              "weight_seconds": 0.036,
+              "percent": 0.04595294928581458
+            },
+            "rewrite": {
+              "weight_seconds": 0.2,
+              "percent": 0.2552941626989699
+            }
+          },
+          "selectivity_callers_seconds": {
+            "tidb_executor::driver::access::stats_selectivity_with_default_string_match_selectivity": 0.387,
+            "tidb_executor::driver::join_reorder::emit": 0.332
+          }
+        },
+        "after": {
+          "sample_count": 75993,
+          "sampled_weight_seconds": 75.993,
+          "sampled_duration_seconds": 12.416687792,
+          "states": {
+            "Running": 75993
+          },
+          "categories": {
+            "select_driver_including_execution": {
+              "weight_seconds": 16.935,
+              "percent": 22.28494729777743
+            },
+            "selectivity": {
+              "weight_seconds": 2.673,
+              "percent": 3.517429236903399
+            },
+            "native_selectivity": {
+              "weight_seconds": 1.233,
+              "percent": 1.6225178634874264
+            },
+            "selectivity_expression_clone": {
+              "weight_seconds": 0.362,
+              "percent": 0.47635966470595975
+            },
+            "selectivity_rewrite": {
+              "weight_seconds": 1.083,
+              "percent": 1.4251312620899292
+            },
+            "expression_clone": {
+              "weight_seconds": 0.386,
+              "percent": 0.5079415209295594
+            },
+            "rewrite": {
+              "weight_seconds": 1.254,
+              "percent": 1.6501519876830761
+            }
+          },
+          "selectivity_callers_seconds": {
+            "tidb_executor::driver::join_reorder::emit": 1.412,
+            "tidb_executor::driver::access::commit_fast_path_source": 1.261
+          }
+        },
+        "go": {
+          "sample_count": 73534,
+          "sampled_weight_seconds": 73.534,
+          "sampled_duration_seconds": 12.439859833,
+          "states": {
+            "Running": 73534
+          },
+          "categories": {
+            "go_cached_range_rebuild": {
+              "weight_seconds": 0.622,
+              "percent": 0.8458672178856039
+            },
+            "go_uncached_optimization": {
+              "weight_seconds": 0.256,
+              "percent": 0.3481382761715669
+            }
+          },
+          "selectivity_callers_seconds": {}
+        }
+      },
+      "qualification": "Exact PID-filtered Time Profiler samples, 1 ms weights, all reported Running; categories are overlapping inclusive unions, not additive CPU percentages. Full SELECT includes row execution. Different capture durations and work counts prevent direct comparison of raw sample seconds. Profiled TPS is diagnostic only, never acceptance."
+    },
+    "source_comparison": [
+      "Go pkg/planner/core/stats.go::deriveStats4DataSource returns retained StatsInfo, consumes compiled PushedDownConds, fills paths, and derives one DataSource estimate.",
+      "Rust driver/join_reorder.rs::emit -> table_selectivity and driver/access.rs::commit_fast_path_source independently call AST selectivity. driver.rs still requests the row model for aggregates and DISTINCT before final single-table access planning.",
+      "access_cost.rs::selectivity_of_conjuncts_with_path_context compiles each AST condition anew. Fresh candidate has 1.083 sampled seconds under this rewrite and 0.362 under expression cloning (overlapping categories). Total selectivity share rises from 0.918% to 3.517%; this localizes added cost but is not an isolated causal throughput measurement.",
+      "Go expression.go::extractBinaryOpItems copies expression interfaces; Rust expr_util/normal_form.rs::split_normal_form_items clones expression trees. Go explicit ScalarFunction.Clone remains a distinct operation; do not globally equate copying an expression reference with semantic cloning."
+    ],
+    "next_root_change": "Retain compiled predicates and the DataSource statistics they produce across row-model and physical-access consumers; then retain that plan through prepared execution. Preserve actual column identities, pushed versus root conditions, partition statistics and diagnostic timing. Do not add an AST-value cache, warning deduplication, or an aggregate-specific shortcut.",
+    "accepted_performance_win": false,
+    "qualification": "Candidate medians regress 1.91% at one client and 3.53% at eight. The nominal 2.24% gain at 32 is not accepted: broad drift and two of three matched pairs are negative. Go request batches are larger, but throughput is not consistently higher. Background desktop CPU is visible; this is not an isolated host.",
+    "not_verified": [
+      "Ready/root lint",
+      "TPC-C or mixed-write workloads",
+      "The seven known driver failures from the preceding WIP run remain unresolved; not rerun in this measurement-only turn",
+      "Full Go package parity",
+      "General physical-plan cache reuse"
+    ]
+  },
+  "datasource_estimate_followup": {
+    "status": "WIP source alignment; no accepted throughput gain",
+    "go_source": "pkg/planner/core/stats.go::deriveStats4DataSource and deriveStatsByFilter",
+    "scope": "Reuse pushed-predicate DataSource rows and session selectivity across table, bounded-index and full-index candidates",
+    "control_sha256": "0df0ee4529634f8c92f488868420a4164a86c4a78f6944165b73df9ccbed4887",
+    "candidate_sha256": "2b1b9d6000c501852ccb16cb617b48d8e4cc058ad9ad50715c80d4a910713a25",
+    "manifest": "/private/tmp/tidb-batching-candidate-uugkziij/manifest.json",
+    "raw_results": "/private/tmp/tidb-datasource-owner-readonly-pairs/results.json",
+    "method": "Unprofiled SELECT-only sysbench; 5-second warmup per server; three alternating 10-second pairs per concurrency; 4 gRPC connections; no fixture reset or concurrent builds",
+    "command": "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-uugkziij/manifest.json --output /private/tmp/tidb-datasource-owner-readonly-pairs --case read_only --pair-only --pair-threads 1 8 32 --pair-seconds 10",
+    "measurements": [
+      {
+        "threads": 1,
+        "control_tps": [
+          456,
+          455.19,
+          451.17
+        ],
+        "candidate_tps": [
+          450.77,
+          456.81,
+          459.42
+        ],
+        "control_median_tps": 455.19,
+        "candidate_median_tps": 456.81,
+        "median_tps_change_percent": 0.3558953404072973,
+        "control_median_sql_cpu_us_per_txn": 1155.2822314957182,
+        "candidate_median_sql_cpu_us_per_txn": 1144.6706062595754
+      },
+      {
+        "threads": 8,
+        "control_tps": [
+          2012.89,
+          1891.18,
+          1949.97
+        ],
+        "candidate_tps": [
+          2033.15,
+          1964.39,
+          1967.72
+        ],
+        "control_median_tps": 1949.97,
+        "candidate_median_tps": 1967.72,
+        "median_tps_change_percent": 0.9102704144166252,
+        "control_median_sql_cpu_us_per_txn": 1994.97667743093,
+        "candidate_median_sql_cpu_us_per_txn": 1990.2295048598044
+      },
+      {
+        "threads": 32,
+        "control_tps": [
+          3249.82,
+          2896.3,
+          2912.06
+        ],
+        "candidate_tps": [
+          2768.82,
+          2920.25,
+          2921.07
+        ],
+        "control_median_tps": 2912.06,
+        "candidate_median_tps": 2920.25,
+        "median_tps_change_percent": 0.2812442051331354,
+        "control_median_sql_cpu_us_per_txn": 2151.1905574128405,
+        "candidate_median_sql_cpu_us_per_txn": 2158.781946710168
+      }
+    ],
+    "accepted_performance_win": false,
+    "qualification": "Short-trial variation exceeds the small median differences. The first 32-client pair regresses from 3249.82 to 2768.82 TPS. All trials are retained; no baseline threshold is raised.",
+    "live_parity": {
+      "prepared_result_sets": 30,
+      "ordinary_result_sets": 10,
+      "identical_control_candidate_workload_plans": 5,
+      "fixture_row_count": 100013,
+      "fixture_sum_k": 5011271921,
+      "raw_results": [
+        "/private/tmp/tidb-datasource-owner-prepared-results.json",
+        "/private/tmp/tidb-datasource-owner-text-results.json",
+        "/private/tmp/tidb-datasource-owner-oracle.json"
+      ]
+    },
+    "ordinary_planning_warning_gap": {
+      "sql": "SELECT CONCAT(a, '') FROM perf_range_reader_check_20260907.common_handle WHERE a >= CAST(1 / 0 AS CHAR) LIMIT 1",
+      "go_warning_count": 1,
+      "control_warning_count": 15,
+      "candidate_warning_count": 11,
+      "rows_equal": true,
+      "status": "Unresolved repeated compilation; retain compiled predicates instead of deduplicating diagnostics"
+    },
+    "limits": [
+      "Small live selectivity probes both clamp to one row and do not prove session-setting estimate parity; the 1000-versus-3000 regression and Go source comparison provide that evidence.",
+      "Predicate-pushdown has three failures; broader sysbench-access has two and TopN one. Expectations were not changed.",
+      "Fresh CPU profiles, Ready/root lint, mixed-write TPC-C and concurrent-writer validation remain unrun."
+    ]
+  },
+  "range_policy_followup": {
+    "status": "WIP source and correctness followup; no performance acceptance data for these later edits",
+    "candidate_sha256": "0df0ee4529634f8c92f488868420a4164a86c4a78f6944165b73df9ccbed4887",
+    "manifest": "/private/tmp/tidb-batching-candidate-wd6tfffh/manifest.json",
+    "port": 53071,
+    "live_parity": {
+      "prepared_result_sets": 30,
+      "ordinary_result_sets": 10,
+      "ordered_diagnostic_cases": 8,
+      "binary_point_cache_status": [0, 1, 1],
+      "fixture_row_count": 100013,
+      "fixture_sum_k": 5011271921,
+      "raw_results": [
+        "/private/tmp/tidb-range-policy-prepared-results.json",
+        "/private/tmp/tidb-range-policy-text-results.json",
+        "/private/tmp/tidb-range-policy-diagnostics.json",
+        "/private/tmp/tidb-range-policy-point-cache.json"
+      ],
+      "limitation": "Targeted equality only. The additional computed-range diagnostic below still differs, and no live concurrent-writer consistency test was run."
+    },
+    "go_source": "pkg/planner/core/common_plans.go::IsPointGetWithPKOrUniqueKeyByAutoCommit; pkg/planner/core/point_get_plan.go::tryPointGetPlan and getNameValuePairs",
+    "go_live_reference": {
+      "revision": "23bff313186b8ceb61fcbe9faac43ae700e7fb14",
+      "port": 45000,
+      "bounded_integer_range_start_ts": "468932419560931332",
+      "complete_integer_point_with_limit_start_ts": "18446744073709551615",
+      "bounded_composite_range_start_ts": "468932419560931338",
+      "range_plan": ["Limit", "TableReader", "Limit", "TableRangeScan"],
+      "point_plan": ["Point_Get"]
+    },
+    "ordinary_planning_warning_gap": {
+      "sql": "SELECT CONCAT(a, '') FROM perf_range_reader_check_20260907.common_handle WHERE a >= CAST(1 / 0 AS CHAR) LIMIT 1",
+      "go_warning_count": 1,
+      "rust_port_53071_warning_count": 15,
+      "warning_code": 1365,
+      "rows_equal": true,
+      "status": "Unresolved duplicate ordinary planning evaluation; not corrected by non-evaluating speculative admission"
+    }
+  },
+  "statement_context_followup": {
+    "scope": "Reuse the SELECT statement context after declined single-row admission instead of registering a second live memory-arbitrator context",
+    "control_sha256": "13031953d35d15cbb97e666a750057524ae8ea29afb34eb24097faa8d26b3537",
+    "candidate_sha256": "ed5a33b71f8b38971adc328cf7de470ccf50dead7f967828fc2324d0364a7935",
+    "manifest": "/private/tmp/tidb-batching-candidate-mv8spydo/manifest.json",
+    "raw_results": "/private/tmp/tidb-statement-context-readonly-pairs/results.json",
+    "method": "Unprofiled read-only sysbench; 5-second warmup per server; three alternating 10-second pairs per concurrency; 4 gRPC connections; no fixture reset",
+    "live_parity": {
+      "prepared_result_sets": 30,
+      "ordinary_result_sets": 10,
+      "ordered_diagnostic_cases": 8,
+      "fixture_row_count": 100013,
+      "fixture_sum_k": 5011271921
+    },
+    "medians": [
+      {
+        "threads": 1,
+        "control_tps_trials": [443.8, 441.5, 440.81],
+        "candidate_tps_trials": [444.12, 446.43, 444.49],
+        "control_tps": 441.5,
+        "candidate_tps": 444.49,
+        "tps_change_percent": 0.6772366930917428,
+        "control_sql_cpu_ms_per_transaction": 1.2681159420289907,
+        "candidate_sql_cpu_ms_per_transaction": 1.257309941520467
+      },
+      {
+        "threads": 8,
+        "control_tps_trials": [1788.31, 1793.98, 1793.65],
+        "candidate_tps_trials": [1812.72, 1809.28, 1806.73],
+        "control_tps": 1793.65,
+        "candidate_tps": 1809.28,
+        "tps_change_percent": 0.8714074652245385,
+        "control_sql_cpu_ms_per_transaction": 2.247247526965851,
+        "candidate_sql_cpu_ms_per_transaction": 2.2284892722848926
+      },
+      {
+        "threads": 32,
+        "control_tps_trials": [2778.03, 2753.14, 2771.19],
+        "candidate_tps_trials": [2775.24, 2776.06, 2788.12],
+        "control_tps": 2771.19,
+        "candidate_tps": 2776.06,
+        "tps_change_percent": 0.1757367773411289,
+        "control_sql_cpu_ms_per_transaction": 2.253384912959382,
+        "candidate_sql_cpu_ms_per_transaction": 2.233586039193249
+      }
+    ],
+    "conclusion": "The unchanged 1 KiB memory-arbitrator regression and all 16 pipeline tests pass. Small throughput changes are observations, not an accepted speedup. Eight live diagnostics cases cover immediate fallback and the existing two-column clustered fixture, not late single-column range evaluation. Root lint, mixed-write validation and complete planning-warning parity remain outstanding."
+  },
+  "prepared_owner_followup": {
+    "scope": "Shared prepared ownership, plan-owned timestamp policy, lazy invalidation replan, and cursor authority captured before SET_VAR restoration",
+    "control_sha256": "2a530318287e9596c74cf787bef0597a5260e95fc254ac807b459961801444e9",
+    "candidate_sha256": "13031953d35d15cbb97e666a750057524ae8ea29afb34eb24097faa8d26b3537",
+    "manifest": "/private/tmp/tidb-batching-candidate-acqrv30y/manifest.json",
+    "raw_results": "/private/tmp/tidb-prepared-owner-readonly-pairs/results.json",
+    "method": "Unprofiled read-only sysbench; 5-second warmup per server; three alternating 10-second pairs per concurrency; 4 gRPC connections; no fixture reset",
+    "live_parity": {
+      "prepared_result_sets": 30,
+      "ordinary_result_sets": 10,
+      "binary_point_cache_status": [0, 1, 1],
+      "fixture_row_count": 100013,
+      "fixture_sum_k": 5011271921
+    },
+    "medians": [
+      {
+        "threads": 1,
+        "control_tps_trials": [441.48, 440.35, 439.68],
+        "candidate_tps_trials": [440.64, 439.11, 438.3],
+        "control_tps": 440.35,
+        "candidate_tps": 439.11,
+        "tps_change_percent": -0.2815941864426019,
+        "control_sql_cpu_ms_per_transaction": 1.2862318840579727,
+        "candidate_sql_cpu_ms_per_transaction": 1.2750455373406198
+      },
+      {
+        "threads": 32,
+        "control_tps_trials": [2652.39, 2651.09, 2652.24],
+        "candidate_tps_trials": [2634.62, 2664.67, 2652.93],
+        "control_tps": 2652.24,
+        "candidate_tps": 2652.93,
+        "tps_change_percent": 0.02601574518144023,
+        "control_sql_cpu_ms_per_transaction": 2.462432077946413,
+        "candidate_sql_cpu_ms_per_transaction": 2.413947919784495
+      }
+    ],
+    "conclusion": "Throughput is effectively flat; no accepted performance win or baseline increase. Process CPU per transaction is modestly lower, but does not establish a workload speedup. Global TiKV batch metrics include background traffic. The ordinary-SELECT memory-arbitrator failure is addressed by statement_context_followup; root lint and mixed-write validation are outstanding."
+  },
+  "scope": "Accumulated parameter-aware expression/range/operator-program work compared with the retained statistics-snapshot control.",
+  "binaries": {
+    "before": {
+      "sha256": "d8738c3dda7dc7d8f15f2da7a53a5684b38d1416b8abb85bdc38594db12f75ed",
+      "manifest": "/private/tmp/tidb-batching-candidate-r27ctgh4/manifest.json",
+      "port": 53067
+    },
+    "after": {
+      "sha256": "2a530318287e9596c74cf787bef0597a5260e95fc254ac807b459961801444e9",
+      "manifest": "/private/tmp/tidb-batching-candidate-6apd43rw/manifest.json",
+      "port": 53068
+    },
+    "go": {
+      "revision": "23bff313186b8ceb61fcbe9faac43ae700e7fb14",
+      "client_go": "v2.0.8-0.20260724023932-61ecd7c11416",
+      "port": 45000
+    }
+  },
+  "method": {
+    "fixture": "perf_sysbench_locking_v2.sbtest1",
+    "row_count": 100013,
+    "sum_k": 5011271921,
+    "driver": "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+    "events": {
+      "1": 3000,
+      "8": 12000,
+      "32": 24000
+    },
+    "triples_per_concurrency": 3,
+    "order": "rotating Go/control/candidate",
+    "seed": 1,
+    "prepared_statements": "auto",
+    "writes": 0,
+    "ignored_errors": 0,
+    "reconnects": 0,
+    "fixture_reset": false,
+    "grpc_connections": 4
+  },
+  "medians": [
+    {
+      "threads": 1,
+      "before": {
+        "tps_trials": [
+          453.82,
+          453.04,
+          451.39
+        ],
+        "median_tps": 453.04,
+        "median_sql_cpu_ms_per_transaction": 1.1766666666666576,
+        "median_commands_per_request_batch": 1.0000235205569667
+      },
+      "after": {
+        "tps_trials": [
+          457.09,
+          449.71,
+          456.55
+        ],
+        "median_tps": 456.55,
+        "median_sql_cpu_ms_per_transaction": 1.163333333333334,
+        "median_commands_per_request_batch": 1.0000235388272956
+      },
+      "go": {
+        "tps_trials": [
+          469.56,
+          472.82,
+          468.65
+        ],
+        "median_tps": 469.56,
+        "median_sql_cpu_ms_per_transaction": 1.7399999999999334,
+        "median_commands_per_request_batch": 1
+      },
+      "candidate_tps_change_percent": 0.7747660250750465
+    },
+    {
+      "threads": 8,
+      "before": {
+        "tps_trials": [
+          2111.24,
+          2102.65,
+          2113.15
+        ],
+        "median_tps": 2111.24,
+        "median_sql_cpu_ms_per_transaction": 1.9150000000000016,
+        "median_commands_per_request_batch": 1.1772493429514064
+      },
+      "after": {
+        "tps_trials": [
+          2112.16,
+          2120.84,
+          2117.64
+        ],
+        "median_tps": 2117.64,
+        "median_sql_cpu_ms_per_transaction": 1.9233333333333333,
+        "median_commands_per_request_batch": 1.1834771487998201
+      },
+      "go": {
+        "tps_trials": [
+          2195.86,
+          2198.89,
+          2197.86
+        ],
+        "median_tps": 2197.86,
+        "median_sql_cpu_ms_per_transaction": 1.9391666666666652,
+        "median_commands_per_request_batch": 1.1818418405745112
+      },
+      "candidate_tps_change_percent": 0.3031393872795274
+    },
+    {
+      "threads": 32,
+      "before": {
+        "tps_trials": [
+          3632.13,
+          3554.29,
+          3502.53
+        ],
+        "median_tps": 3554.29,
+        "median_sql_cpu_ms_per_transaction": 1.992083333333331,
+        "median_commands_per_request_batch": 1.8301518747786372
+      },
+      "after": {
+        "tps_trials": [
+          3675.17,
+          3628.85,
+          3551.49
+        ],
+        "median_tps": 3628.85,
+        "median_sql_cpu_ms_per_transaction": 1.965,
+        "median_commands_per_request_batch": 1.94659342636426
+      },
+      "go": {
+        "tps_trials": [
+          3439.09,
+          3797.94,
+          3673.87
+        ],
+        "median_tps": 3673.87,
+        "median_sql_cpu_ms_per_transaction": 1.8116666666666672,
+        "median_commands_per_request_batch": 5.019079653617691
+      },
+      "candidate_tps_change_percent": 2.09774666670417
+    }
+  ],
+  "correctness": {
+    "prepared_result_sets": 30,
+    "ordinary_queries": 10,
+    "compared_servers": [
+      "go",
+      "before",
+      "after"
+    ],
+    "prepared_results": "/private/tmp/tidb-program-candidate-prepared-results.json",
+    "ordinary_results": "/private/tmp/tidb-program-candidate-standard-results.json",
+    "limitations": "Result equality for these SELECT cases, not complete SQL value/type/metadata parity or concurrent-write consistency."
+  },
+  "profiles": {
+    "directory": "/private/tmp/tidb-program-readonly-profile",
+    "instrument": "Time Profiler",
+    "duration_seconds": 12,
+    "workload_seconds": 30,
+    "threads": 32,
+    "order": [
+      "before",
+      "after",
+      "go"
+    ],
+    "all_profiler_exit_codes": 0,
+    "after_samples": 79412,
+    "go_samples": 77680,
+    "after_select_driver_inclusive_percent": 19.612,
+    "after_driver_direct_children_percent": {
+      "drain_executor_rows": 5.329,
+      "next_executor": 1.832,
+      "run_aggregate_select_mixed_planning_and_execution": 1.616,
+      "commit_fast_path_source": 2.852,
+      "row_source_for_join_type": 1.054,
+      "build_join_with_choice": 0.986
+    },
+    "interpretation": "Inclusive driver time is not planner CPU. Nested percentages overlap; profiled TPS is not acceptance data. Runtime/kernel wait-related frames are retained rather than relabeled as useful CPU."
+  },
+  "source_comparison": {
+    "batch_admission": "Both collect on a shared queue before connection rotation. Go conn_batch.go conditionally waits and yields after the ready drain using the standard 100us adaptive policy. Rust transport_runtime/batching.rs immediately drains ready same-address commands, bounded by 128 and lifecycle barriers. Larger Go batches do not prove a causal throughput advantage; prior adaptive-wait Rust trials regressed.",
+    "timestamp_policy": "Go common_plans.go IsPointGetWithPKOrUniqueKeyByAutoCommit, including the exact running revision, refuses index double reads and incomplete clustered keys. Rust classifiers incorrectly treated cached IndexPrefix and ClusteredPrefix plans as AutocommitPointGet; regression work follows these measurements."
+  },
+  "commands": [
+    "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+    "python3 /private/tmp/tidb-prepared-path-results.py --control-port 53067 --candidate-port 53068 --output /private/tmp/tidb-program-candidate-prepared-results.json",
+    "python3 /private/tmp/tidb-shared-admission-results.py --control-port 53067 --candidate-port 53068 --output /private/tmp/tidb-program-candidate-standard-results.json",
+    "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-6apd43rw/manifest.json --output /private/tmp/tidb-program-readonly-triples --case read_only --triple-threads 1 8 32",
+    "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-6apd43rw/manifest.json --output /private/tmp/tidb-program-readonly-profile --case read_only --profile 'Time Profiler' --profile-target sql --profile-threads 32 --profile-servers before after go"
+  ],
+  "raw_results": "/private/tmp/tidb-program-readonly-triples/results.json",
+  "limitations": [
+    "Accumulated shared-worktree changes, not an isolated operator-program A/B.",
+    "Small sample; 32-client Go variation is material. Sub-percent 1/8-client deltas are not acceptance.",
+    "Shared TiKV metrics include background traffic. Commands/message is not TCP packet count.",
+    "No mixed-write TPC-C run, root lint, full physical-plan cache or whole-package completion."
+  ]
+}

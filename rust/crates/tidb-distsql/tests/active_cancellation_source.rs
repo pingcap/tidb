@@ -17,7 +17,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
 use tidb_datatype::FieldType;
@@ -37,12 +37,12 @@ use tidb_txnkv::{DirectUnaryConnectionError, SharedReadRuntime, UnaryCallContext
 
 #[derive(Debug, Default)]
 struct NoRetryMutation {
-    sleeps: RefCell<Vec<Duration>>,
+    sleeps: Mutex<Vec<Duration>>,
 }
 
 impl RegionRetryWaiter for NoRetryMutation {
     fn wait(&self, cancellation: &tidb_txnkv::UnaryCancellation, delay: Duration) -> bool {
-        self.sleeps.borrow_mut().push(delay);
+        self.sleeps.lock().unwrap().push(delay);
         cancellation.is_cancelled()
     }
 }
@@ -83,6 +83,7 @@ impl RegionRecoveryLoader for RecordingLoader {
         &mut self,
         metadata: &RegionMetadata,
         _leader_store_id: u64,
+        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
     ) -> Result<RegionLocation, RegionLoadError> {
         self.load_region(&metadata.encoded_start_key)
     }
@@ -301,7 +302,7 @@ fn pre_cancelled_query_never_reaches_pd_selector_cache_or_client() {
     let transport = DirectUnaryQueryTransport::with_locked_response_delegate(
         shared,
         DirectUnaryRuntimeConfig::default(),
-        Rc::new(RejectUnexpectedLock),
+        Arc::new(RejectUnexpectedLock),
     )
     .unwrap();
     let mut runtime = InjectedQueryRuntime::new(transport);
@@ -341,7 +342,7 @@ fn cancellation_after_rpc_wins_over_transport_error_before_recovery_mutation() {
     let transport = DirectUnaryQueryTransport::with_locked_response_delegate(
         shared,
         DirectUnaryRuntimeConfig::default(),
-        Rc::new(RejectUnexpectedLock),
+        Arc::new(RejectUnexpectedLock),
     )
     .unwrap();
     let mut runtime = InjectedQueryRuntime::new(transport);
@@ -378,7 +379,7 @@ fn execution_cancellation_interrupts_dispatch_before_all_recovery_and_success_mu
 
     let observations = Rc::new(ClientObservations::default());
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
-    let retry = Rc::new(NoRetryMutation::default());
+    let retry = Arc::new(NoRetryMutation::default());
     let (dispatch_started, dispatch_started_rx) = mpsc::channel();
     let shared = SharedReadRuntime::new_injected(
         CancellationBlockingClient {
@@ -399,7 +400,7 @@ fn execution_cancellation_interrupts_dispatch_before_all_recovery_and_success_mu
             region_retry_waiter: retry.clone(),
             ..DirectUnaryRuntimeConfig::default()
         },
-        Rc::new(RejectUnexpectedLock),
+        Arc::new(RejectUnexpectedLock),
     )
     .unwrap();
     let cancel_after_dispatch = Arc::clone(&cancel);
@@ -437,7 +438,7 @@ fn execution_cancellation_interrupts_dispatch_before_all_recovery_and_success_mu
         observations.addresses.borrow().as_slice(),
         ["tikv-1:20160".to_owned()]
     );
-    assert!(retry.sleeps.borrow().is_empty());
+    assert!(retry.sleeps.lock().unwrap().is_empty());
     assert_eq!(
         loader_calls.borrow().as_slice(),
         [b"a".to_vec(), b"m".to_vec()]
@@ -459,99 +460,4 @@ fn execution_cancellation_interrupts_dispatch_before_all_recovery_and_success_mu
         loader_calls.borrow().as_slice(),
         [b"a".to_vec(), b"m".to_vec()]
     );
-}
-
-#[test]
-fn caller_cancellation_branch_is_terminal_before_response_and_retry_mutation() {
-    let source = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
-    let settle_dispatch = source
-        .find("fn settle_dispatch(")
-        .expect("response settlement boundary");
-    let branch = source[settle_dispatch..]
-        .find("if self.cancellation.is_cancelled()")
-        .map(|offset| settle_dispatch + offset)
-        .expect("caller cancellation precedence branch");
-    let raw_response = source[branch..]
-        .find("let raw_response = match send_result")
-        .map(|offset| branch + offset)
-        .expect("response classification follows cancellation");
-    let terminal = &source[branch..raw_response];
-    assert!(terminal.contains("return if self.cancellation.is_cancelled()"));
-    assert!(terminal.contains("Err(DirectUnaryTransportError::CallerCancelled)"));
-    for forbidden in [
-        "record_attempt_result",
-        "recover_transport_failure",
-        "close_address",
-        ".liveness(",
-        "region_cache",
-        "request_selectors",
-        "region_backoffs",
-        "rebuild_",
-        "locate_",
-        "consume_failed_attempt",
-        "retry_transport_attempt",
-        "promote_successful_request",
-        "handle_locked_response",
-        "accept_response",
-        "install_same_task_retry",
-        "ResponseChannel",
-    ] {
-        assert!(
-            !terminal.contains(forbidden),
-            "unexpected mutation: {forbidden}"
-        );
-    }
-}
-
-#[test]
-fn production_failure_uses_selection_observation_without_holding_cache_during_io() {
-    let source = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
-    let observation = source
-        .find(".observe_attempt(selected.dispatch_attempt())")
-        .expect("selection-time cache observation");
-    let send = source
-        .find(".send_request_with_route(")
-        .expect("unlocked client dispatch");
-    let immediate_validation = source
-        .find("cache.validate_route_observation(&selected, &observation)")
-        .expect("read-only validation immediately after send failure");
-    let selector_mutation = source[immediate_validation..]
-        .find("self.record_attempt_result(logical_task_id, &selected, dispatch_duration)")
-        .map(|offset| immediate_validation + offset)
-        .expect("selector mutation follows immediate validation");
-    let guarded_failure = source
-        .find(".on_route_send_failure_observed(&selected, &observation, liveness)")
-        .expect("guarded production failure mutation");
-    let retry = source[guarded_failure..]
-        .find(".retry_transport_attempt(failed)")
-        .map(|offset| guarded_failure + offset)
-        .expect("stale observation still reaches coordinator retry");
-
-    assert!(observation < send);
-    assert!(send < immediate_validation);
-    assert!(immediate_validation < selector_mutation);
-    assert!(selector_mutation < guarded_failure);
-    assert!(guarded_failure < retry);
-    assert!(source.contains("Err(RegionRecoveryError::StaleObservation(_)) => false"));
-    assert!(source.contains("if observation_current"));
-    assert!(!source.contains(".on_route_send_failure(&selected, liveness)"));
-    assert!(!source.contains(".region_cache().try_borrow"));
-}
-
-#[test]
-fn pending_batch_is_cancelled_before_async_feedback() {
-    let source = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
-    let poll = source
-        .find("fn complete_batch_attempt(")
-        .expect("BatchCommands pending owner");
-    let settle = source[poll..]
-        .find("fn settle_dispatch(")
-        .map(|offset| poll + offset)
-        .expect("shared settlement owner");
-    let poll = &source[poll..settle];
-    assert!(poll.contains("self.check_retry_active()"));
-    assert!(poll.contains("attempt.pending.cancel()"));
-    assert!(poll.contains("attempt.pending.complete(&self.call)"));
-    assert!(!poll.contains("record_attempt_result"));
-    assert!(!poll.contains("validate_route_observation"));
 }

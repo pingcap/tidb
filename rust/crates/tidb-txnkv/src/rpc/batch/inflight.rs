@@ -17,16 +17,19 @@
 //! This table is the single boundary between scheduling and a later duplex
 //! stream. Callers publish the complete request-ID set before attempting
 //! `Send`; every response, send failure, stream failure, cancellation, and
-//! close then retires through the same Campaign 15 completion authority.
+//! close then retires through the entry's original response channel or callback.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use crate::client::PhysicalChannelIdentity;
-use crate::rpc::{CompletionRequest, DirectUnaryClientError};
+use crate::rpc::DirectUnaryClientError;
 
-use super::{BatchRequestProgress, BatchStreamState, ScheduledEntry};
+use super::{
+    BatchCommandCompletion, BatchEntryCompletion, BatchRequestProgress, BatchStreamState,
+    ScheduledEntry,
+};
 
 use super::wire::{BatchWireError, BatchWireResponse, OpaqueBatchCommand};
 
@@ -163,7 +166,7 @@ impl std::error::Error for BatchPublishError {}
 #[derive(Debug)]
 pub struct PendingBatchCommand {
     request_id: u64,
-    completion: CompletionRequest<OpaqueBatchCommand, BatchInflightError>,
+    completion: BatchCommandCompletion,
     progress: Arc<BatchRequestProgress>,
 }
 
@@ -172,12 +175,12 @@ impl PendingBatchCommand {
     #[must_use]
     pub fn new(
         request_id: u64,
-        completion: CompletionRequest<OpaqueBatchCommand, BatchInflightError>,
+        completion: impl Into<BatchCommandCompletion>,
         progress: Arc<BatchRequestProgress>,
     ) -> Self {
         Self {
             request_id,
-            completion,
+            completion: completion.into(),
             progress,
         }
     }
@@ -193,12 +196,12 @@ impl PendingBatchCommand {
     /// The returned wire body and pending record are split from the same
     /// scheduled entry; no second completion pair or terminal authority exists.
     #[must_use]
-    pub fn from_scheduled(
-        scheduled: ScheduledEntry<
-            OpaqueBatchCommand,
-            CompletionRequest<OpaqueBatchCommand, BatchInflightError>,
-        >,
-    ) -> (OpaqueBatchCommand, Self) {
+    pub fn from_scheduled<C>(
+        scheduled: ScheduledEntry<OpaqueBatchCommand, C>,
+    ) -> (OpaqueBatchCommand, Self)
+    where
+        C: BatchEntryCompletion + Into<BatchCommandCompletion>,
+    {
         let (request_id, entry) = scheduled.into_parts();
         let (command, completion, progress) = entry.into_payload_completion();
         (command, Self::new(request_id, completion, progress))
@@ -253,8 +256,9 @@ impl BatchInflightTable {
             return Err(error);
         }
 
-        let state = self.routes.entry(route).or_default();
+        let state = self.routes.entry(route.clone()).or_default();
         for request in pending {
+            request.progress.record_publication(&route);
             if let Some(batch_state) = request.progress.batch_state() {
                 batch_state.attach_stream_state(state.stream_state.clone());
             }
@@ -278,8 +282,9 @@ impl BatchInflightTable {
             }
             return Err(error);
         }
-        let state = self.routes.entry(route).or_default();
+        let state = self.routes.entry(route.clone()).or_default();
         for request in pending {
+            request.progress.record_publication(&route);
             if let Some(batch_state) = request.progress.batch_state() {
                 batch_state.attach_stream_state(state.stream_state.clone());
             }

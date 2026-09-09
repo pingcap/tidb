@@ -43,6 +43,9 @@ use super::*;
 /// are index-parallel and always describe the current top-of-plan schema.
 #[derive(Default)]
 struct AggPipelineState {
+    /// Visible output-column order supplied by the chosen grouped executor,
+    /// not merely an order its input scan could supply.
+    grouped_output_orders: Vec<Vec<usize>>,
     /// The grouped column names, which `GROUPING()` arguments resolve against
     /// and which `HAVING`/`ORDER BY` may reference even when the select list
     /// does not project them.
@@ -97,9 +100,6 @@ struct AggPipelineState {
     having_collapsed_dual: bool,
     /// `ORDER BY` with its aggregates hoisted, as `(expr, desc)`.
     order_by_exprs: Vec<(tidb_ast::Expr, bool)>,
-    /// The physical aggregate was reordered to TiKV's partial grouped-SUM
-    /// schema and therefore needs the select-order projection above it.
-    partial_grouped_sum: bool,
     /// Where each physical grouped-StreamAgg state writes in the logical
     /// aggregation schema. TiKV puts aggregate functions before FIRST_ROW
     /// group carriers; the executor writes them directly into select order so
@@ -801,18 +801,6 @@ pub(crate) fn run_aggregate_select(
             }
         }
     }
-    if state.partial_grouped_sum {
-        if let Some(trace) = trace.as_deref_mut() {
-            trace.grouped_sum_projection(
-                traced_select,
-                &Qualifier {
-                    db: current_db,
-                    scope: resolver.scope,
-                    catalog: Some(catalog),
-                },
-            );
-        }
-    }
     if state.partial_grouped_stream_reordered && !projected_before_sort {
         if let Some(trace) = trace.as_deref_mut() {
             trace.grouped_stream_output_projection(
@@ -826,6 +814,37 @@ pub(crate) fn run_aggregate_select(
                 &physical_source_names,
             );
         }
+    }
+    if let Some(delivered) = output_delivered {
+        // Hash aggregation and window processing cannot inherit the scan's
+        // order. A final sort supplies its own order, independently of the
+        // chosen aggregation implementation.
+        let orders = if !state.order_by_exprs.is_empty() {
+            traced_select
+                .order_by
+                .iter()
+                .map(|item| {
+                    if item.desc {
+                        return None;
+                    }
+                    let tidb_ast::Expr::Column(path) = &item.expr else {
+                        return None;
+                    };
+                    traced_select.fields.fields().iter().position(|field| {
+                        matches!(field,
+                    tidb_ast::SelectField::Expr { expr: tidb_ast::Expr::Column(column), .. }
+                        if column == path)
+                    })
+                })
+                .collect::<Option<Vec<_>>>()
+                .into_iter()
+                .collect()
+        } else if state.window_calls.is_empty() && !select.distinct {
+            std::mem::take(&mut state.grouped_output_orders)
+        } else {
+            Vec::new()
+        };
+        delivered.extend(orders.into_iter().filter(|order| !order.is_empty()));
     }
     // Stage 11: DISTINCT (for the shape stage 8b declined), then drain.
     distinct_and_drain(
@@ -1811,7 +1830,8 @@ fn integer_decimal_precision(field_type: &FieldType) -> Option<i64> {
 
 #[derive(Clone, Copy)]
 enum GlobalStreamAggPlan {
-    Count,
+    /// Multiple functions or a global function without a specialized projection.
+    General,
     /// A global SUM over a DECIMAL argument chosen as a STREAM aggregate by
     /// Go's cost model when the estimated input is small (TPC-H q6/q17 over
     /// pseudo statistics answer `StreamAgg` where analyzed plans answer
@@ -1826,14 +1846,6 @@ enum GlobalStreamAggPlan {
     },
 }
 
-struct GroupedSumPlan {
-    group_func: usize,
-    sum_func: usize,
-    group_input: usize,
-    sum_input: usize,
-    group_type: FieldType,
-    sum_type: FieldType,
-}
 
 struct GroupedStreamPartialPlan {
     group_offsets: Vec<usize>,
@@ -1843,199 +1855,141 @@ struct GroupedStreamPartialPlan {
     sources: Vec<GroupedPartialSource>,
 }
 
-/// Compares the two root aggregation implementations using Go's default
-/// cost-model-ver2 inputs. Their child is identical, so its cost is zero in
-/// both candidates; a global aggregate has one output row and no group key.
-fn prefer_stream_agg_for_global_count(input_rows: f64) -> bool {
-    // Go's cost model keeps StreamAgg for genuinely small scans, but the
-    // HashAgg candidate wins once the input reaches the Web3Bench-sized
-    // range (both analyzed and pseudo statistics). The local cost helper
-    // omits the child row-width terms used by Go, so retain that boundary
-    // explicitly before comparing the remaining aggregate costs.
-    if input_rows > 10_000.0 {
-        return false;
-    }
-    let factors = tidb_planner::plan_cost_ver2::Ver2Factors::default();
-    let cost_factors = tidb_planner::plan_cost_ver2::CostFactorVars::default();
-    let session = tidb_planner::plan_cost_ver2::CostSessionOpts::default();
-    let child_cost = tidb_planner::cost_usage::new_zero_cost_ver2(false);
-    let stream = tidb_planner::plan_cost_ver2::stream_agg_cost(
-        None,
-        input_rows,
-        1,
-        &[],
-        (&factors.tidb_cpu, cost_factors.stream_agg),
-        &child_cost,
-    );
-    let hash = tidb_planner::plan_cost_ver2::hash_agg_cost(
-        None,
-        tidb_planner::plan_cost_ver2::HashAggInput {
+/// The physical choice is made before the source accepts a partial stage and
+/// changes its schema. Feasibility and ordering are supplied by the source;
+/// there are no cardinality cutoffs in this comparison.
+#[derive(Clone, Copy)]
+struct AggregateChoice {
+    streamed: bool,
+    partial: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn aggregate_candidate(
+    child: tidb_planner::candidate_cost::Candidate,
+    input_rows: f64,
+    output_rows: f64,
+    output_row_size: f64,
+    num_agg_funcs: usize,
+    group_items: &[bool],
+    streamed: bool,
+) -> tidb_planner::candidate_cost::Candidate {
+    use tidb_planner::candidate_cost::{Candidate, RowSize};
+    if streamed {
+        Candidate::StreamAgg {
+            child: Box::new(child),
             input_rows,
-            output_rows: 1.0,
-            output_row_size: tidb_planner::plan_cost_ver2::MIN_ROW_SIZE,
-            num_agg_funcs: 1,
-            child_can_provide_order: false,
-        },
-        &[],
-        (&factors.tidb_cpu, &factors.tidb_mem, cost_factors.hash_agg),
-        session.hashagg_final_concurrency,
-        tidb_planner::task_type::TaskType::Root,
-        &child_cost,
-    );
-    stream.value() < hash.value()
-}
-
-fn prefer_stream_agg_for_small_global(input_rows: Option<f64>) -> bool {
-    input_rows.is_none_or(|rows| rows <= 10_000.0)
-}
-
-// Go's candidate coster keeps the root-only grouped aggregate for tiny input
-// ranges.  The Rust direct path otherwise accepts every decomposable grouped
-// aggregate that a scan can execute, which is correct but adds an unnecessary
-// cop partial stage for the small Web3Bench fixture.  Keep the boundary local
-// to this chooser; larger scans still use the normal partial pipeline.
-const SMALL_PARTIAL_AGG_INPUT_ROWS: f64 = 10.0;
-
-fn prefer_partial_agg_for_input(input_rows: Option<f64>) -> bool {
-    input_rows.is_none_or(|rows| rows > SMALL_PARTIAL_AGG_INPUT_ROWS)
-}
-
-/// Returns `(contains_set_operation, max_base_table_rows)` for a derived
-/// source. A UNION child is not represented by the ordinary join row-source
-/// model, so its aggregate input otherwise looks like an unknown cardinality
-/// even when the catalog has real `stats_meta.count` values. Go still costs
-/// that child with those table counts; retain just enough of that signal to
-/// choose the same global aggregate family without changing executor rows.
-fn set_source_stat_rows(
-    join: Option<&tidb_ast::Join>,
-    catalog: &Catalog,
-    current_db: &str,
-) -> (bool, Option<f64>) {
-    fn merge(left: (bool, Option<f64>), right: (bool, Option<f64>)) -> (bool, Option<f64>) {
-        (
-            left.0 || right.0,
-            match (left.1, right.1) {
-                (Some(a), Some(b)) => Some(a.max(b)),
-                (Some(a), None) => Some(a),
-                (None, Some(b)) => Some(b),
-                (None, None) => None,
+            output_rows,
+            row_size: RowSize::Fixed(output_row_size),
+            num_agg_funcs,
+            group_items: group_items.to_vec(),
+        }
+    } else {
+        let child_can_provide_order =
+            tidb_planner::candidate_cost::child_can_provide_order_for_stream_agg(&child);
+        Candidate::HashAgg {
+            child: Box::new(child),
+            input: tidb_planner::plan_cost_ver2::HashAggInput {
+                input_rows,
+                output_rows,
+                output_row_size,
+                num_agg_funcs,
+                child_can_provide_order,
             },
-        )
+            group_items: group_items.to_vec(),
+        }
     }
-    fn table_rows(
-        table: &tidb_ast::TableRef,
-        catalog: &Catalog,
-        current_db: &str,
-    ) -> (bool, Option<f64>) {
-        let (db, name) = match table.name.as_slice() {
-            [name] => (current_db, name.as_str()),
-            [db, name] => (db.as_str(), name.as_str()),
-            _ => return (false, None),
-        };
-        let rows = catalog
-            .stored_table_id(db, name)
-            .and_then(|id| catalog.table_statistics(id))
-            .map(|stats| stats.row_count.max(0) as f64);
-        (false, rows)
-    }
-    fn query_rows(
-        query: &tidb_ast::QueryStmt,
-        catalog: &Catalog,
-        current_db: &str,
-    ) -> (bool, Option<f64>) {
-        match query {
-            tidb_ast::QueryStmt::Select(select) => {
-                join_rows(select.from.as_ref(), catalog, current_db)
-            }
-            tidb_ast::QueryStmt::SetOpr(set_opr) => set_opr
-                .terms
-                .iter()
-                .map(|term| match &term.body {
-                    tidb_ast::SetOprTermBody::Select(select) => {
-                        join_rows(select.from.as_ref(), catalog, current_db)
-                    }
-                    tidb_ast::SetOprTermBody::Nested(nested) => query_rows(
-                        &tidb_ast::QueryStmt::SetOpr(nested.clone()),
-                        catalog,
-                        current_db,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn choose_aggregate(
+    child: Option<&tidb_planner::candidate_cost::Candidate>,
+    input_rows: Option<f64>,
+    output_rows: Option<f64>,
+    output_types: &[FieldType],
+    num_agg_funcs: usize,
+    group_by: &[Expression],
+    stream_admitted: bool,
+    partials: [Option<&PushdownPartialAggregate>; 2],
+    ctx: &crate::StmtContext,
+) -> AggregateChoice {
+    // An unmodelled child retains its already selected ordered implementation;
+    // do not invent a table count or price a different child to choose a split.
+    let fallback = AggregateChoice {
+        streamed: stream_admitted && !group_by.is_empty(),
+        partial: false,
+    };
+    let (Some(child), Some(input_rows), Some(output_rows)) = (child, input_rows, output_rows)
+    else {
+        return fallback;
+    };
+    let output_row_size = crate::access_cost::schema_avg_row_size(output_types);
+    let group_items: Vec<bool> = group_by
+        .iter()
+        .map(|item| matches!(item, Expression::ScalarFunction(_)))
+        .collect();
+    let mut best = fallback;
+    let mut best_cost = f64::INFINITY;
+    for streamed in [false, true] {
+        if streamed && !stream_admitted {
+            continue;
+        }
+        for partial in [false, true] {
+            let (input, final_input_rows) = if partial {
+                let Some(descriptor) = partials[usize::from(streamed)] else {
+                    continue;
+                };
+                if !matches!(
+                    child,
+                    tidb_planner::candidate_cost::Candidate::Reader { .. }
+                ) {
+                    continue;
+                }
+                let partial_functions = match descriptor {
+                    PushdownPartialAggregate::Global { functions, .. } => functions.len(),
+                    PushdownPartialAggregate::Grouped { functions, .. } => functions.len(),
+                    PushdownPartialAggregate::GroupBy { .. } => 0,
+                    _ => 1,
+                };
+                let partial_row_size =
+                    crate::access_cost::schema_avg_row_size(&descriptor.output_types());
+                (
+                    pushed_grouped_partial_candidate(
+                        child.clone(),
+                        output_rows,
+                        partial_row_size,
+                        partial_functions,
+                        &group_items,
+                        streamed,
                     ),
-                })
-                .fold((true, None), merge),
-        }
-    }
-    fn node_rows(
-        node: &tidb_ast::JoinNode,
-        catalog: &Catalog,
-        current_db: &str,
-    ) -> (bool, Option<f64>) {
-        match node {
-            tidb_ast::JoinNode::Table(table) => table_rows(table, catalog, current_db),
-            tidb_ast::JoinNode::Derived { subquery, .. } => {
-                query_rows(subquery, catalog, current_db)
+                    output_rows,
+                )
+            } else {
+                (child.clone(), input_rows)
+            };
+            let candidate = aggregate_candidate(
+                input,
+                final_input_rows,
+                output_rows,
+                output_row_size,
+                num_agg_funcs,
+                &group_items,
+                streamed,
+            );
+            let cost = tidb_planner::candidate_cost::evaluate(
+                &candidate,
+                ctx.optimizer_cost_env(),
+                tidb_planner::task_type::TaskType::Root,
+            )
+            .cost
+            .value();
+            if cost < best_cost {
+                best_cost = cost;
+                best = AggregateChoice { streamed, partial };
             }
-            tidb_ast::JoinNode::Join(join) => join_rows(Some(join), catalog, current_db),
         }
     }
-    fn join_rows(
-        join: Option<&tidb_ast::Join>,
-        catalog: &Catalog,
-        current_db: &str,
-    ) -> (bool, Option<f64>) {
-        let Some(join) = join else {
-            return (false, None);
-        };
-        let left = node_rows(&join.left, catalog, current_db);
-        let right = join
-            .right
-            .as_ref()
-            .map(|right| node_rows(right, catalog, current_db))
-            .unwrap_or((false, None));
-        merge(left, right)
-    }
-
-    join_rows(join, catalog, current_db)
-}
-
-fn direct_source_has_real_stats(
-    join: Option<&tidb_ast::Join>,
-    catalog: &Catalog,
-    current_db: &str,
-) -> bool {
-    let Some(join) = join else { return false };
-    if join.right.is_some() {
-        return false;
-    }
-    let tidb_ast::JoinNode::Table(table) = &join.left else {
-        return false;
-    };
-    let (db, name) = match table.name.as_slice() {
-        [name] => (current_db, name.as_str()),
-        [db, name] => (db.as_str(), name.as_str()),
-        _ => return false,
-    };
-    catalog
-        .stored_table_id(db, name)
-        .is_some_and(|id| {
-            catalog
-                .table_statistics(id)
-                .is_some_and(|stats| !stats.pseudo)
-        })
-}
-
-fn contains_logic_or(expression: &tidb_ast::Expr) -> bool {
-    match expression {
-        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, _, _) => true,
-        tidb_ast::Expr::Binary(_, left, right) => {
-            contains_logic_or(left) || contains_logic_or(right)
-        }
-        tidb_ast::Expr::Unary(_, child) | tidb_ast::Expr::Paren(child) => contains_logic_or(child),
-        tidb_ast::Expr::Row(items) => items.iter().any(contains_logic_or),
-        tidb_ast::Expr::Assign { value, .. } => contains_logic_or(value),
-        tidb_ast::Expr::Func { args, .. }
-        | tidb_ast::Expr::GenericFuncCall { args, .. }
-        | tidb_ast::Expr::Aggregate { args, .. } => args.iter().any(contains_logic_or),
-        _ => false,
-    }
+    best
 }
 
 #[derive(Clone, Copy)]
@@ -2516,10 +2470,11 @@ fn grouped_stream_physical_aggregate_info(
     ))
 }
 
-/// The grouped StreamAgg split used by TPCC condition queries whose ordered
-/// table path already delivers the group keys. The accepted function set is
-/// exactly the algebra TiKV can merge losslessly at the root today.
+/// Go's grouped StreamAgg split for a source ordered by its grouping keys.
+/// All aggregate arguments keep their expressions through partial planning;
+/// the request builder reads mutable leaves from the execution context.
 fn grouped_stream_partial_plan(
+    ctx: &crate::StmtContext,
     select: &tidb_ast::SelectStmt,
     state: &AggPipelineState,
     group_by: &[Expression],
@@ -2572,6 +2527,10 @@ fn grouped_stream_partial_plan(
             .as_ref()
             .and_then(Expression::as_column)
             .and_then(|column| usize::try_from(column.index).ok());
+        let input_supported = input.as_ref().is_some_and(|argument| {
+            tidb_expr::pushdown_catalog::from_expression_in(argument, ctx)
+                .is_ok_and(|described| described.is_some())
+        });
         let kind = match function.kind {
             AggKind::FirstRow => {
                 let group = group_offsets
@@ -2580,44 +2539,13 @@ fn grouped_stream_partial_plan(
                 carrier_states.push((state_index, GroupedPartialSource::Group(group)));
                 continue;
             }
-            AggKind::Count => {
-                if input_offset.is_none()
-                    && !matches!(
-                        function.arg.as_ref(),
-                        Some(Expression::Constant(constant))
-                            if matches!(constant.value, Datum::Int(1) | Datum::UInt(1))
-                    )
-                {
-                    return None;
-                }
+            AggKind::Count if input_supported || input.is_none() => {
                 crate::remote_scan::PushdownAggregateKind::Count
             }
-            AggKind::Sum
-                if input.as_ref().is_some_and(|argument| {
-                    tidb_expr::pushdown_catalog::from_expression(argument).is_some()
-                }) =>
-            {
-                crate::remote_scan::PushdownAggregateKind::Sum
-            }
-            AggKind::Min
-                if input.as_ref().is_some_and(|argument| {
-                    tidb_expr::pushdown_catalog::from_expression(argument).is_some()
-                }) =>
-            {
-                crate::remote_scan::PushdownAggregateKind::Min
-            }
-            AggKind::Max
-                if input.as_ref().is_some_and(|argument| {
-                    tidb_expr::pushdown_catalog::from_expression(argument).is_some()
-                }) =>
-            {
-                crate::remote_scan::PushdownAggregateKind::Max
-            }
-            AggKind::Avg
-                if input.as_ref().is_some_and(|argument| {
-                    tidb_expr::pushdown_catalog::from_expression(argument).is_some()
-                }) =>
-            {
+            AggKind::Sum if input_supported => crate::remote_scan::PushdownAggregateKind::Sum,
+            AggKind::Min if input_supported => crate::remote_scan::PushdownAggregateKind::Min,
+            AggKind::Max if input_supported => crate::remote_scan::PushdownAggregateKind::Max,
+            AggKind::Avg if input_supported => {
                 let input = function.arg.as_ref()?;
                 let mut count_type = FieldType::new(FieldTypeCode::LongLong);
                 count_type.set_flen(21);
@@ -2642,11 +2570,7 @@ fn grouped_stream_partial_plan(
         };
         functions.push(crate::remote_scan::PushdownAggregateFunction {
             kind,
-            input: if matches!(function.kind, AggKind::Count) && input_offset.is_none() {
-                None
-            } else {
-                input
-            },
+            input,
             output_type: output_type.clone(),
         });
         function_states.push((
@@ -2800,7 +2724,7 @@ fn accept_grouped_partial(
 
 /// Inserts the accepted TiKV partial aggregation below its reader so whole-tree
 /// costing sees the same `scan -> cop agg -> reader -> final agg` shape as Go.
-fn pushed_grouped_partial_candidate(
+pub(super) fn pushed_grouped_partial_candidate(
     candidate: tidb_planner::candidate_cost::Candidate,
     output_rows: f64,
     output_row_size: f64,
@@ -2852,6 +2776,7 @@ fn pushed_grouped_partial_candidate(
 /// The same decomposable function set as grouped StreamAgg, but with no
 /// ordering requirement. This is Go's cop HashAgg split.
 fn grouped_hash_partial_plan(
+    ctx: &crate::StmtContext,
     select: &tidb_ast::SelectStmt,
     state: &AggPipelineState,
     group_by: &[Expression],
@@ -2863,6 +2788,7 @@ fn grouped_hash_partial_plan(
         return None;
     }
     grouped_stream_partial_plan(
+        ctx,
         select,
         state,
         group_by,
@@ -2880,7 +2806,8 @@ fn grouped_hash_partial_plan(
 /// `AVG` is decomposable but is represented by two cop functions. The second
 /// vector records how each original root aggregate consumes those partial
 /// columns, so the root can retain Go's `avg(count, sum)` final descriptor.
-fn global_hash_partial_plan(
+fn global_partial_plan(
+    ctx: &crate::StmtContext,
     select: &tidb_ast::SelectStmt,
     state: &AggPipelineState,
     group_by: &[Expression],
@@ -2915,7 +2842,8 @@ fn global_hash_partial_plan(
             return None;
         }
         if input.as_ref().is_some_and(|argument| {
-            tidb_expr::pushdown_catalog::from_expression(argument).is_none()
+            !tidb_expr::pushdown_catalog::from_expression_in(argument, ctx)
+                .is_ok_and(|described| described.is_some())
         }) {
             return None;
         }
@@ -2965,71 +2893,6 @@ fn global_hash_partial_plan(
     (!functions.is_empty()).then_some((functions, sources))
 }
 
-/// The bounded grouped aggregate TiKV can execute as a partial HashAgg.
-///
-/// Go chooses this split for TPCC delivery: one plain group-key carrier and
-/// one non-DISTINCT SUM over a scan whose complete predicate is already in
-/// its ranges.  Keep the contract structural so another statement with the
-/// same physical shape receives the same plan, while HAVING/ORDER/LIMIT and
-/// every richer aggregate remain on the ordinary root path.
-fn grouped_sum_plan(
-    select: &tidb_ast::SelectStmt,
-    state: &AggPipelineState,
-    group_by: &[Expression],
-    has_pre_agg_applies: bool,
-    scan_consumed_where: bool,
-) -> Option<GroupedSumPlan> {
-    if select.rollup
-        || select.distinct
-        || select.having.is_some()
-        || !select.order_by.is_empty()
-        || select.limit.is_some()
-        || !state.window_calls.is_empty()
-        || has_pre_agg_applies
-        || !scan_consumed_where
-        || group_by.len() != 1
-        || state.agg_funcs.len() != 2
-        || state.slots.len() != 2
-        || select.fields.fields().len() != 2
-    {
-        return None;
-    }
-    let group_input = group_by[0]
-        .as_column()
-        .and_then(|column| usize::try_from(column.index).ok())?;
-    let mut group_func = None;
-    let mut sum_func = None;
-    for (index, func) in state.agg_funcs.iter().enumerate() {
-        if func.distinct || !func.extra_args.is_empty() || !func.order_by.is_empty() {
-            return None;
-        }
-        let input = func
-            .arg
-            .as_ref()
-            .and_then(Expression::as_column)
-            .and_then(|column| usize::try_from(column.index).ok())?;
-        match &func.kind {
-            AggKind::FirstRow if input == group_input => group_func = Some(index),
-            AggKind::Sum => sum_func = Some((index, input)),
-            _ => return None,
-        }
-    }
-    let group_func = group_func?;
-    let (sum_func, sum_input) = sum_func?;
-    if !state.slots.iter().all(
-        |slot| matches!(slot, OutputSlot::Agg(index) if *index == group_func || *index == sum_func),
-    ) {
-        return None;
-    }
-    Some(GroupedSumPlan {
-        group_func,
-        sum_func,
-        group_input,
-        sum_input,
-        group_type: state.types.get(group_func)?.clone(),
-        sum_type: state.types.get(sum_func)?.clone(),
-    })
-}
 
 /// Source-table identities behind a derived relation's physical columns.
 /// Aggregate outputs deliberately remain `None` and therefore print as
@@ -3143,12 +3006,38 @@ fn build_aggregation(
         })
         .filter(|order| order.len() == group_by.len())
         .unwrap_or_else(|| (0..group_by.len()).collect());
+    let projected_group_order = |groups: &[Expression]| {
+        groups
+            .iter()
+            .map(|group| {
+                let offset = usize::try_from(group.as_column()?.index).ok()?;
+                select.fields.fields().iter().position(|field| match field {
+                    tidb_ast::SelectField::Expr {
+                        expr: tidb_ast::Expr::Column(path),
+                        ..
+                    } => resolver
+                        .resolve(path)
+                        .is_some_and(|column| column.0 == offset),
+                    _ => false,
+                })
+            })
+            .collect::<Option<Vec<_>>>()
+    };
+    // aggregation_order proves the written non-fixed group order matches
+    // the source. Its physical permutation moves only equality-fixed keys
+    // to the end, so both orders remain valid after projection.
+    let mut output_orders: Vec<Vec<usize>> = projected_group_order(&group_by).into_iter().collect();
     let reordered_groups = !physical_group_order.iter().copied().eq(0..group_by.len());
     if reordered_groups {
         group_by = physical_group_order
             .iter()
             .map(|index| group_by[*index].clone())
             .collect();
+    }
+    if let Some(order) = projected_group_order(&group_by) {
+        if !output_orders.contains(&order) {
+            output_orders.push(order);
+        }
     }
     let physical_trace_select;
     let traced_select = if reordered_groups && traced_select.group_by.len() == group_by.len() {
@@ -3214,12 +3103,13 @@ fn build_aggregation(
     // not an `Aggregation` sits above it -- and the aggregate shapes are
     // exactly the ones that most need it, because they drag every source row
     // across the seam and then return one row.
-    let (executed_where, pushed_where) = super::access::negotiate_scan_filter(
+    let (executed_where, pushed_where, _) = super::access::negotiate_scan_filter(
         select,
         resolver.scope,
         &mut source,
         ctx,
         access_consumed_where,
+        None,
         trace.as_deref_mut(),
     );
     let mut explained_where = trace.is_some().then_some(pushed_where);
@@ -3374,7 +3264,6 @@ fn build_aggregation(
         Some(predicate) => Some((predicate, resolver.scope.clone())),
         None => None,
     };
-    let scan_consumed_where = select.where_clause.is_some() && executed_where.is_none();
     if let Some((predicate, predicate_scope)) = &executed_where {
         let predicate_resolver = ScopeResolver {
             scope: predicate_scope,
@@ -3451,6 +3340,27 @@ fn build_aggregation(
                     source = trace.meter(source);
                 }
             }
+        }
+    }
+
+    // Go builds SelectLock after WHERE and before aggregation. Retain the
+    // input identities here, before projections or partial aggregation can
+    // replace them with aggregate state. The operator is also the boundary
+    // that prevents aggregate pushdown from bypassing row locking.
+    if select
+        .lock
+        .as_ref()
+        .is_some_and(|lock| lock.kind == tidb_ast::LockKind::Update)
+    {
+        let locking_scope = executed_where
+            .as_ref()
+            .map_or(resolver.scope, |(_, scope)| scope);
+        source = super::select_lock::wrap(
+            source, select, locking_scope, catalog, current_db, ctx,
+        )?;
+        if let Some(trace) = trace.as_deref_mut() {
+            trace.select_lock();
+            source = trace.meter(source);
         }
     }
 
@@ -3601,235 +3511,135 @@ fn build_aggregation(
         .then(|| single_max_min_elimination(&group_by, state))
         .flatten();
 
-    // Access-path candidates carry the same post-predicate cardinality Go's
-    // physical task chooser prices. Prefer it over the broader join estimate
-    // so a tiny covering index range does not inherit the pseudo-statistics
-    // fallback of its enclosing statement.
-    let candidate_input_rows = input_candidate.as_ref().map(|candidate| {
-        tidb_planner::candidate_cost::evaluate(
-            candidate,
-            &tidb_planner::candidate_cost::CostEnv::default(),
-            tidb_planner::task_type::TaskType::Root,
-        )
-        .rows
-    });
-    let source_input_rows = candidate_input_rows.or(joined_logical_rows).or(logical_rows);
-    let (has_set_source, set_source_rows) = set_source_stat_rows(
-        select.from.as_ref(),
-        catalog,
-        current_db,
-    );
-    let aggregate_input_rows = source_input_rows.or(set_source_rows.filter(|_| has_set_source));
-    let source_is_index_reader = matches!(
-        input_candidate.as_ref(),
-        Some(tidb_planner::candidate_cost::Candidate::Reader {
-            kind: tidb_planner::candidate_cost::ReaderKind::Index,
-            ..
+    // Compare complete physical alternatives before any accepted partial stage
+    // rewires the source schema or aggregate arguments.
+    let source_input_rows = input_candidate
+        .as_ref()
+        .map(|candidate| {
+            tidb_planner::candidate_cost::evaluate(
+                candidate,
+                ctx.optimizer_cost_env(),
+                tidb_planner::task_type::TaskType::Root,
+            )
+            .rows
         })
-    );
-    let source_has_real_stats =
-        direct_source_has_real_stats(select.from.as_ref(), catalog, current_db);
-
-    // Go's physical optimizer chooses a root StreamAgg for the two Sysbench
-    // range families once the range has been fully consumed by a table/index
-    // scan. A global aggregate has no ordering requirement, so Go also
-    // enumerates root StreamAgg for COUNT(DISTINCT) above a join and lets the
-    // cost comparison decide. Keep this deliberately narrow: one direct
-    // global COUNT/SUM without an Apply.
-    let complex_global_count = select.from.is_some()
-        && crate::driver::access::single_kv_table(&select.from, catalog, current_db).is_none()
-        && state.agg_funcs.len() == 1
-        && matches!(state.agg_funcs[0].kind, AggKind::Count);
-    let complex_stream_agg =
-        complex_global_count && prefer_stream_agg_for_small_global(aggregate_input_rows);
-    // A decorrelated `EXISTS`/`NOT EXISTS` places the aggregate above a semi/
-    // anti join rather than a bare consumed scan, so the scan shortcut below
-    // must not fire. Go enumerates BOTH root implementations there and lets
-    // the cost model decide (`getStreamAggs` keeps applying: a global
-    // aggregate has no group-by ordering requirement).
-    let semi_join_stream_preferred = semi_join_source
-        && joined_logical_rows
-            .map(prefer_stream_agg_for_global_count)
-            .unwrap_or(false);
-    let small_index_global_count = source_is_index_reader
-        && group_by.is_empty()
-        && state.agg_funcs.len() == 1
-        && matches!(state.agg_funcs[0].kind, AggKind::Count)
-        && !state.agg_funcs[0].distinct
-        && state.agg_funcs[0].extra_args.is_empty()
-        && state.agg_funcs[0].order_by.is_empty()
-        && joined_logical_rows
-            .or(logical_rows)
-            .is_some_and(|rows| rows <= 10_000.0);
-    // A global DECIMAL SUM enumerates Go's StreamAgg candidate whenever the
-    // estimated input makes its serial fold cheaper than the concurrent hash
-    // table (`getStreamAggs` always applies for an EMPTY group-by). Over
-    // pseudo statistics the estimates collapse to a couple of rows and STREAM
-    // wins; over analyzed millions HASH wins -- both observed on Go nightly.
-    let global_decimal_sum_shape = state.agg_funcs.len() == 1
-        && matches!(state.agg_funcs[0].kind, AggKind::Sum)
-        && !state.agg_funcs[0].distinct
-        && state.agg_funcs[0].extra_args.is_empty()
-        && state.agg_funcs[0].order_by.is_empty()
-        && state.agg_funcs[0]
-            .arg
-            .as_ref()
-            .and_then(|argument| argument.static_type())
-            .is_some_and(|field_type| {
-                field_type.code() == tidb_datatype::FieldTypeCode::NewDecimal
-            });
-    // Go costs the AGGREGATION's input -- its child's cardinality -- which
-    // here is the FROM scope's row estimate AFTER predicate pushdown
-    // (`Selection estRows` in Go's plan).
-    let global_decimal_sum_preferred = global_decimal_sum_shape
-        && source_input_rows.is_some_and(prefer_stream_agg_for_global_count);
-    let small_global_distinct = !complex_global_count
-        && group_by.is_empty()
-        && state.agg_funcs.len() == 1
-        && matches!(state.agg_funcs[0].kind, AggKind::Count)
-        && state.agg_funcs[0].distinct
-        && state.agg_funcs[0].extra_args.is_empty()
-        && state.agg_funcs[0].order_by.is_empty()
-        && prefer_stream_agg_for_small_global(source_input_rows);
-    let stream_plan = if !force_stream
-        && !select.rollup
-        && select.from.is_some()
-        && group_by.is_empty()
-        && !has_pre_agg_applies
-        && (complex_stream_agg
-            || semi_join_stream_preferred
-            || global_decimal_sum_preferred
-            || small_index_global_count
-            || small_global_distinct
-            || (!complex_global_count
-                && !semi_join_source
-                && scan_consumed_where
-                && source_input_rows.is_none_or(prefer_stream_agg_for_global_count)
-                && ((!source_is_index_reader
-                    || select.where_clause.as_ref().is_some_and(contains_logic_or))
-                    || source_input_rows.is_some_and(prefer_stream_agg_for_global_count))))
-        && state.agg_funcs.len() == 1
-        && select.fields.fields().len() == 1
-    {
-        let func = &state.agg_funcs[0];
-        if !func.extra_args.is_empty() || !func.order_by.is_empty() {
-            None
-        } else {
-            match (&func.kind, func.arg.as_ref(), func.distinct) {
-                (AggKind::Count, Some(_), false) => Some(if complex_global_count {
-                    GlobalStreamAggPlan::CountComplex
-                } else {
-                    GlobalStreamAggPlan::Count
-                }),
-                (AggKind::Count, Some(_), true) => Some(GlobalStreamAggPlan::CountDistinct),
-                (AggKind::Sum, Some(argument), false) if global_decimal_sum_preferred => {
-                    Some(GlobalStreamAggPlan::DecimalSum)
-                }
-                (AggKind::Sum, Some(argument), false) => argument
-                    .static_type()
-                    .and_then(integer_decimal_precision)
-                    .map(|precision| GlobalStreamAggPlan::IntegerSum { precision }),
-                _ => None,
-            }
-        }
+        .or(joined_logical_rows)
+        .or(logical_rows);
+    let output_rows = if group_by.is_empty() {
+        Some(1.0)
     } else {
-        None
+        grouped_logical_rows
     };
-
-    // Go's coster splits the high-cardinality Sysbench range aggregates into
-    // a TiKV partial stage and a root final stage. The access source owns the
-    // estimate and accepts only when that same decision applies; accepting
-    // also changes its output schema to the one partial-result column.
-    let partial_stream_agg = stream_plan.is_some_and(|plan| {
-        if matches!(plan, GlobalStreamAggPlan::Count)
-            && source_is_index_reader
-            && scan_consumed_where
-            && source_has_real_stats
-            && !prefer_partial_agg_for_input(source_input_rows)
-        {
-            return false;
+    let global_partial = global_partial_plan(
+        ctx,
+        select,
+        state,
+        &group_by,
+        has_pre_agg_applies,
+        executed_where.is_none(),
+    );
+    let grouped_hash_partial = grouped_hash_partial_plan(
+        ctx,
+        select,
+        state,
+        &group_by,
+        has_pre_agg_applies,
+        false,
+        executed_where.is_none(),
+    );
+    let grouped_stream_partial = grouped_stream_partial_plan(
+        ctx,
+        select,
+        state,
+        &group_by,
+        has_pre_agg_applies,
+        grouped_stream_ordered,
+        executed_where.is_none(),
+        false,
+    );
+    let descriptor = |streamed: bool| {
+        if let Some((functions, _)) = &global_partial {
+            return Some(PushdownPartialAggregate::Global {
+                functions: functions.clone(),
+                streamed,
+            });
         }
-        let argument = state.agg_funcs[0]
-            .arg
-            .as_ref()
-            .expect("a global stream aggregate has an argument");
-        let input_offset = argument
-            .as_column()
-            .and_then(|column| usize::try_from(column.index).ok());
-        let output_type = state.types[0].clone();
-        let aggregate = match plan {
-            GlobalStreamAggPlan::Count
-                if input_offset.is_some()
-                    || matches!(
-                        argument,
-                        Expression::Constant(constant)
-                            if matches!(constant.value, Datum::Int(1) | Datum::UInt(1))
-                    ) =>
-            {
-                PushdownPartialAggregate::Count {
-                    input_offset,
-                    output_type,
-                }
-            }
-            GlobalStreamAggPlan::Count => return false,
-            GlobalStreamAggPlan::CountComplex | GlobalStreamAggPlan::CountDistinct => return false,
-            GlobalStreamAggPlan::IntegerSum { .. } => {
-                let Some(input_offset) = input_offset else {
-                    return false;
-                };
-                PushdownPartialAggregate::Sum {
-                    input_offset,
-                    output_type,
-                }
-            }
-            // A decimal SUM streams TiKV's partial over its WHOLE argument
-            // expression (`funcs:sum(mul(...))` on the cop line), so it needs
-            // the expression-capable Global descriptor rather than a single
-            // input column.
-            GlobalStreamAggPlan::DecimalSum => {
-                match global_hash_partial_plan(
-                    select,
-                    state,
-                    &group_by,
-                    has_pre_agg_applies,
-                    executed_where.is_none(),
-                ) {
-                    Some((functions, _sources)) => PushdownPartialAggregate::Global { functions },
-                    None => return false,
-                }
-            }
+        let plan = if streamed {
+            &grouped_stream_partial
+        } else {
+            &grouped_hash_partial
         };
-        source
-            .table_access()
-            .is_some_and(|access| access.accept_partial_aggregate(&aggregate, ctx))
-    });
+        plan.as_ref().map(|plan| PushdownPartialAggregate::Grouped {
+            group_offsets: plan.group_offsets.clone(),
+            group_types: plan.group_types.clone(),
+            functions: plan.functions.clone(),
+            streamed,
+        })
+    };
+    let hash_descriptor = descriptor(false);
+    let stream_descriptor = descriptor(true);
+    let mut admitted = |descriptor: &Option<PushdownPartialAggregate>| {
+        descriptor.as_ref().is_some_and(|descriptor| {
+            source
+                .table_access()
+                .is_some_and(|access| access.supports_partial_aggregate(descriptor, ctx))
+        })
+    };
+    let hash_admitted = admitted(&hash_descriptor);
+    let stream_admitted = admitted(&stream_descriptor);
+    let choice = choose_aggregate(
+        input_candidate.as_ref(),
+        source_input_rows,
+        output_rows,
+        &state.types,
+        state.agg_funcs.len(),
+        &group_by,
+        group_by.is_empty() || grouped_stream_ordered,
+        [
+            hash_descriptor.as_ref().filter(|_| hash_admitted),
+            stream_descriptor.as_ref().filter(|_| stream_admitted),
+        ],
+        ctx,
+    );
+    let grouped_stream_ordered = grouped_stream_ordered && choice.streamed;
+    let stream_plan = (!force_stream
+        && !select.rollup
+        && group_by.is_empty()
+        && aggregation_elimination.is_none()
+        && max_min_elimination.is_none()
+        && choice.streamed)
+        .then(|| match state.agg_funcs.as_slice() {
+            [func] if func.extra_args.is_empty() && func.order_by.is_empty() => {
+                match (&func.kind, func.arg.as_ref(), func.distinct) {
+                    (AggKind::Count, Some(_), false) => GlobalStreamAggPlan::CountComplex,
+                    (AggKind::Count, Some(_), true) => GlobalStreamAggPlan::CountDistinct,
+                    (AggKind::Sum, Some(argument), false) => argument
+                        .static_type()
+                        .and_then(integer_decimal_precision)
+                        .map(|precision| GlobalStreamAggPlan::IntegerSum { precision })
+                        .unwrap_or(GlobalStreamAggPlan::DecimalSum),
+                    _ => GlobalStreamAggPlan::General,
+                }
+            }
+            _ => GlobalStreamAggPlan::General,
+        });
 
     // A global unordered aggregate uses the same partial/final split as Go's
     // PhysicalHashAgg when every function and complete argument expression
     // can run in TiKV. Acceptance changes the scan output to one partial
     // column per function, so the root aggregate is rewired immediately.
-    let partial_global_hash_agg_funcs = (!force_stream
+    let partial_global_agg_funcs = (!force_stream
         && aggregation_elimination.is_none()
         && max_min_elimination.is_none()
-        && !partial_stream_agg
-        // If Go selected a root StreamAgg but rejected only its cop partial
-        // stage (the tiny covering COUNT range), do not replace that root
-        // candidate with an unordered partial HashAgg.
-        && !matches!(stream_plan, Some(GlobalStreamAggPlan::Count)))
-        .then(|| {
-            global_hash_partial_plan(
-                select,
-                state,
-                &group_by,
-                has_pre_agg_applies,
-                executed_where.is_none(),
-            )
-        })
+        && group_by.is_empty()
+        && choice.partial)
+        .then_some(global_partial)
         .flatten()
         .and_then(|(functions, sources)| {
             let function_count = functions.len();
             let aggregate = PushdownPartialAggregate::Global {
                 functions: functions.clone(),
+                streamed: choice.streamed,
             };
             if !source
                 .table_access()
@@ -3866,92 +3676,14 @@ fn build_aggregation(
             }
             Some(function_count)
         });
-    let partial_global_hash = partial_global_hash_agg_funcs.is_some();
-
-    // The TPCC delivery grouped SUM is the corresponding HashAgg split. TiKV
-    // returns partial aggregate functions before group keys, so acceptance
-    // changes the physical root aggregation to [SUM, FIRST_ROW(group)] and
-    // remaps the select slots; stage 10 then builds the real [group, SUM]
-    // projection Go has above that final aggregation.
-    let partial_grouped_sum = !force_stream
-        && aggregation_elimination.is_none()
-        && grouped_sum_plan(
-            select,
-            state,
-            &group_by,
-            has_pre_agg_applies,
-            scan_consumed_where,
-        )
-        .is_some_and(|plan| {
-            let aggregate = PushdownPartialAggregate::GroupBySum {
-                group_offset: plan.group_input,
-                sum_offset: plan.sum_input,
-                sum_type: plan.sum_type.clone(),
-                group_type: plan.group_type.clone(),
-            };
-            if !source
-                .table_access()
-                .is_some_and(|access| access.accept_partial_aggregate(&aggregate, ctx))
-            {
-                return false;
-            }
-
-            let old_funcs = std::mem::take(&mut state.agg_funcs);
-            state.agg_funcs = vec![
-                old_funcs[plan.sum_func].clone(),
-                old_funcs[plan.group_func].clone(),
-            ];
-            let old_names = std::mem::take(&mut state.names);
-            state.names = vec![
-                old_names[plan.sum_func].clone(),
-                old_names[plan.group_func].clone(),
-            ];
-            let old_types = std::mem::take(&mut state.types);
-            state.types = vec![
-                old_types[plan.sum_func].clone(),
-                old_types[plan.group_func].clone(),
-            ];
-            for slot in &mut state.slots {
-                if let OutputSlot::Agg(index) = slot {
-                    *index = if *index == plan.sum_func {
-                        0
-                    } else {
-                        debug_assert_eq!(*index, plan.group_func);
-                        1
-                    };
-                }
-            }
-
-            let mut partial_sum = source.schema().columns[0].clone();
-            partial_sum.index = 0;
-            let mut partial_group = source.schema().columns[1].clone();
-            partial_group.index = 1;
-            state.agg_funcs[0].arg = Some(Expression::Column(partial_sum));
-            state.agg_funcs[1].arg = Some(Expression::Column(partial_group.clone()));
-            group_by.clear();
-            group_by.push(Expression::Column(partial_group));
-            state.partial_grouped_sum = true;
-            true
-        });
+    let partial_global = partial_global_agg_funcs.is_some();
 
     // An unordered scan can run the same decomposable functions in a TiKV
     // partial HashAgg. The final root HashAgg merges the function-first
     // partial rows.
     let partial_grouped_hash_agg_funcs =
-        ((derived_output || prefer_partial_agg_for_input(source_input_rows))
-            && !force_stream
-            && aggregation_elimination.is_none()
-            && !partial_grouped_sum)
-            .then(|| {
-                grouped_hash_partial_plan(
-                    select,
-                    state,
-                    &group_by,
-                    has_pre_agg_applies,
-                    grouped_stream_ordered,
-                    executed_where.is_none(),
-                )
-            })
+        (choice.partial && !choice.streamed && !force_stream && aggregation_elimination.is_none())
+            .then_some(grouped_hash_partial)
             .flatten()
             .and_then(|plan| {
                 accept_grouped_partial(
@@ -3970,23 +3702,12 @@ fn build_aggregation(
     // stream the partial groups through the reader. The final root stage
     // keeps the same grouping order; COUNT alone changes kind because it must
     // sum per-region partial counts rather than count partial rows.
-    let partial_grouped_stream_agg_funcs =
-        ((derived_output || prefer_partial_agg_for_input(source_input_rows))
-            && !force_stream
-            && aggregation_elimination.is_none()
-            && !partial_grouped_sum
-            && !partial_grouped_hash)
-        .then(|| {
-            grouped_stream_partial_plan(
-                select,
-                state,
-                &group_by,
-                has_pre_agg_applies,
-                grouped_stream_ordered,
-                executed_where.is_none(),
-                false,
-            )
-        })
+    let partial_grouped_stream_agg_funcs = (choice.partial
+        && choice.streamed
+        && !force_stream
+        && aggregation_elimination.is_none()
+        && !partial_grouped_hash)
+        .then_some(grouped_stream_partial)
         .flatten()
         .and_then(|plan| {
             accept_grouped_partial(
@@ -4046,7 +3767,6 @@ fn build_aggregation(
     if !force_stream
         && !grouped_stream_ordered
         && aggregation_elimination.is_none()
-        && !partial_grouped_sum
         && !partial_grouped_hash
         && !partial_grouped_stream
         && !group_by.is_empty()
@@ -4090,7 +3810,6 @@ fn build_aggregation(
     }
     let grouped_input_projection = if !force_stream
         && aggregation_elimination.is_none()
-        && !partial_grouped_sum
         && !partial_grouped_hash
         && !partial_grouped_stream
         && !physical_source_columns
@@ -4289,7 +4008,7 @@ fn build_aggregation(
     // Go's attached plan therefore uses the partial aggregation's output
     // cardinality as the final HashAgg/StreamAgg input cardinality.
     let candidate_input_rows =
-        if partial_global_hash || partial_grouped_hash || partial_grouped_stream {
+        if partial_global || partial_grouped_hash || partial_grouped_stream {
             candidate_output_rows
         } else {
             joined_logical_rows.or(logical_rows)
@@ -4306,14 +4025,14 @@ fn build_aggregation(
         .collect::<Vec<_>>();
     let input_candidate = match (input_candidate, candidate_output_rows) {
         (Some(child), Some(output_rows)) => {
-            if let Some(num_agg_funcs) = partial_global_hash_agg_funcs {
+            if let Some(num_agg_funcs) = partial_global_agg_funcs {
                 Some(pushed_grouped_partial_candidate(
                     child,
                     output_rows,
                     candidate_row_size,
                     num_agg_funcs,
                     &candidate_group_items,
-                    false,
+                    choice.streamed,
                 ))
             } else if let Some(num_agg_funcs) = partial_grouped_hash_agg_funcs {
                 Some(pushed_grouped_partial_candidate(
@@ -4493,8 +4212,7 @@ fn build_aggregation(
                 ctx.clone(),
             ))
         }
-    } else if partial_global_hash
-        && stream_plan.is_some_and(|plan| matches!(plan, GlobalStreamAggPlan::DecimalSum))
+    } else if partial_global && stream_plan.is_some()
     {
         // Go's `StreamAgg` root over TiKV's partial SUM: a serial one-group
         // fold, no hash table. The partial rewiring above already pointed
@@ -4505,7 +4223,7 @@ fn build_aggregation(
             source,
             ctx.clone(),
         ))
-    } else if partial_global_hash {
+    } else if partial_global {
         Box::new(HashAggExec::new(
             ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
             group_by,
@@ -4516,14 +4234,7 @@ fn build_aggregation(
         ))
     } else if let Some(stream_plan) = stream_plan {
         let mut agg_funcs = std::mem::take(&mut state.agg_funcs);
-        if partial_stream_agg {
-            let mut partial = source.schema().columns[0].clone();
-            partial.index = 0;
-            agg_funcs[0].arg = Some(Expression::Column(partial));
-            if matches!(stream_plan, GlobalStreamAggPlan::Count) {
-                agg_funcs[0].kind = AggKind::FinalCount;
-            }
-        } else if matches!(stream_plan, GlobalStreamAggPlan::DecimalSum) {
+        if matches!(stream_plan, GlobalStreamAggPlan::DecimalSum) {
             // Go's InjectProjBelowAgg extracts a SCALAR-EXPRESSION argument
             // into a Projection below the aggregate; SUM then folds one
             // DECIMAL column. A bare-column argument needs no extraction.
@@ -4589,7 +4300,7 @@ fn build_aggregation(
             source,
             ctx.clone(),
         ))
-    } else if grouped_stream_ordered && !partial_grouped_sum {
+    } else if grouped_stream_ordered {
         let output_positions = state
             .grouped_stream_output_positions
             .take()
@@ -4612,6 +4323,12 @@ fn build_aggregation(
             ctx.statement_memory(),
         ))
     };
+    state.grouped_output_orders =
+        if !select.rollup && (force_stream || grouped_stream_ordered) {
+            output_orders
+        } else {
+            Vec::new()
+        };
     let root = match trace {
         Some(trace) => {
             if let Some(expressions) = aggregation_elimination.as_deref() {
@@ -4635,33 +4352,22 @@ fn build_aggregation(
                 );
             } else if force_stream {
                 trace.enforced_stream_agg(traced_select, &qualify, grouped_logical_rows);
-            } else if partial_global_hash {
+            } else if partial_global {
                 if !trace.partial_grouped_hash_agg(traced_select, &qualify, Some(1.0)) {
                     trace.refuse("partial global HashAgg child is not a supported scan");
                 }
                 trace.final_grouped_hash_agg(traced_select, &qualify);
-                if stream_plan.is_some_and(|plan| matches!(plan, GlobalStreamAggPlan::DecimalSum)) {
+                if stream_plan.is_some() {
                     trace.rename_partial_hash_agg_to_stream();
                 }
             } else if let Some(stream_plan) = stream_plan {
-                if partial_stream_agg {
-                    if !trace.partial_stream_agg(
-                        traced_select,
-                        &qualify,
-                        matches!(
-                            stream_plan,
-                            GlobalStreamAggPlan::IntegerSum { .. }
-                                | GlobalStreamAggPlan::DecimalSum
-                        ),
-                    ) {
-                        trace.refuse("partial StreamAgg child is not a bare table/index scan");
-                    }
-                } else {
+                {
                     let reader_ready = trace.scan_reader_or_point_get();
                     if !reader_ready
                         && !matches!(
                             stream_plan,
-                            GlobalStreamAggPlan::CountComplex
+                            GlobalStreamAggPlan::General
+                                | GlobalStreamAggPlan::CountComplex
                                 | GlobalStreamAggPlan::CountDistinct
                                 // A decimal SUM without an accepted TiKV
                                 // partial stage folds full rows serially at
@@ -4674,7 +4380,7 @@ fn build_aggregation(
                     }
                 }
                 let mut injected_projection = false;
-                if !partial_stream_agg {
+                {
                     match stream_plan {
                         GlobalStreamAggPlan::IntegerSum { precision } => {
                             trace.sum_cast_projection(traced_select, &qualify, precision);
@@ -4692,15 +4398,9 @@ fn build_aggregation(
                 trace.stream_agg(
                     traced_select,
                     &qualify,
-                    partial_stream_agg
-                        || injected_projection
+                    injected_projection
                         || matches!(stream_plan, GlobalStreamAggPlan::IntegerSum { .. }),
                 );
-            } else if partial_grouped_sum {
-                if !trace.partial_grouped_sum(traced_select, &qualify, grouped_logical_rows) {
-                    trace.refuse("partial grouped SUM child is not a bare table scan");
-                }
-                trace.final_grouped_sum_hash_agg(traced_select, &qualify);
             } else if partial_grouped_hash {
                 if !trace.partial_grouped_hash_agg(traced_select, &qualify, grouped_logical_rows) {
                     trace.refuse("partial grouped HashAgg child is not a supported scan");
@@ -4801,10 +4501,7 @@ fn build_aggregation(
             })
         }
         (Some(child), Some(input_rows), Some(output_rows))
-            if aggregation_elimination.is_none()
-                && !select.rollup
-                && !partial_stream_agg
-                && !partial_grouped_sum =>
+            if aggregation_elimination.is_none() && !select.rollup =>
         {
             let row_size = tidb_planner::candidate_cost::RowSize::Fixed(candidate_row_size);
             if force_stream

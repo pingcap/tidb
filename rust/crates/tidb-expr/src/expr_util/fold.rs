@@ -39,11 +39,9 @@
 //!   when `IsInNullRejectCheck` is set and SOME arguments are non-constant. It
 //!   is reproduced through the injected [`FunctionBuilder`], and so inherits
 //!   that boundary's deferred type inference.
-//! - `// narrowing:` `ParamMarker.GetUserVar(ctx)`. Reading a prepared
-//!   statement's bound parameter needs the session's parameter values, which
-//!   this crate does not carry. A `ParamMarker` constant therefore folds to
-//!   ITSELF and is reported deferred, which is Go's own behaviour on the error
-//!   path of that same call.
+//! Cacheable parameter-dependent calls retain their expression tree instead
+//! of creating Go's deferred-constant wrapper. Reevaluation uses the current
+//! parameter context, and cannot freeze a branch or a planning-time value.
 
 use super::builder::FunctionBuilder;
 use super::substitute::{eval_once, SubstituteError, SubstituteOptions};
@@ -133,6 +131,9 @@ pub(super) fn fold_constant_value(
     ctx: &impl Columns,
 ) -> Result<Datum, SubstituteError> {
     if let Expression::Constant(constant) = expr {
+        if constant.param_marker.is_some() {
+            return Ok(eval_once(expr, ctx)?);
+        }
         if let Some(deferred) = constant.deferred_expr.as_deref() {
             return Ok(eval_once(deferred, ctx)?);
         }
@@ -152,10 +153,11 @@ fn fold_constant_inner(
         Expression::ScalarFunction(function) => fold_scalar_function(expr, function, ctx, opts),
         Expression::Constant(constant) => {
             if constant.param_marker.is_some() {
-                // `// narrowing:` see the module header -- no session
-                // parameter values here, so this takes Go's error path, which
-                // returns the expression unchanged and marks it deferred.
-                return (expr.clone(), true);
+                let mut folded = constant.clone();
+                if let Ok(value) = constant.eval_in(ctx) {
+                    folded.value = value;
+                }
+                return (Expression::Constant(folded), true);
             }
             if let Some(deferred) = constant.deferred_expr.as_deref() {
                 let Ok(value) = eval_once(deferred, ctx) else {
@@ -187,14 +189,17 @@ fn fold_scalar_function(
     // parameters may later select the other.
     let over_optimized =
         opts.use_plan_cache && super::predicates::contain_mutable_const(std::slice::from_ref(expr));
-    if !over_optimized {
-        match name {
-            "isnull" => return is_null_handler(expr, function, ctx, opts),
-            "if" => return if_fold_handler(expr, function, ctx, opts),
-            "ifnull" => return if_null_fold_handler(expr, function, ctx, opts),
-            "case" => return case_when_handler(expr, function, ctx, opts),
-            _ => {}
-        }
+    if over_optimized {
+        let mut retained = expr.clone();
+        crate::fold_constant_in_mode(&mut retained, ctx, crate::ConstantFoldMode::Normal);
+        return (retained, true);
+    }
+    match name {
+        "isnull" => return is_null_handler(expr, function, ctx, opts),
+        "if" => return if_fold_handler(expr, function, ctx, opts),
+        "ifnull" => return if_null_fold_handler(expr, function, ctx, opts),
+        "case" => return case_when_handler(expr, function, ctx, opts),
+        _ => {}
     }
 
     let args = function.get_args();
@@ -422,8 +427,8 @@ fn if_null_fold_handler(
     // that will actually be returned.
     let mut result = folded;
     if let (Some(src), Some(dst)) = (args[1].static_type().cloned(), static_type_mut(&mut result)) {
-        dst.set_charset_name(src.charset_name().to_owned());
-        dst.set_collation_name(src.collation_name().to_owned());
+        dst.set_charset_name(src.charset_name());
+        dst.set_collation_name(src.collation_name());
     }
     (result, is_constant)
 }

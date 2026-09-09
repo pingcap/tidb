@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
 use tidb_codec::{decode_bytes, encode_bytes};
@@ -402,19 +402,25 @@ impl RegionRecoveryLoader for PdRegionLoader {
         &mut self,
         metadata: &RegionMetadata,
         leader_store_id: u64,
+        resolved_stores: &mut BTreeMap<u64, Option<StoreMetadata>>,
     ) -> Result<RegionLocation, RegionLoadError> {
-        let mut resolved = HashMap::<u64, Option<PdStore>>::new();
         for peer in &metadata.peers {
-            if let std::collections::hash_map::Entry::Vacant(entry) = resolved.entry(peer.store_id)
+            if let std::collections::btree_map::Entry::Vacant(entry) =
+                resolved_stores.entry(peer.store_id)
             {
                 entry.insert(
                     self.client
                         .get_store(peer.store_id)
-                        .map_err(region_load_error)?,
+                        .map_err(region_load_error)?
+                        .map(|store| StoreMetadata {
+                            id: store.id,
+                            address: store.address,
+                            labels: store.labels,
+                        }),
                 );
             }
         }
-        for (store_id, store) in &resolved {
+        for (store_id, store) in resolved_stores.iter() {
             match store {
                 Some(store) => {
                     self.store_labels.insert(*store_id, store.labels.clone());
@@ -437,7 +443,7 @@ impl RegionRecoveryLoader for PdRegionLoader {
         let mut stores = Vec::with_capacity(metadata.peers.len());
         let mut store_indexes = HashMap::new();
         for peer in &metadata.peers {
-            let Some(store) = resolved
+            let Some(store) = resolved_stores
                 .get(&peer.store_id)
                 .expect("every current-region peer store was resolved")
                 .as_ref()

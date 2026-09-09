@@ -44,8 +44,10 @@ pub enum StatementClass {
     Other,
     /// `*ast.InsertStmt`, including `INSERT ... SELECT` and `REPLACE`.
     Insert,
-    /// `*ast.UpdateStmt` and `*ast.DeleteStmt`, which share one TiKV bit.
-    UpdateOrDelete,
+    /// `*ast.UpdateStmt`.
+    Update,
+    /// `*ast.DeleteStmt`: shares UPDATE's TiKV bit, but not all type flags.
+    Delete,
     /// `*ast.SelectStmt` and `*ast.SetOprStmt`.
     Select,
     /// `*ast.LoadDataStmt`.
@@ -254,6 +256,8 @@ pub enum PinnedLeafAccess {
     IndexId(i64),
 }
 
+type GlobalSysvarReader = dyn Fn(&str) -> Option<String> + Send + Sync;
+
 #[derive(Clone, Default)]
 pub struct StmtContext {
     /// Go's `StaticWarnHandler` entries: a LEVEL, a code and a message.
@@ -306,15 +310,17 @@ pub struct StmtContext {
     /// from `strict` because each answers a different question and TiDB's
     /// default mode happens to set two of them at once.
     date_modes: crate::zero_date::DateModes,
+    /// Session charset-validation bits, captured once for this statement.
+    string_type_flags: tidb_datatype::ConversionFlags,
     current_db: Option<String>,
     version: Option<String>,
     /// Immutable process identity returned by `TIDB_VERSION()`.
     tidb_info: Option<String>,
     current_user: Option<String>,
     login_user: Option<String>,
-    /// The small set of GLOBAL system-variable values expression builtins
-    /// read during this statement.
-    global_sysvars: Arc<HashMap<String, String>>,
+    /// Reads through the global table selected for this statement, including
+    /// scratch account-validation tables, without copying unused values.
+    global_sysvar_reader: Option<Arc<GlobalSysvarReader>>,
     /// The already-rendered `CURRENT_ROLE()` text; see `Columns::current_role`.
     current_role: Option<String>,
     connection_id: Option<u64>,
@@ -322,6 +328,7 @@ pub struct StmtContext {
     tidb_decode_key_snapshot: Option<Arc<crate::TidbDecodeKeySnapshot>>,
     /// Go session advisory-lock map and its shared physical lock authority.
     advisory_locks: crate::advisory_lock_state::AdvisoryLockSession,
+    selected_lock_keys: Option<crate::select_lock::SelectedLockKeys>,
     /// Go `StatementContext`'s fixed statement time as
     /// `(utc_seconds, nanos, tz_offset_seconds)`: every `NOW()` in one
     /// statement reads the same instant.
@@ -345,6 +352,9 @@ pub struct StmtContext {
     /// is a context with no session behind it, where a user variable reads as
     /// NULL (Go's own answer for an unset one) and an assignment is dropped.
     user_vars: Option<Arc<Mutex<HashMap<String, Datum>>>>,
+    /// Typed execute-time values. Clones within one execution share this
+    /// immutable snapshot; later executions install a different snapshot.
+    prepared_params: Option<Arc<[Datum]>>,
     /// Go `builtinRandSig`'s per-call `*mathutil.MysqlRng`: one generator per
     /// constant `RAND(N)` occurrence, created fresh for each STATEMENT (Go
     /// builds a new `builtinFunc` per plan) and advanced once per row by the
@@ -464,7 +474,7 @@ pub struct StmtContext {
     /// statement-local `SET_VAR(tidb_opt_fix_control=...)` overlay.
     optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl,
     /// The statement snapshot of every session value read by cost model v2.
-    optimizer_cost_env: tidb_planner::candidate_cost::CostEnv,
+    optimizer_cost_env: Option<Arc<tidb_planner::candidate_cost::CostEnv>>,
     /// Resolved `tidb_hash_join_concurrency` for physical hash-join costing.
     hash_join_concurrency: f64,
     /// Go `SessionVars.TiDBOptJoinReorderThroughProj`
@@ -587,6 +597,7 @@ pub struct StmtContext {
     /// same place through `DistSQLContext.WarnHandler`, which is the session's
     /// `StatementContext` itself.
     cop_warnings: WarningCollector,
+    cop_lite_worker: Arc<AtomicBool>,
 }
 
 /// The sequence state one statement can see: the allocators it may read and
@@ -656,19 +667,14 @@ impl SequenceSnapshot {
 }
 
 impl StmtContext {
-    /// Builds a context whose division-by-zero handling and strict flag are
-    /// already resolved: the ONE place a [`StmtContext`] is built.
-    ///
-    /// The query and DML constructors differ in exactly these three fields and
-    /// agreed on the other twenty-three by having been written out twice. A
-    /// field added to the struct now has one place it must be named, so the two
-    /// statement classes cannot silently drift apart -- which they would, in the
-    /// direction of whichever literal was edited.
+    /// Initializes common state once. Query/DML constructors resolve error
+    /// policy, and callers supply the statement's memory-lifetime owner.
     fn new(
         division_by_zero: ErrorLevel,
         truncate: ErrorLevel,
         strict: bool,
         ignore_err: bool,
+        memory: StatementMemory,
     ) -> Self {
         Self {
             warnings: Arc::default(),
@@ -685,16 +691,18 @@ impl StmtContext {
             strict_sql_mode: strict,
             ignore_err,
             date_modes: crate::zero_date::DateModes::default(),
+            string_type_flags: tidb_datatype::ConversionFlags::default(),
             current_db: None,
             version: None,
             tidb_info: None,
             current_user: None,
             current_role: None,
             login_user: None,
-            global_sysvars: Arc::default(),
+            global_sysvar_reader: None,
             connection_id: None,
             tidb_decode_key_snapshot: None,
             advisory_locks: crate::advisory_lock_state::AdvisoryLockSession::default(),
+            selected_lock_keys: None,
             now: None,
             sysdate_is_now: false,
             time_zone: None,
@@ -702,6 +710,7 @@ impl StmtContext {
             connection_collation: "utf8mb4_bin".to_owned(),
             rand_session: None,
             user_vars: None,
+            prepared_params: None,
             rand_seeded: Arc::default(),
             last_insert_id: Arc::default(),
             prev_last_insert_id: 0,
@@ -729,7 +738,7 @@ impl StmtContext {
             advanced_join_reorder: tidb_vardef::defaults::DEF_TIDB_OPT_ENABLE_ADVANCED_JOIN_REORDER,
             ordering_index_selectivity_ratio: 0.01,
             optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl::default(),
-            optimizer_cost_env: tidb_planner::candidate_cost::CostEnv::default(),
+            optimizer_cost_env: None,
             hash_join_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as f64,
             // Go `vardef.DefTiDBOptJoinReorderThroughProj`.
             join_reorder_through_proj: false,
@@ -748,7 +757,7 @@ impl StmtContext {
             // Go's shipped `tidb_partition_prune_mode` is `dynamic`.
             static_partition_prune: false,
             sequences: Arc::default(),
-            memory: StatementMemory::default(),
+            memory,
             sql_mode: tidb_parser::SqlMode::default(),
             no_unsigned_subtraction: false,
             like_default_escape: b'\\',
@@ -762,6 +771,7 @@ impl StmtContext {
             statement_class: StatementClass::Other,
             has_physical_table_reader: Arc::default(),
             cop_warnings: WarningCollector::new(),
+            cop_lite_worker: Arc::default(),
         }
     }
 
@@ -815,6 +825,12 @@ impl StmtContext {
         self.cop_warnings.clone()
     }
 
+    /// Go's statement-scoped TryCopLiteWorker, shared by all reader contexts.
+    #[must_use]
+    pub fn cop_lite_worker(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cop_lite_worker)
+    }
+
     /// Go `StatementContext.PushDownFlags()`: the `DAGRequest.flags` field
     /// this statement's coprocessor requests must carry.
     ///
@@ -856,7 +872,7 @@ impl StmtContext {
             err_levels,
             statement_kind: match self.statement_class {
                 StatementClass::Insert => StatementKind::Insert,
-                StatementClass::UpdateOrDelete => StatementKind::UpdateOrDelete,
+                StatementClass::Update | StatementClass::Delete => StatementKind::UpdateOrDelete,
                 StatementClass::Select => StatementKind::Select,
                 StatementClass::Other | StatementClass::LoadData => StatementKind::None,
             },
@@ -900,16 +916,6 @@ impl StmtContext {
         self
     }
 
-    /// Attaches the persistent session roots and one fresh statement child
-    /// supplied by the session lifecycle. This is the source-shaped path for
-    /// production sessions; [`Self::with_mem_quota`] remains the standalone
-    /// constructor used by focused executor tests.
-    #[must_use]
-    pub fn with_statement_memory(mut self, memory: StatementMemory) -> Self {
-        self.memory = memory;
-        self
-    }
-
     /// Attaches the session-owned advisory-lock state.
     #[must_use]
     pub fn with_advisory_locks(
@@ -918,6 +924,22 @@ impl StmtContext {
     ) -> Self {
         self.advisory_locks = locks;
         self
+    }
+
+    /// Binds the transaction owner's selected-row channel for this attempt.
+    #[must_use]
+    pub fn with_selected_lock_keys(
+        mut self,
+        keys: Option<crate::select_lock::SelectedLockKeys>,
+    ) -> Self {
+        self.selected_lock_keys = keys;
+        self
+    }
+
+    /// The locking-query collector, absent outside a locking-capable session.
+    #[must_use]
+    pub fn selected_lock_keys(&self) -> Option<crate::select_lock::SelectedLockKeys> {
+        self.selected_lock_keys.clone()
     }
 
     /// Attaches `@@tidb_enable_tmp_storage_on_oom` (Go
@@ -1040,7 +1062,15 @@ impl StmtContext {
     /// literal, with no SQL mode input, so no mode can make a read fail.
     #[must_use]
     pub fn for_query() -> Self {
-        Self::new(ErrorLevel::Warn, ErrorLevel::Warn, true, false)
+        Self::for_query_with_memory(StatementMemory::default())
+    }
+
+    /// Uses the session's statement trackers from construction onward. Go
+    /// `ResetContextOfStmt` initializes these beneath the session roots;
+    /// constructing and replacing standalone roots would only discard them.
+    #[must_use]
+    pub fn for_query_with_memory(memory: StatementMemory) -> Self {
+        Self::new(ErrorLevel::Warn, ErrorLevel::Warn, true, false, memory)
             .with_statement_class(StatementClass::Select)
     }
 
@@ -1173,18 +1203,25 @@ impl StmtContext {
     #[must_use]
     pub fn with_optimizer_cost_env(
         mut self,
-        env: tidb_planner::candidate_cost::CostEnv,
+        env: impl Into<Arc<tidb_planner::candidate_cost::CostEnv>>,
         hash_join_concurrency: f64,
     ) -> Self {
-        self.optimizer_cost_env = env;
+        self.optimizer_cost_env = Some(env.into());
         self.hash_join_concurrency = hash_join_concurrency;
         self
     }
 
     /// The statement's cost-model-v2 environment.
     #[must_use]
-    pub const fn optimizer_cost_env(&self) -> &tidb_planner::candidate_cost::CostEnv {
-        &self.optimizer_cost_env
+    pub fn optimizer_cost_env(&self) -> &tidb_planner::candidate_cost::CostEnv {
+        // Standalone contexts share defaults only if costing is requested;
+        // session contexts attach their resolved snapshot without allocating
+        // and immediately discarding a default environment.
+        static DEFAULT: std::sync::OnceLock<tidb_planner::candidate_cost::CostEnv> =
+            std::sync::OnceLock::new();
+        self.optimizer_cost_env
+            .as_deref()
+            .unwrap_or_else(|| DEFAULT.get_or_init(tidb_planner::candidate_cost::CostEnv::default))
     }
 
     /// Resolved `tidb_hash_join_concurrency`.
@@ -1529,11 +1566,15 @@ impl StmtContext {
         self
     }
 
-    /// Attaches a statement snapshot of the GLOBAL variables used by
-    /// expression builtins.
+    /// Binds Go's live GlobalVarsAccessor without making the executor depend
+    /// on the session's variable-table implementation. Cloned contexts retain
+    /// the selected owner; values are read only when an expression needs them.
     #[must_use]
-    pub fn with_global_sysvars(mut self, values: HashMap<String, String>) -> Self {
-        self.global_sysvars = Arc::new(values);
+    pub fn with_global_sysvar_reader<F>(mut self, reader: F) -> Self
+    where
+        F: Fn(&str) -> Option<String> + Send + Sync + 'static,
+    {
+        self.global_sysvar_reader = Some(Arc::new(reader));
         self
     }
 
@@ -1580,6 +1621,14 @@ impl StmtContext {
     #[must_use]
     pub fn with_user_vars(mut self, user_vars: Arc<Mutex<HashMap<String, Datum>>>) -> Self {
         self.user_vars = Some(user_vars);
+        self
+    }
+
+    /// Supplies one execution's parameter snapshot to every ordinary
+    /// expression evaluator built with this statement context.
+    #[must_use]
+    pub fn with_prepared_params(mut self, values: Arc<[Datum]>) -> Self {
+        self.prepared_params = Some(values);
         self
     }
 
@@ -1650,6 +1699,23 @@ impl StmtContext {
     /// exactly as the same plain `INSERT` does under `sql_mode = ''`.
     #[must_use]
     pub fn for_dml(error_for_division_by_zero: bool, strict: bool, ignore_err: bool) -> Self {
+        Self::for_dml_with_memory(
+            error_for_division_by_zero,
+            strict,
+            ignore_err,
+            StatementMemory::default(),
+        )
+    }
+
+    /// Resolves the same DML error policy as [`Self::for_dml`] using the
+    /// statement memory already created by the session lifecycle.
+    #[must_use]
+    pub fn for_dml_with_memory(
+        error_for_division_by_zero: bool,
+        strict: bool,
+        ignore_err: bool,
+        memory: StatementMemory,
+    ) -> Self {
         let strict_sql_mode = strict;
         let strict = strict_sql_mode && !ignore_err;
         let level = if !error_for_division_by_zero {
@@ -1664,7 +1730,7 @@ impl StmtContext {
         } else {
             ErrorLevel::Warn
         };
-        let mut context = Self::new(level, truncate, strict, ignore_err);
+        let mut context = Self::new(level, truncate, strict, ignore_err, memory);
         context.strict_sql_mode = strict_sql_mode;
         context
     }
@@ -1715,6 +1781,18 @@ impl StmtContext {
     #[must_use]
     pub fn with_date_modes(mut self, date_modes: crate::zero_date::DateModes) -> Self {
         self.date_modes = date_modes;
+        self
+    }
+
+    /// Carries only ResetContextOfStmt's three string-validation bits; numeric
+    /// and date policy remains derived from the statement's own state.
+    #[must_use]
+    pub fn with_string_type_flags(mut self, flags: tidb_datatype::ConversionFlags) -> Self {
+        use tidb_datatype::ConversionFlags as Flags;
+        self.string_type_flags = Flags::from_bits(
+            flags.bits()
+                & (Flags::SKIP_ASCII_CHECK | Flags::SKIP_UTF8_CHECK | Flags::SKIP_UTF8MB4_CHECK),
+        );
         self
     }
 
@@ -2191,6 +2269,15 @@ impl Columns for StmtContext {
         None
     }
 
+    fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
+        self.prepared_params
+            .as_deref()
+            .unwrap_or_default()
+            .get(order)
+            .cloned()
+            .ok_or(tidb_expr::EvalError::Unsupported("unbound prepared parameter"))
+    }
+
     fn connection_charset_info(&self) -> (&str, &str) {
         StmtContext::connection_charset_info(self)
     }
@@ -2358,9 +2445,10 @@ impl Columns for StmtContext {
         }
         if matches!(scope, Some(tidb_ast::SysVarScope::Global)) {
             return self
-                .global_sysvars
-                .get(&name.to_ascii_lowercase())
-                .map(|value| Datum::Bytes(value.as_bytes().to_vec()));
+                .global_sysvar_reader
+                .as_ref()
+                .and_then(|read| read(name))
+                .map(|value| Datum::Bytes(value.into_bytes()));
         }
         None
     }
@@ -2406,6 +2494,22 @@ impl Columns for StmtContext {
 
     fn strict_sql_mode(&self) -> bool {
         self.strict_sql_mode
+    }
+
+    fn type_flags(&self) -> tidb_datatype::ConversionFlags {
+        // ResetContextOfStmt starts from DefaultStmtFlags, independently of
+        // strict SQL mode. The column-write helper's strict-zero base is not
+        // the expression context's base.
+        self.string_type_flags
+            .with_ignore_zero_date_err(true)
+            .with_ignore_truncate_err(self.truncate == ErrorLevel::Ignore)
+            .with_truncate_as_warning(self.truncate == ErrorLevel::Warn)
+            .with_ignore_invalid_date_err(self.date_modes.allow_invalid_dates)
+            .with_ignore_zero_in_date_err(self.ignore_zero_in_date())
+            .with_allow_negative_to_unsigned(matches!(
+                self.statement_class,
+                StatementClass::Select | StatementClass::Delete | StatementClass::Other,
+            ))
     }
 
     fn append_warning(&self, code: u16, message: &str) {
@@ -2494,11 +2598,178 @@ mod tests {
     use super::*;
 
     #[test]
+    fn default_cost_environment_is_shared_and_custom_snapshots_stay_separate() {
+        let query = StmtContext::for_query();
+        let dml = StmtContext::for_dml(false, false, false);
+        assert!(std::ptr::eq(
+            query.optimizer_cost_env(),
+            dml.optimizer_cost_env()
+        ));
+        let default_concurrency = query.optimizer_cost_env().session.distsql_scan_concurrency;
+        let mut custom = query.optimizer_cost_env().clone();
+        custom.session.distsql_scan_concurrency = default_concurrency + 1.0;
+        let attached = query.clone().with_optimizer_cost_env(custom, 7.0);
+        assert_eq!(
+            attached
+                .optimizer_cost_env()
+                .session
+                .distsql_scan_concurrency,
+            default_concurrency + 1.0
+        );
+        assert_eq!(attached.hash_join_concurrency(), 7.0);
+        assert_eq!(
+            query.optimizer_cost_env().session.distsql_scan_concurrency,
+            default_concurrency
+        );
+        assert!(std::ptr::eq(
+            attached.optimizer_cost_env(),
+            attached.clone().optimizer_cost_env()
+        ));
+    }
+
+    #[test]
+    fn global_values_are_read_only_when_an_expression_needs_them() {
+        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = Arc::clone(&reads);
+        let ctx = StmtContext::for_query().with_global_sysvar_reader(move |name| {
+            assert_eq!(name, "validate_password.enable");
+            observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Some("OFF".to_owned())
+        });
+        let copied = ctx.clone();
+        assert_eq!(reads.load(std::sync::atomic::Ordering::Relaxed), 0);
+        let catalog = crate::Catalog::default();
+        assert_eq!(
+            crate::driver::run_select_on("SELECT 1", &catalog, &ctx).unwrap(),
+            vec![vec![Datum::Int(1)]]
+        );
+        assert_eq!(
+            crate::driver::run_select_on(
+                "SELECT VALIDATE_PASSWORD_STRENGTH(NULL), VALIDATE_PASSWORD_STRENGTH('a')",
+                &catalog,
+                &copied,
+            )
+            .unwrap(),
+            vec![vec![Datum::Null, Datum::Int(0)]]
+        );
+        assert_eq!(reads.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert_eq!(
+            crate::driver::run_select_on(
+                "SELECT VALIDATE_PASSWORD_STRENGTH('abcd')",
+                &catalog,
+                &copied,
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(0)]]
+        );
+        assert_eq!(reads.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn supplied_memory_keeps_query_and_dml_policies_and_ownership() {
+        let session = crate::SessionMemory::new(1024, crate::OomAction::Cancel, 7);
+        let memory = session.statement();
+        let query = StmtContext::for_query_with_memory(memory.clone());
+        assert_eq!(
+            query.push_down_flags(),
+            StmtContext::for_query().push_down_flags()
+        );
+        assert!(Arc::ptr_eq(
+            query.memory.stmt_tracker(),
+            memory.stmt_tracker()
+        ));
+        assert!(Arc::ptr_eq(
+            query.memory.session_tracker(),
+            memory.session_tracker()
+        ));
+        assert_eq!(query.memory.session_tracker().get_bytes_limit(), 1024);
+
+        for division in [false, true] {
+            for strict in [false, true] {
+                for ignore in [false, true] {
+                    let expected = StmtContext::for_dml(division, strict, ignore);
+                    let actual =
+                        StmtContext::for_dml_with_memory(division, strict, ignore, memory.clone());
+                    assert_eq!(actual.push_down_flags(), expected.push_down_flags());
+                    assert_eq!(actual.strict_sql_mode, expected.strict_sql_mode);
+                    assert_eq!(actual.strict(), expected.strict());
+                    assert_eq!(actual.ignore_err(), expected.ignore_err());
+                    assert!(Arc::ptr_eq(
+                        actual.memory.stmt_tracker(),
+                        memory.stmt_tracker()
+                    ));
+                    assert!(Arc::ptr_eq(
+                        actual.memory.session_tracker(),
+                        memory.session_tracker()
+                    ));
+                }
+            }
+        }
+        let operator = memory.operator_tracker(917);
+        operator.consume(128);
+        assert_eq!(query.memory.bytes_consumed(), 128);
+        drop(query);
+        assert_eq!(
+            memory.bytes_consumed(),
+            128,
+            "the remaining owner still accounts"
+        );
+        operator.consume(-128);
+        drop(operator);
+        drop(memory);
+        assert_eq!(session.bytes_consumed(), 0);
+    }
+
+    #[test]
+    #[ignore = "isolated timing evidence; no timing assertion"]
+    fn supplied_statement_memory_construction_benchmark() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        const ITERATIONS: u32 = 50_000;
+        let session = crate::SessionMemory::new(1024, crate::OomAction::Cancel, 7);
+        for dml in [false, true] {
+            for round in 0..5 {
+                for direct in if round % 2 == 0 {
+                    [false, true]
+                } else {
+                    [true, false]
+                } {
+                    let started = Instant::now();
+                    for _ in 0..ITERATIONS {
+                        let context = if direct {
+                            let memory = session.statement();
+                            if dml {
+                                StmtContext::for_dml_with_memory(true, true, false, memory)
+                            } else {
+                                StmtContext::for_query_with_memory(memory)
+                            }
+                        } else {
+                            // The removed production builder allocated default memory,
+                            // then replaced it with the session's statement trackers.
+                            let mut context = if dml {
+                                StmtContext::for_dml(true, true, false)
+                            } else {
+                                StmtContext::for_query()
+                            };
+                            context.memory = session.statement();
+                            context
+                        };
+                        drop(black_box(context));
+                    }
+                    println!("context-memory dml={dml} round={round} direct={direct} iterations={ITERATIONS} ns_per_context={}", started.elapsed().as_nanos() / u128::from(ITERATIONS));
+                    assert_eq!(session.bytes_consumed(), 0);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn sleep_keeps_a_kill_installed_after_a_physical_table_reader_is_built() {
         let session = crate::SessionMemory::new(-1, crate::OomAction::Cancel, 7);
         let cancellation = session.begin_query_cancellation();
         cancellation.cancel();
-        let ctx = StmtContext::for_query().with_statement_memory(session.statement());
+        let ctx = StmtContext::for_query_with_memory(session.statement());
         ctx.mark_physical_table_reader();
 
         let started = std::time::Instant::now();
@@ -2694,5 +2965,28 @@ mod tests {
         assert!(flags.ignore_zero_in_date_err());
         assert!(flags.ignore_invalid_date_err());
         assert!(flags.cast_time_to_year_through_concat());
+    }
+
+    #[test]
+    fn prepared_type_flags_preserve_statement_class_and_policy() {
+        let modes = crate::zero_date::DateModes::TIDB_DEFAULT_SQL_MODE;
+        let query = StmtContext::for_query().with_date_modes(modes);
+        assert_eq!(query.type_flags().bits(), 30);
+        let base = StmtContext::for_dml(true, true, false).with_date_modes(modes);
+        let insert = base.clone().with_statement_class(StatementClass::Insert);
+        let update = base.clone().with_statement_class(StatementClass::Update);
+        let delete = base.clone().with_statement_class(StatementClass::Delete);
+        assert_eq!(insert.type_flags().bits(), 8);
+        assert_eq!(update.type_flags().bits(), 8);
+        assert_eq!(delete.type_flags().bits(), 12);
+        assert_eq!(update.push_down_flags(), delete.push_down_flags());
+        let ignored = StmtContext::for_dml(true, true, true)
+            .with_date_modes(modes)
+            .with_statement_class(StatementClass::Insert);
+        assert_eq!(ignored.type_flags().bits(), 26);
+        let strings = tidb_datatype::ConversionFlags::from_bits(u16::MAX);
+        let with_strings = query.clone().with_string_type_flags(strings);
+        assert_eq!(with_strings.type_flags().bits(), 30 | 64 | 128 | 256);
+        assert_eq!(query.type_flags().bits(), 30);
     }
 }

@@ -1,0 +1,236 @@
+{
+  "status": "WIP: isolated prepared-execution ownership improvement, not whole-package completion or sysbench/TPC-C throughput acceptance.",
+  "change": "Borrow unchanged SELECTs across derived-wildcard expansion, correlated-aggregate decorrelation and outer-join elimination. Share the derived-child traversal and copy replacement envelopes only after an actual rewrite/proof. Preserve original rule order, eligibility and NodeBox source metadata.",
+  "go_source": [
+    "pkg/planner/core/rule_decorrelate.go: DecorrelateSolver.optimize retains unchanged plan nodes",
+    "pkg/planner/core/rule_join_elimination.go: OuterJoinEliminator.doOptimize and tryToEliminateOuterJoin"
+  ],
+  "base_commit": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "worktree": "Pre-existing dirty shared worktree preserved. The current increment changes driver module registration, three AST adapters and a shared helper. Both timing binaries include the preceding shared-type-metadata increment.",
+  "evidence_directory": "/private/tmp/tidb-select-rewrite.8wXe7T",
+  "binaries": {
+    "before_sha256": "511567a0330c2bd096e685cc793e47fd703e191adfc90e3f82f6563a5521e0bb",
+    "after_sha256": "3a2bd1fb71bb683d601bbad832609388279afc03481eab87a70aa4e220501dc6"
+  },
+  "measurement": {
+    "scope": "One isolated Session with in-process storage and four rows; prepared bind/execute entry. One hundred warmups, five rounds of 10000 operations per case, two invocations per binary.",
+    "order": [
+      "before-a",
+      "after-a",
+      "after-b",
+      "before-b"
+    ],
+    "qualification": "Compilation and fixture replay completed before timings. All retained result rows and metadata match. Cached point is a short noisy control, not an accepted independent speedup. Absolute times differ substantially from the preceding baseline even with the identical before binary: compare paired runs here, not absolute numbers across increments.",
+    "point": {
+      "before_us": [
+        1.5156500000000002,
+        1.2936208999999999,
+        1.1567208,
+        1.0640625,
+        1.0093625,
+        0.9743291000000001,
+        0.9735125,
+        0.9771167000000001,
+        0.9742375,
+        0.9773541
+      ],
+      "after_us": [
+        1.536775,
+        1.2931,
+        1.1535417,
+        1.0680333,
+        0.9993542,
+        0.9474874999999999,
+        0.9572541999999999,
+        0.9511375000000001,
+        0.9506833,
+        0.9501167
+      ],
+      "before_median_us": 0.9933582999999999,
+      "after_median_us": 0.9783042,
+      "elapsed_change_percent": -1.5154753325159698
+    },
+    "range": {
+      "before_us": [
+        27.473054100000002,
+        27.50525,
+        27.61055,
+        27.8433375,
+        28.0756917,
+        27.6756667,
+        27.7888583,
+        27.9536875,
+        27.918775,
+        27.657037499999998
+      ],
+      "after_us": [
+        26.8157625,
+        26.740287499999997,
+        27.183225,
+        26.803008300000002,
+        26.8186417,
+        26.5943833,
+        26.6395542,
+        26.8071042,
+        26.3587666,
+        26.2889125
+      ],
+      "before_median_us": 27.7322625,
+      "after_median_us": 26.771647899999998,
+      "elapsed_change_percent": -3.4638883141972387
+    },
+    "index": {
+      "before_us": [
+        42.171316700000006,
+        41.89715,
+        42.6184333,
+        42.0682209,
+        42.486725,
+        42.3096458,
+        42.5473917,
+        42.4167625,
+        42.6800917,
+        42.4725
+      ],
+      "after_us": [
+        41.2952333,
+        41.496199999999995,
+        41.7338416,
+        41.6306584,
+        41.009208400000006,
+        40.751737500000004,
+        40.739858399999996,
+        41.1628541,
+        41.2300958,
+        40.6493166
+      ],
+      "before_median_us": 42.44463125,
+      "after_median_us": 41.196474949999995,
+      "elapsed_change_percent": -2.9406694397892896
+    },
+    "aggregate": {
+      "before_us": [
+        40.227391600000004,
+        40.232283300000006,
+        41.032120799999994,
+        41.256375,
+        41.025112500000006,
+        40.955574999999996,
+        40.4964666,
+        40.6691792,
+        40.5065875,
+        40.3167875
+      ],
+      "after_us": [
+        39.559404199999996,
+        39.668529199999995,
+        39.542695800000004,
+        39.3555792,
+        39.7744125,
+        39.009558299999995,
+        39.028575,
+        38.886329100000005,
+        39.0223083,
+        39.4356
+      ],
+      "before_median_us": 40.58788335,
+      "after_median_us": 39.3955896,
+      "elapsed_change_percent": -2.9375607979320706
+    },
+    "sort": {
+      "before_us": [
+        37.1496,
+        37.054762499999995,
+        36.7161167,
+        36.9352708,
+        38.0824917,
+        36.4150084,
+        36.2770791,
+        35.9781,
+        35.7509125,
+        35.9537166
+      ],
+      "after_us": [
+        35.559425000000005,
+        35.611058299999996,
+        35.7025375,
+        35.2982542,
+        35.4596,
+        35.3903125,
+        34.9990375,
+        35.7785625,
+        35.1171959,
+        35.491270799999995
+      ],
+      "before_median_us": 36.565562549999996,
+      "after_median_us": 35.475435399999995,
+      "elapsed_change_percent": -2.9812946225272863
+    }
+  },
+  "validation": {
+    "profile": "WIP",
+    "driver_tests": {
+      "after_passed": 254,
+      "after_failed": 7,
+      "after_ignored": 1,
+      "before_passed": 253,
+      "before_failed": 8,
+      "before_ignored": 1,
+      "qualification": "All seven after failures reproduce with identical normalized assertion details in the pre-change source snapshot. The baseline additionally failed tpch_q14_matches_recorded_hash_join_plan; do not attribute that difference to this ownership change. Snapshot tests used the same release profile but ran from repository root without rust/.cargo/config.toml's -Zthreads=8 compiler frontend flag; timed binaries used matching build flags.",
+      "failures": [
+        "aggregates::tpcc_condition_six_simplifies_and_pushes_through_derived_tables",
+        "point_get::residual_selection_uses_logical_rows_over_access_rows",
+        "predicate_pushdown::a_common_dnf_equality_is_a_hash_join_key",
+        "predicate_pushdown::a_join_leaf_dnf_selection_uses_loaded_column_statistics",
+        "subqueries::explaining_a_correlated_scalar_type_reads_no_storage",
+        "subqueries::tpcc_conditions_ten_and_twelve_decorrelate_scalar_sums",
+        "subqueries::tpch_q2_correlated_min_matches_recorded_hash_join_plan"
+      ]
+    },
+    "go_fixture_topics": [
+      "table/index",
+      "explain_easy",
+      "explain_complex",
+      "util/ranger",
+      "index_join",
+      "index_merge",
+      "executor/aggregate",
+      "session/clustered_index",
+      "executor/prepared",
+      "expression/charset_and_collation",
+      "common_collation",
+      "collation_pointget",
+      "subquery",
+      "planner/core/join_reorder_through_projection"
+    ],
+    "matched": 2888,
+    "diverged": 109,
+    "skipped": 387,
+    "fixture_comparison": "All fourteen full reports are byte-identical after normalizing elapsed times, including every divergence detail. These are existing recorded Go fixtures, not a freshly executed Go server.",
+    "commands": [
+      "cd /Users/qiliu/projects/tidb/rust",
+      "cargo build --offline --locked --release -j12 --target-dir /Users/qiliu/projects/tidb/rust/target --manifest-path /private/tmp/tidb-prepared-owner.ixmsOs/probe/Cargo.toml",
+      "cargo test --offline --locked --release -j12 -p tidb-executor --lib driver::tests::",
+      "cargo test --offline --locked --release -j12 -p difftest-result-tests --test integration_diff --no-run",
+      "INTEGRATION_TOPIC=<topic> INTEGRATION_SHOW_DIVERGENCES=1 target/release/build/difftest-result-tests/fc2a7b145e4187e6/out/integration_diff-fc2a7b145e4187e6 --ignored --nocapture replay_one_topic_from_env --test-threads=12",
+      "for run in before-a after-a after-b before-b; do /private/tmp/tidb-select-rewrite.8wXe7T/probe-${run%-*} 10000 > /private/tmp/tidb-select-rewrite.8wXe7T/$run.log || exit; done",
+      "ruby /private/tmp/tidb-select-rewrite.8wXe7T/compare.rb",
+      "git -C /Users/qiliu/projects/tidb diff --check -- rust/crates/tidb-executor/src/driver.rs rust/crates/tidb-executor/src/driver/ast_rewrite.rs rust/crates/tidb-executor/src/driver/correlated_agg_decorrelate.rs rust/crates/tidb-executor/src/driver/derived_projection_pushdown.rs rust/crates/tidb-executor/src/driver/outer_join_elimination.rs rust/docs/prepared-plan-execplan.md"
+    ],
+    "baseline_snapshot_command": "From repository root: CARGO_TARGET_DIR=/Users/qiliu/projects/tidb/rust/target cargo test --offline --release -j12 --manifest-path /private/tmp/tidb-select-rewrite.8wXe7T/old-workspace/Cargo.toml -p tidb-executor --lib driver::tests::"
+  },
+  "not_verified": [
+    "Ready make -j12 lint",
+    "live TiKV",
+    "sysbench/TPC-C throughput",
+    "fresh Go CPU profile",
+    "whole Go package completion",
+    "full native prepared physical-plan/cache reuse"
+  ],
+  "reproduction": {
+    "source_reference": "rust/benchmarks/type-metadata-sharing-baseline.json: reproduction.manifest and reproduction.source (unchanged)",
+    "source_manifest": "/private/tmp/tidb-prepared-owner.ixmsOs/probe/Cargo.toml",
+    "run": "<sealed-binary> 10000",
+    "recovery": "before.tar.gz contains the exact pre-change dirty driver source files and ExecPlan; before-tree contains their extraction."
+  }
+}

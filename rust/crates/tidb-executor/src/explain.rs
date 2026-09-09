@@ -123,7 +123,7 @@
 //!    `explain select * from t where id = 1` is a single `Point_Get_1` row,
 //!    audited live 2026-08-19. A conjunct the handle did not pin still
 //!    filters above, and then the plan shows `Projection > Selection >
-//!    Point_Get` -- `write_read_path_consumes_predicate` makes the same call
+//!    Point_Get` -- the selected `WriteReadPath` carries the same proof
 //!    for writes (divergence 8). Because the access path already priced those
 //!    conditions, the selection does not reduce the estimate again (see
 //!    `PlanTrace::selection`).
@@ -139,13 +139,12 @@
 //!    `Batch_Point_Get`, one the ranger bounds records `TableRangeScan`, and
 //!    anything else stays `TableFullScan`.
 //!
-//!    Whether the `Selection` survives above them is decided per path by
-//!    `write_read_path_consumes_predicate`, not by divergence 7's blanket
-//!    rule: `Batch_Point_Get` always consumes the predicate, `Point_Get` and
-//!    `TableRangeScan` consume it when the `WHERE` is exactly the key or the
-//!    handle bounds it read, and an index path never does.
+//!    Whether the `Selection` survives is recorded with the chosen access
+//!    conditions in `WriteReadPath`, independently of its reader kind. A
+//!    range-derived `Batch_Point_Get` can still require a residual filter;
+//!    merely knowing the record keys does not prove the complete WHERE.
 //!
-//!    The INDEX path is offered too, through `write_index_range_path`: when
+//!    The INDEX path is offered too, through `write_range_path`: when
 //!    the chooser prefers an index the write reads through it and records
 //!    `IndexRangeScan`, so `UPDATE t SET ... WHERE a = 10` on a non-unique
 //!    `KEY ka(a)` plans the index rather than scanning the table. (A write

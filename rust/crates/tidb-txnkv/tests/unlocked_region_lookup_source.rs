@@ -62,6 +62,7 @@ impl RegionRecoveryLoader for BlockingLoader {
         &mut self,
         _metadata: &RegionMetadata,
         _leader_store_id: u64,
+        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
     ) -> Result<RegionLocation, RegionLoadError> {
         Err(RegionLoadError::new(
             "unexpected-hydration",
@@ -210,6 +211,7 @@ impl RegionRecoveryLoader for BlockingHydrationLoader {
         &mut self,
         metadata: &RegionMetadata,
         leader_store_id: u64,
+        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
     ) -> Result<RegionLocation, RegionLoadError> {
         let replacement = self.replacement.take().ok_or_else(|| {
             RegionLoadError::new("missing-hydration", "replacement region was consumed")

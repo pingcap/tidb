@@ -75,6 +75,7 @@ impl RegionRecoveryLoader for StaticLoader {
         &mut self,
         _metadata: &RegionMetadata,
         _leader_store_id: u64,
+        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
     ) -> Result<RegionLocation, RegionLoadError> {
         Err(RegionLoadError::new(
             "unexpected-hydration",
@@ -321,6 +322,141 @@ impl TimestampSource for AdvancingTimestampSource {
         }
         Ok(timestamp)
     }
+}
+
+#[test]
+fn lock_epoch_recovery_leaves_cache_available_during_metadata_loading() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{mpsc, Arc};
+
+    struct HydratingLoader {
+        initial: StaticLoader,
+        replacement: RegionLocation,
+        entered: mpsc::Sender<()>,
+        observed: mpsc::Receiver<()>,
+        cache_available: Arc<AtomicBool>,
+    }
+
+    impl RegionLoader for HydratingLoader {
+        fn cluster_id(&self) -> u64 {
+            self.initial.cluster_id()
+        }
+
+        fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+            self.initial.load_region(key)
+        }
+    }
+
+    impl RegionRecoveryLoader for HydratingLoader {
+        fn hydrate_region(
+            &mut self,
+            metadata: &RegionMetadata,
+            _leader_store_id: u64,
+            _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
+        ) -> Result<RegionLocation, RegionLoadError> {
+            assert_eq!(metadata.region, self.replacement.region);
+            self.entered.send(()).unwrap();
+            // Do not release the simulated metadata I/O until a separate
+            // cache operation has run. The timeout lets the old locking
+            // implementation finish and fail an assertion, not deadlock.
+            self.cache_available.store(
+                self.observed.recv_timeout(Duration::from_secs(2)).is_ok(),
+                Ordering::SeqCst,
+            );
+            Ok(self.replacement.clone())
+        }
+    }
+
+    let primary = location(1, b"a", b"r", "primary:20160");
+    let mut replacement = primary.clone();
+    replacement.region.epoch.version += 1;
+    let boundary = |key: &[u8]| {
+        let mut encoded = Vec::new();
+        tidb_codec::encode_bytes(&mut encoded, key);
+        encoded
+    };
+    let region_error = tidb_proto::errorpb::Error {
+        epoch_not_match: Some(tidb_proto::errorpb::EpochNotMatch {
+            current_regions: vec![tidb_proto::metapb::Region {
+                id: replacement.region.id,
+                start_key: boundary(&replacement.start_key),
+                end_key: boundary(&replacement.end_key),
+                region_epoch: Some(tidb_proto::metapb::RegionEpoch {
+                    conf_ver: replacement.region.epoch.conf_ver,
+                    version: replacement.region.epoch.version,
+                }),
+                peers: vec![tidb_proto::metapb::Peer {
+                    id: 101,
+                    store_id: 201,
+                    ..Default::default()
+                }],
+            }],
+        }),
+        ..Default::default()
+    };
+    let recorded = Rc::new(RefCell::new(Recorded::default()));
+    let commit_ts = 1_200 << 18;
+    let client = MockClient {
+        checks: VecDeque::from([
+            KvrpcCheckTxnStatusResponse {
+                region_error: Some(region_error),
+                ..Default::default()
+            },
+            KvrpcCheckTxnStatusResponse {
+                commit_version: commit_ts,
+                ..Default::default()
+            },
+        ]),
+        secondary_checks: VecDeque::new(),
+        recorded: Rc::clone(&recorded),
+        cancel_after_check: false,
+        cancel_after_resolve: false,
+        check_error: None,
+        resolve_error: None,
+    };
+    let (entered, loading) = mpsc::channel();
+    let (observed, cache_operation) = mpsc::channel();
+    let cache_available = Arc::new(AtomicBool::new(false));
+    let runtime = SharedReadRuntime::new_injected(
+        client,
+        RegionCache::new(HydratingLoader {
+            initial: StaticLoader {
+                locations: vec![primary, location(2, b"r", b"", "secondary:20160")],
+            },
+            replacement,
+            entered,
+            observed: cache_operation,
+            cache_available: Arc::clone(&cache_available),
+        }),
+    );
+    let cache = runtime.region_cache_handle();
+    let observer = std::thread::spawn(move || {
+        loading.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(!cache.with_cache(|cache| cache.is_empty()).unwrap());
+        let _ = observed.send(());
+    });
+    let result = resolve_optimistic_locks(
+        &runtime,
+        &[secondary()],
+        1_300 << 18,
+        &KvrpcContext::default(),
+        &UnaryCallContext::with_timeout(Duration::from_secs(10)),
+        &FixedTimestampSource::new(1_100 << 18),
+        true,
+    );
+    observer.join().unwrap();
+    assert_eq!(
+        result.unwrap(),
+        accessing(vec![ResolvedTxnStatus::Committed(commit_ts)], vec![1_000 << 18])
+    );
+    let recorded = recorded.borrow();
+    assert_eq!(recorded.checks.len(), 2);
+    assert_eq!(recorded.checks[0].2.region_epoch.as_ref().unwrap().version, 21);
+    assert_eq!(recorded.checks[1].2.region_epoch.as_ref().unwrap().version, 22);
+    assert!(
+        cache_available.load(Ordering::SeqCst),
+        "lock recovery must not hold the shared cache mutex during metadata I/O"
+    );
 }
 
 #[test]
@@ -1436,22 +1572,6 @@ fn a_live_async_commit_primary_is_waited_for_rather_than_recovered() {
     assert!(recorded.borrow().resolves.is_empty());
 }
 
-/// An optimistic prewrite that meets a Go tidb-server's pessimistic lock must
-/// keep refusing until the resolve is proven on a real cluster.
-///
-/// The resolver below is complete and exercised by every test above, but it has
-/// never run against TiKV from the prewrite path, and a wrong resolve rolls
-/// back another transaction's work. So the default answer stays the refusal,
-/// and only `TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY` in the process
-/// environment opens the resolving path.
-#[test]
-fn prewrite_pessimistic_recovery_is_off_unless_the_environment_opts_in() {
-    assert_eq!(
-        lock::pessimistic_prewrite_recovery_enabled(),
-        std::env::var_os("TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY").is_some()
-    );
-}
-
 /// Go `ClientHelper.ResolveLocks` then `ClientHelper.SendReqCtx`
 /// (`client_helper.go:113-122,148-149`): what the resolver classified is put
 /// into the reader's two `TSSet`s and replayed on every later request.
@@ -1505,133 +1625,4 @@ fn a_readers_lock_sets_accumulate_across_resolves_and_reach_every_request() {
         "AccessLocks -> Context.committed_locks, accumulated over every round"
     );
     assert!(!sets.is_empty());
-}
-
-/// Go must reset the set by hand, because its snapshot timestamp is mutable:
-///
-/// ```text
-/// // Invalidate cache if the snapshotTS change!
-/// s.version = ts
-/// ...
-/// // And also remove the minCommitTS pushed information.
-/// s.resolvedLocks = util.TSSet{}
-/// ```
-/// (`txnkv/txnsnapshot/snapshot.go:195-201`, `SetSnapshotTS`.)
-///
-/// The reset is not bookkeeping. "TiKV pushed this owner's min-commit-ts above
-/// the reader" is a fact about one exact timestamp; carried to a later, larger
-/// one it becomes a lie, and the reader steps over a lock whose value it should
-/// now see. Here the timestamp is bound once at construction alongside the set
-/// that is classified against it, so there is no moment at which the two can
-/// disagree and nothing to reset. This test is what keeps that true: a setter
-/// added later would reintroduce Go's hazard without reintroducing Go's reset.
-#[test]
-fn a_readers_lock_sets_cannot_outlive_the_timestamp_they_were_classified_against() {
-    let coordinator_dir =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/transaction/coordinator");
-    let mut sources = Vec::new();
-    for entry in std::fs::read_dir(&coordinator_dir).unwrap() {
-        let path = entry.unwrap().path();
-        if path.extension().is_some_and(|extension| extension == "rs") {
-            sources.push((path.clone(), std::fs::read_to_string(&path).unwrap()));
-        }
-    }
-    assert!(sources.len() > 1, "coordinator sources were not found");
-    for (path, source) in &sources {
-        for reassignment in ["self.start_ts =", "self.resolved_locks ="] {
-            assert!(
-                !source.contains(reassignment),
-                "{} reassigns `{reassignment}`: a snapshot timestamp that can move \
-                 needs Go's `SetSnapshotTS` reset of the pushed-min-commit-ts set",
-                path.display()
-            );
-        }
-    }
-    // Born together, in the one constructor, so neither can be refreshed
-    // without the other.
-    let coordinator = &sources
-        .iter()
-        .find(|(path, _)| path.ends_with("mod.rs"))
-        .expect("coordinator mod.rs")
-        .1;
-    assert_eq!(
-        coordinator
-            .matches("resolved_locks: crate::lock::SnapshotLockSet::default()")
-            .count(),
-        1
-    );
-}
-
-/// The snapshot read path must fill the sets before it retries and stamp them
-/// before it sends, or the retry meets the identical lock forever.
-#[test]
-fn the_snapshot_read_path_stamps_its_lock_sets_on_every_send() {
-    let snapshot = std::fs::read_to_string(
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("src/transaction/coordinator/snapshot_read.rs"),
-    )
-    .unwrap();
-    // One stamp and one absorb per read command, each taken from the freshly
-    // routed context. Counted UNQUALIFIED: the point-read and scan bodies are
-    // shared free functions (so the transaction path and the timestamp-free
-    // MaxTS path cannot fork), where the set arrives as a parameter rather
-    // than through `self`. Pinning the `self.`-qualified spelling instead
-    // asserted where the code lives rather than what it does, and went red on
-    // an extraction that changed neither.
-    assert_eq!(
-        snapshot
-            .matches("resolved_locks.stamp(&mut context)")
-            .count(),
-        4
-    );
-    assert_eq!(
-        snapshot.matches("resolved_locks.absorb(&recovery)").count(),
-        4
-    );
-    assert!(!snapshot.contains("route.context(), call)"));
-    // Every read-command call must pass the FRESHLY routed context, never a
-    // context read back off the route. `begin_get` is a free function taking
-    // the runtime first, `begin_scan` a method, so each call site is checked
-    // for the same trailing argument list rather than one fixed prefix.
-    // `begin_scan_direct` is the scan's post-extraction name: it is a free
-    // function so the transaction path and the MaxTS path share one body.
-    // The pin follows the CALL SITES, not the spelling of the old method.
-    //
-    // The CALL CONTEXT differs by command shape. A point Get is ONE RPC, so it
-    // runs under the caller's own `call`. A Scan walks many region pages, and
-    // each page opens its own fresh `ReadTimeoutMedium` budget on the caller's
-    // cancellation carrier (`&page_call`) -- one shared absolute deadline
-    // across every page let an honest table-wide ANALYZE sample saturate its
-    // budget mid-scan and answer every later page "timed out after 0ms",
-    // where Go bounds each `SendReq(bo, .., ReadTimeoutMedium)` separately.
-    for (command, expected_tail) in [
-        ("begin_get(", "&route, &context, &request, call"),
-        (
-            "begin_scan_direct(",
-            "&route, &context, &request, &page_call",
-        ),
-    ] {
-        // `let response = ` selects the CALL sites; the `fn` definitions
-        // spell the same name and are not argument lists.
-        let sites: Vec<&str> = snapshot
-            .split(&format!("let response = {command}"))
-            .skip(1)
-            .chain(
-                snapshot
-                    .split(&format!("let response = self.{command}"))
-                    .skip(1),
-            )
-            .collect();
-        assert!(!sites.is_empty(), "no {command} call site");
-        for site in sites {
-            let arguments = site.split(')').next().expect("an argument list");
-            assert!(
-                arguments.ends_with(expected_tail),
-                "{command} must take the freshly routed context: {arguments}"
-            );
-        }
-    }
-    // BatchGet publishes a whole round of region-routed requests at once; the
-    // freshly routed (and stamped) contexts travel inside `requests`.
-    assert!(snapshot.contains(".publish_transaction_batch_gets(&requests, call)"));
 }

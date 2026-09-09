@@ -26,7 +26,7 @@ use crate::direct_unary_client_fixture::*;
 fn transport_attempt_exhaustion_rebuilds_through_region_miss_instead_of_returning_client() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let events = Rc::new(RefCell::new(Vec::new()));
-    let retry_control = Rc::new(RecordingRetryControl::default());
+    let retry_control = Arc::new(RecordingRetryControl::default());
     let mut responses = Vec::new();
     for version in 1..=10 {
         responses.push(Err(connection_failure(
@@ -75,14 +75,14 @@ fn transport_attempt_exhaustion_rebuilds_through_region_miss_instead_of_returnin
             .count(),
         10
     );
-    assert_eq!(retry_control.sleeps.borrow().len(), 11);
+    assert_eq!(retry_control.sleeps.lock().unwrap().len(), 11);
 }
 
 #[test]
 fn caller_cancellation_is_terminal_before_failure_consumption_or_retry_mutation() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let events = Rc::new(RefCell::new(Vec::new()));
-    let retry_control = Rc::new(RecordingRetryControl::default());
+    let retry_control = Arc::new(RecordingRetryControl::default());
     let mut runtime = InjectedQueryRuntime::new(transport_with_transport_failures(
         Rc::clone(&calls),
         [
@@ -121,7 +121,7 @@ fn caller_cancellation_is_terminal_before_failure_consumption_or_retry_mutation(
             ClientEvent::Send("tikv-1:20160".to_owned()),
         ]
     );
-    assert!(retry_control.sleeps.borrow().is_empty());
+    assert!(retry_control.sleeps.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -153,33 +153,4 @@ fn return_region_error_and_non_connection_failures_close_without_future_dispatch
         // address or consume its scripted response.
         assert_eq!(calls.borrow().len(), 1);
     }
-}
-
-#[test]
-fn batch_transport_failure_retains_the_logical_request_selector_for_batch_retry() {
-    let source = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
-    let settle = source
-        .find("fn settle_dispatch(")
-        .expect("shared async and sync settlement owner");
-    let record = source[settle..]
-        .find("self.record_attempt_result(logical_task_id")
-        .map(|offset| settle + offset)
-        .expect("one selector records the failed batch attempt");
-    let recover = source[record..]
-        .find("self.recover_transport_failure(")
-        .map(|offset| record + offset)
-        .expect("same synchronous recovery loop");
-    let recovery_owner = source[recover..]
-        .find("fn recover_transport_failure(")
-        .map(|offset| recover + offset)
-        .expect("response-owned synchronous recovery method");
-    let retry = source[recovery_owner..]
-        .find("self.install_same_task_retry(replacement)")
-        .map(|offset| recovery_owner + offset)
-        .expect("same logical task is reinstalled");
-    let next_dispatch = &source[retry..];
-    assert!(record < recover);
-    assert!(recover < retry);
-    assert!(next_dispatch.contains("debug_assert!(self.request_selectors.contains_key"));
-    assert!(!source[recovery_owner..retry].contains("request_selectors.remove(&logical_task_id)"));
 }

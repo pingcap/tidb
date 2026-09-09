@@ -60,6 +60,9 @@ pub(crate) struct Transaction {
     /// here. It is still resolved and kept, because it is what the client
     /// asked for and what the real-TiKV tier consumes.
     mode: SessionTxnMode,
+    /// Go's TxnCtx isolation: a later SET SESSION affects the next
+    /// transaction, not the missing-key lock policy of this transaction.
+    read_committed: bool,
     /// The transaction's savepoint stack, oldest first -- Go's
     /// `TxnCtx.Savepoints` (`pkg/sessionctx/variable/session.go`).
     savepoints: Vec<Savepoint>,
@@ -95,15 +98,22 @@ impl Transaction {
     fn open(
         catalog: &Catalog,
         mode: SessionTxnMode,
+        read_committed: bool,
         local_temporary_at_open: Vec<(String, String, tidb_executor::KvTable)>,
     ) -> Self {
         let start_ts = catalog.allocate_tso();
+        let mut working = catalog.clone();
+        // Dirty-table marks describe this transaction's membuffer, not the
+        // committed rows. Direct protocol BEGIN and implicit activation both
+        // reach this constructor without necessarily running SQL dispatch.
+        working.clear_dirty_content();
         Transaction {
-            working: catalog.clone(),
+            working,
             base_version: catalog.version(),
             start_ts,
             stale_read_ts: None,
             mode,
+            read_committed,
             savepoints: Vec::new(),
             local_temporary_at_open,
         }
@@ -285,6 +295,17 @@ impl Session {
         self.txn.as_ref().map(|txn| txn.mode)
     }
 
+    /// Whether locking reads must acquire only existing keys after reading.
+    /// This is Go's IsIsolation(ReadCommitted) decision, retained by the
+    /// open transaction. Before a lazy transaction starts, use its setting.
+    pub(crate) fn read_committed_locking(&self) -> bool {
+        self.txn.as_ref().map_or_else(
+            || self.vars.get_system("transaction_isolation")
+                .is_ok_and(|value| value.eq_ignore_ascii_case("READ-COMMITTED")),
+            |txn| txn.read_committed,
+        )
+    }
+
     /// The transaction mode a statement will use, including autocommit.
     ///
     /// Go's `optimizeDupKeyCheckForNormalInsert` asks the transaction returned
@@ -304,7 +325,10 @@ impl Session {
     /// given and needs nothing from it afterwards.
     fn open_transaction(&mut self, mode: SessionTxnMode) -> Result<(), DriverError> {
         let local_temporary_at_open = self.local_temporary_tables.clone();
-        let txn = Transaction::open(&*self.lock_catalog()?, mode, local_temporary_at_open);
+        let read_committed = self.read_committed_locking();
+        let txn = Transaction::open(
+            &*self.lock_catalog()?, mode, read_committed, local_temporary_at_open,
+        );
         // Go publishes `TxnCtx.StartTS` the moment the transaction
         // activates; `@@tidb_current_ts` reads exactly that.
         self.current_tso().publish(txn.start_ts);
@@ -370,7 +394,7 @@ impl Session {
     /// stale transaction (`StalenessTxnContextProvider`), whose `StartTS` IS
     /// the as-of timestamp and whose reads all see the store as of it.
     pub(crate) fn open_stale_transaction(&mut self, ts: u64) -> Result<(), DriverError> {
-        let snapshot = {
+        let mut snapshot = {
             let shared = self.lock_catalog()?;
             shared.state_as_of(ts).ok_or_else(|| {
                 // No retained commit is that old. Go's analogue is the GC
@@ -382,6 +406,8 @@ impl Session {
                 ))
             })?
         };
+        // A historical read also has an empty transaction membuffer.
+        snapshot.clear_dirty_content();
         let local_temporary_at_open = self.local_temporary_tables.clone();
         self.txn = Some(Transaction {
             base_version: snapshot.version(),
@@ -389,6 +415,7 @@ impl Session {
             start_ts: ts,
             stale_read_ts: Some(ts),
             mode: SessionTxnMode::Optimistic,
+            read_committed: false,
             savepoints: Vec::new(),
             local_temporary_at_open,
         });

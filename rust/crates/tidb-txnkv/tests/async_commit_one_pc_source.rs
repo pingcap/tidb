@@ -120,6 +120,7 @@ impl RegionRecoveryLoader for SplitTopology {
         &mut self,
         _metadata: &RegionMetadata,
         _leader_store_id: u64,
+        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
     ) -> Result<RegionLocation, RegionLoadError> {
         Err(RegionLoadError::new(
             "unexpected-hydration",
@@ -187,6 +188,7 @@ struct Recorded {
 struct ScriptedTikv {
     prewrites: Arc<Mutex<Vec<PrewriteAnswer>>>,
     recorded: Arc<Mutex<Recorded>>,
+    hold_commit: Option<(u64, tokio::sync::watch::Receiver<bool>)>,
 }
 
 impl ScriptedTikv {
@@ -194,6 +196,7 @@ impl ScriptedTikv {
         Self {
             prewrites: Arc::new(Mutex::new(prewrites)),
             recorded: Arc::new(Mutex::new(Recorded::default())),
+            hold_commit: None,
         }
     }
 
@@ -234,6 +237,16 @@ impl Tikv for ScriptedTikv {
                     let Some(cmd) = request.cmd else {
                         continue;
                     };
+                    let mut held = service.hold_commit.as_ref().and_then(|(start_ts, release)| {
+                        match &cmd {
+                            RequestCmd::Commit(body)
+                                if KvrpcCommitRequest::decode(body.as_slice()).unwrap().start_version == *start_ts =>
+                            {
+                                Some(release.clone())
+                            }
+                            _ => None,
+                        }
+                    });
                     let response = match service.answer(cmd) {
                         Ok(response) => response,
                         Err(status) => {
@@ -249,6 +262,13 @@ impl Tikv for ScriptedTikv {
                         transport_layer_load: 0,
                         ..BatchCommandsResponse::default()
                     };
+                    if let Some(release) = held.as_mut() {
+                        while !*release.borrow() {
+                            if release.changed().await.is_err() {
+                                break;
+                            }
+                        }
+                    }
                     if responses.send(Ok(packet)).await.is_err() {
                         return;
                     }
@@ -299,6 +319,56 @@ impl ScriptedTikv {
             ))),
         }
     }
+}
+
+// Go spawnWithStorePool allows another transaction's secondaries to progress
+// while beforeCommitSecondaries or a slow response holds the first task.
+#[test]
+fn detached_secondary_flushes_progress_independently() {
+    use tidb_txnkv::transaction::{OwnedTransactionCommitRequest, TransactionCommandClient};
+    let (release, held) = tokio::sync::watch::channel(false);
+    let mut service = ScriptedTikv::new(vec![]);
+    service.hold_commit = Some((10, held));
+    let recorded = Arc::clone(&service.recorded);
+    let server = TestServer::start(service);
+    let first = Arc::new(Mutex::new(TonicCoprocessorClient::new().unwrap()));
+    let second = Arc::new(Mutex::new(TonicCoprocessorClient::new().unwrap()));
+    let request = |start_version| OwnedTransactionCommitRequest {
+        address: server.address.clone(),
+        request: KvrpcCommitRequest {
+            start_version,
+            commit_version: start_version + 1,
+            keys: vec![SECONDARY_KEY.to_vec()],
+            commit_role: KvrpcCommitRole::Secondary as i32,
+            ..KvrpcCommitRequest::default()
+        },
+        context: Default::default(),
+    };
+    assert!(first.lock().unwrap().publish_commits_detached(vec![request(10)], Arc::clone(&first)));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while recorded.lock().unwrap().commits.is_empty() {
+        assert!(Instant::now() < deadline, "first flush never reached TiKV");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let first_authority_available = first.try_lock().is_ok();
+    let started = Instant::now();
+    assert!(second.lock().unwrap().publish_commits_detached(vec![request(20)], Arc::clone(&second)));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while recorded.lock().unwrap().commits.len() < 2 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let independent = recorded.lock().unwrap().commits.len() == 2;
+    let elapsed = started.elapsed();
+    // Release held I/O even on the old implementation, before asserting.
+    release.send(true).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while recorded.lock().unwrap().commits.len() < 2 {
+        assert!(Instant::now() < deadline, "flush did not drain after release");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    eprintln!("detached independent={independent} authority_available={first_authority_available} second_admission_us={}", elapsed.as_micros());
+    assert!(independent, "a stalled transaction must not serialize another transaction's flush");
+    assert!(first_authority_available, "secondary response wait must not hold the client authority");
 }
 
 struct TestServer {

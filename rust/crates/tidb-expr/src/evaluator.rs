@@ -16,6 +16,7 @@
 //! expressions before transferring any direct input-column owners.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_util::ColumnSwapHelper;
@@ -82,21 +83,17 @@ impl From<EvalError> for EvaluatorError {
     }
 }
 
-/// Go `EvaluatorSuite`: one projection expression list partitioned into
-/// calculated expressions and direct input-column transfers.
-///
-/// Calculated expressions always finish first. The column helper moves input
-/// owners only after they all succeed, so an evaluation error cannot leave the
-/// input chunk half-consumed.
-pub struct EvaluatorSuite {
+/// Immutable projection expressions and logical column mapping. Actual input
+/// column ownership is discovered separately by each execution's suite.
+pub struct EvaluatorProgram {
     calculated_output_indexes: Vec<usize>,
     calculated: Vec<Expression>,
     vectorizable: bool,
-    column_swap_helper: Option<ColumnSwapHelper>,
+    column_mapping: HashMap<usize, Vec<usize>>,
 }
 
-impl EvaluatorSuite {
-    /// Go `NewEvaluatorSuite`.
+impl EvaluatorProgram {
+    /// Compile the context-independent part of Go `NewEvaluatorSuite`.
     ///
     /// When `avoid_column_evaluator` is true, direct columns are calculated
     /// cell by cell like any other expression. Otherwise their resolved input
@@ -124,12 +121,41 @@ impl EvaluatorSuite {
         }
 
         let vectorizable = vectorizable(&calculated);
-        let column_swap_helper =
-            (!column_mapping.is_empty()).then(|| ColumnSwapHelper::from_mapping(column_mapping));
-        EvaluatorSuite {
+        Self {
             calculated_output_indexes,
             calculated,
             vectorizable,
+            column_mapping,
+        }
+    }
+}
+
+/// Go `EvaluatorSuite`: executes a projection program with an execution-local
+/// column ownership cache. Calculated expressions finish before owner moves,
+/// so an evaluation error cannot leave the input chunk half-consumed.
+pub struct EvaluatorSuite {
+    program: Arc<EvaluatorProgram>,
+    column_swap_helper: Option<ColumnSwapHelper>,
+}
+
+impl EvaluatorSuite {
+    /// Go `NewEvaluatorSuite`: compile and instantiate a fresh program.
+    #[must_use]
+    pub fn new(exprs: Vec<Expression>, avoid_column_evaluator: bool) -> Self {
+        Self::from_program(Arc::new(EvaluatorProgram::new(
+            exprs,
+            avoid_column_evaluator,
+        )))
+    }
+
+    /// Instantiate without cloning or reclassifying expression trees. Go's
+    /// merged column mapping depends on the first input chunk of this execution.
+    #[must_use]
+    pub fn from_program(program: Arc<EvaluatorProgram>) -> Self {
+        let column_swap_helper = (!program.column_mapping.is_empty())
+            .then(|| ColumnSwapHelper::from_mapping(program.column_mapping.clone()));
+        Self {
+            program,
             column_swap_helper,
         }
     }
@@ -137,7 +163,7 @@ impl EvaluatorSuite {
     /// Go `EvaluatorSuite.Vectorizable`.
     #[must_use]
     pub fn vectorizable(&self) -> bool {
-        self.vectorizable
+        self.program.vectorizable
     }
 
     /// Go `EvaluatorSuite.Run`.
@@ -158,20 +184,37 @@ impl EvaluatorSuite {
         // computation in the suite. The generic path rebuilds two `Decimal`s
         // (heap storage) and walks signature dispatch for every row; the
         // specialized form multiplies i128 coefficients in place.
-        if self.calculated.len() == 1
+        let program = &self.program;
+        if program.calculated.len() == 1
             && decimal_mul_minus_const_column(
-                &self.calculated[0],
-                self.calculated_output_indexes[0],
+                &program.calculated[0],
+                program.calculated_output_indexes[0],
                 input,
                 output,
             )?
         {
             return Ok(());
         }
-        if self.vectorizable {
-            for (output_index, expression) in
-                self.calculated_output_indexes.iter().zip(&self.calculated)
+        if program.vectorizable {
+            for (output_index, expression) in program
+                .calculated_output_indexes
+                .iter()
+                .zip(&program.calculated)
             {
+                if let Expression::Constant(constant) = expression {
+                    // Go Constant.VecEval* broadcasts only non-deferred
+                    // constants. Deferred expressions still consume rows;
+                    // parameter values are read anew for every chunk.
+                    if constant.deferred_expr.is_none() {
+                        if rows != 0 {
+                            let value = constant.eval_in(ctx)?;
+                            for _ in 0..rows {
+                                output.append_datum(*output_index, &value);
+                            }
+                        }
+                        continue;
+                    }
+                }
                 for row_index in 0..rows {
                     let value = expression.eval(ctx, input.get_row(row_index))?;
                     output.append_datum(*output_index, &value);
@@ -179,8 +222,10 @@ impl EvaluatorSuite {
             }
         } else {
             for row_index in 0..rows {
-                for (output_index, expression) in
-                    self.calculated_output_indexes.iter().zip(&self.calculated)
+                for (output_index, expression) in program
+                    .calculated_output_indexes
+                    .iter()
+                    .zip(&program.calculated)
                 {
                     let value = expression.eval(ctx, input.get_row(row_index))?;
                     output.append_datum(*output_index, &value);
@@ -224,8 +269,7 @@ fn decimal_mul_minus_const_column(
             return None;
         };
         let a_index = usize::try_from(a_col.index).ok()?;
-        let a_decimal =
-            a_col.get_static_type()?.code() == FieldTypeCode::NewDecimal;
+        let a_decimal = a_col.get_static_type()?.code() == FieldTypeCode::NewDecimal;
         if !a_decimal {
             return None;
         }
@@ -236,8 +280,8 @@ fn decimal_mul_minus_const_column(
             return None;
         }
         let one = match &minus.args[0] {
-            Expression::Constant(constant) => match &constant.value {
-                tidb_datatype::Datum::Int(value) if *value == 1 => *value,
+            Expression::Constant(constant) => match constant.literal_value() {
+                Some(tidb_datatype::Datum::Int(value)) if *value == 1 => *value,
                 _ => return None,
             },
             _ => return None,
@@ -246,17 +290,14 @@ fn decimal_mul_minus_const_column(
             return None;
         };
         let b_index = usize::try_from(b_col.index).ok()?;
-        let b_decimal =
-            b_col.get_static_type()?.code() == FieldTypeCode::NewDecimal;
+        let b_decimal = b_col.get_static_type()?.code() == FieldTypeCode::NewDecimal;
         if !b_decimal {
             return None;
         }
         Some((a_index, b_index, one))
     };
     let Some((a_index, b_index, _one)) =
-        resolve_pair(column_side, minus_side).or_else(|| {
-            resolve_pair(minus_side, column_side)
-        })
+        resolve_pair(column_side, minus_side).or_else(|| resolve_pair(minus_side, column_side))
     else {
         return Ok(false);
     };
@@ -282,16 +323,10 @@ fn decimal_mul_minus_const_column(
         if row.is_null(a_index) || row.is_null(b_index) {
             return Ok(false);
         }
-        let Some((ca, sa)) = input
-            .column(a_index)
-            .get_my_decimal_i128_scaled(row_index)
-        else {
+        let Some((ca, sa)) = input.column(a_index).get_my_decimal_i128_scaled(row_index) else {
             return Ok(false);
         };
-        let Some((cb, sb)) = input
-            .column(b_index)
-            .get_my_decimal_i128_scaled(row_index)
-        else {
+        let Some((cb, sb)) = input.column(b_index).get_my_decimal_i128_scaled(row_index) else {
             return Ok(false);
         };
         // (1 - discount): rescale the constant 1 into b's scale, then subtract.
@@ -317,7 +352,11 @@ fn decimal_mul_minus_const_column(
         return Ok(false);
     };
     if std::env::var("TIDB_DEBUG_FP").is_ok() {
-        eprintln!("[fp] collecting done, rows={} scale={}", coefficients.len(), result_scale);
+        eprintln!(
+            "[fp] collecting done, rows={} scale={}",
+            coefficients.len(),
+            result_scale
+        );
     }
     for coefficient in coefficients {
         // The result type's scale may differ from the natural one; building
@@ -339,14 +378,14 @@ fn decimal_mul_minus_const_column(
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
 
     use super::*;
     use tidb_ast::CiString;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
     use crate::column::Column;
-    use crate::constant::Constant;
+    use crate::constant::{Constant, ParamMarker};
     use crate::expression::ScalarFunction;
     use crate::NoColumns;
 
@@ -377,6 +416,137 @@ mod tests {
 
     fn scalar(name: &str, args: Vec<Expression>) -> Expression {
         Expression::ScalarFunction(ScalarFunction::new(CiString::new(name), long(), args))
+    }
+
+    struct CountedParameter {
+        value: Result<Datum, EvalError>,
+        reads: Cell<usize>,
+    }
+
+    impl Columns for CountedParameter {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
+            assert_eq!(order, 0);
+            self.reads.set(self.reads.get() + 1);
+            self.value.clone()
+        }
+    }
+
+    fn parameter(field_type: FieldType) -> Expression {
+        let mut constant = Constant::new(Datum::Null, field_type);
+        constant.param_marker = Some(ParamMarker { order: 0 });
+        Expression::Constant(constant)
+    }
+
+    #[test]
+    fn constant_batch_reads_current_parameter_once_per_nonempty_chunk() {
+        // Go Constant.VecEval* -> genVecFromConstExpr evaluates once, not
+        // once per row. Reusing the suite must not freeze that execution.
+        for (field_type, values) in [
+            (long(), vec![Datum::Int(7), Datum::Null, Datum::Int(-9)]),
+            (
+                string(),
+                vec![
+                    Datum::Bytes(b"abc".to_vec()),
+                    Datum::Bytes(vec![]),
+                    Datum::Null,
+                ],
+            ),
+        ] {
+            let suite = EvaluatorSuite::new(vec![parameter(field_type.clone())], false);
+            for value in values {
+                for rows in [0, 1, 1024] {
+                    let ctx = CountedParameter {
+                        value: Ok(value.clone()),
+                        reads: Cell::new(0),
+                    };
+                    let mut input = Chunk::new_with_capacity(&[], rows);
+                    input.set_num_virtual_rows(rows);
+                    let mut output =
+                        Chunk::new_with_capacity(std::slice::from_ref(&field_type), rows);
+                    suite.run(&ctx, &mut input, &mut output).unwrap();
+                    assert_eq!(ctx.reads.get(), usize::from(rows != 0));
+                    assert_eq!(output.num_rows(), rows);
+                    for row in 0..rows {
+                        let row = output.get_row(row);
+                        match &value {
+                            Datum::Null => assert!(row.is_null(0)),
+                            Datum::Bytes(bytes) => assert_eq!(row.get_bytes(0), bytes.as_slice()),
+                            _ => assert_eq!(row.get_datum(0, &field_type), value),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn constant_batch_preserves_deferred_rows_and_side_effect_ordering() {
+        // A deferred constant delegates to its expression in Go; its saved
+        // value is not permission to broadcast the first input row.
+        let mut deferred = Constant::new(Datum::Int(99), long());
+        deferred.deferred_expr = Some(Box::new(input_column(0)));
+        let suite = EvaluatorSuite::new(vec![Expression::Constant(deferred)], false);
+        let mut input = Chunk::new_with_capacity(&[long()], 3);
+        for value in [3, 7, 11] {
+            input.append_int64(0, value);
+        }
+        let mut output = Chunk::new_with_capacity(&[long()], 3);
+        suite.run(&NoColumns, &mut input, &mut output).unwrap();
+        for (row, expected) in [3, 7, 11].into_iter().enumerate() {
+            assert_eq!(output.get_row(row).get_int64(0), expected);
+        }
+
+        let suite = EvaluatorSuite::new(
+            vec![
+                parameter(long()),
+                scalar("getvar_int", vec![string_const("v")]),
+            ],
+            false,
+        );
+        assert!(!suite.vectorizable());
+        let ctx = CountedParameter {
+            value: Ok(Datum::Int(8)),
+            reads: Cell::new(0),
+        };
+        let mut output = Chunk::new_with_capacity(&[long(), long()], 3);
+        suite.run(&ctx, &mut input, &mut output).unwrap();
+        assert_eq!(ctx.reads.get(), 3);
+        for row in 0..3 {
+            assert_eq!(output.get_row(row).get_int64(0), 8);
+            assert!(output.get_row(row).is_null(1));
+        }
+    }
+
+    #[test]
+    fn constant_batch_error_preserves_input_owners_and_skips_empty_input() {
+        let suite = EvaluatorSuite::new(vec![input_column(0), parameter(long())], false);
+        for rows in [0, 3] {
+            let error = EvalError::Unsupported("unbound prepared parameter");
+            let ctx = CountedParameter {
+                value: Err(error.clone()),
+                reads: Cell::new(0),
+            };
+            let mut input = Chunk::new_with_capacity(&[long()], rows);
+            for _ in 0..rows {
+                input.append_int64(0, 7);
+            }
+            let input_owner = input.column_handle(0);
+            let mut output = Chunk::new_with_capacity(&[long(), long()], rows);
+            let result = suite.run(&ctx, &mut input, &mut output);
+            assert_eq!(ctx.reads.get(), usize::from(rows != 0));
+            if rows == 0 {
+                assert_eq!(result, Ok(()));
+            } else {
+                assert_eq!(result, Err(EvaluatorError::Eval(error)));
+                assert!(input_owner.same_identity(&input.column_handle(0)));
+                assert_eq!(input.num_rows(), rows);
+            }
+            assert_eq!(output.num_rows(), 0);
+        }
     }
 
     #[derive(Default)]

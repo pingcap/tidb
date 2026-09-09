@@ -144,7 +144,6 @@ impl DirectUnaryClient for RecordingClient {
 }
 
 impl tidb_distsql::LockRecoveryClient for RecordingClient {
-
     fn check_secondary_locks_for_lock(
         &mut self,
         _address: &str,
@@ -163,7 +162,6 @@ impl tidb_distsql::LockRecoveryClient for RecordingClient {
     ) -> Result<tidb_proto::KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
         self.inner.check_txn_status(address, request, context, call)
     }
-
 
     fn pessimistic_rollback_for_lock(
         &mut self,
@@ -400,8 +398,9 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
 #[test]
 #[ignore = "requires the cleanup-safe Campaign 14 three-TiKV runner"]
 fn adaptive_forwarding_reuses_proxy_then_recovers_direct() {
-    let pd_address = std::env::var("ADAPTIVE_FORWARDING_PD_ADDR")
-        .expect("ADAPTIVE_FORWARDING_PD_ADDR must be supplied by run-realtikv-adaptive-forwarding.sh");
+    let pd_address = std::env::var("ADAPTIVE_FORWARDING_PD_ADDR").expect(
+        "ADAPTIVE_FORWARDING_PD_ADDR must be supplied by run-realtikv-adaptive-forwarding.sh",
+    );
     let loader = PdRegionLoader::connect(pd_address, Duration::from_secs(5))
         .expect("bootstrap live PD region loader");
     let mut cache = RegionCache::new(loader);
@@ -720,7 +719,7 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
             &physical_store.address,
             vec![BatchCommandEntry::new(
                 OpaqueBatchCommand::new(BatchCommandTag::Empty, Vec::new()),
-                direct_completion,
+                direct_completion.into(),
             )],
         )
         .expect("publish production direct BatchCommands request");
@@ -823,7 +822,7 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
             &physical_store.address,
             vec![BatchCommandEntry::new(
                 OpaqueBatchCommand::new(BatchCommandTag::Empty, Vec::new()),
-                direct_survival_completion,
+                direct_survival_completion.into(),
             )],
         )
         .expect("forwarded failure must not retire the sibling direct stream");

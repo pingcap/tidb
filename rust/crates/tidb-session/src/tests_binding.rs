@@ -463,6 +463,64 @@ fn a_session_binding_shadows_the_global_one() {
     );
 }
 
+#[test]
+fn session_hints_shadow_the_published_global_cache() {
+    let mut session = binding_session();
+    let shared = binding_cache::SharedBindingCache::default();
+    session.set_global_binding_cache(shared.clone());
+    let row = [
+        "select * from test.t where b = ?",
+        "SELECT * FROM test.t USE INDEX(kb) WHERE b=20",
+        "test",
+        "enabled",
+        "2026-09-07 00:00:00",
+        "2026-09-07 00:00:00",
+        "utf8mb4",
+        "utf8mb4_bin",
+        "manual",
+        "published_binding",
+    ]
+    .into_iter()
+    .map(|text| tidb_datatype::Datum::new_string(text.to_owned()))
+    .collect();
+    shared.publish(binding_cache::BindingCache::from_storage_rows(
+        vec![row],
+        1_000_000,
+    ));
+    assert!(session.has_plan_bindings());
+    let plan = query_text(&mut session, "explain select * from t where b=20")
+        .1
+        .concat()
+        .concat();
+    assert!(plan.contains("index:kb"), "global index binding: {plan}");
+    assert_eq!(matched(&mut session), "1");
+    session.run("create session binding for select * from t where b=20 using select * from t use index() where b=20").unwrap();
+    let plan = query_text(&mut session, "explain select * from t where b=20")
+        .1
+        .concat()
+        .concat();
+    assert!(
+        !plan.contains("index:kb"),
+        "session binding must win: {plan}"
+    );
+    assert_eq!(matched(&mut session), "1");
+    session
+        .run("drop session binding for select * from t where b=20")
+        .unwrap();
+    let plan = query_text(&mut session, "explain select * from t where b=20")
+        .1
+        .concat()
+        .concat();
+    assert!(
+        plan.contains("index:kb"),
+        "global binding uncovered: {plan}"
+    );
+    shared.publish(binding_cache::BindingCache::new(1_000_000));
+    assert!(!session.has_plan_bindings());
+    assert_eq!(joined(&mut session, "select * from t where b=20"), "2|20");
+    assert_eq!(matched(&mut session), "0");
+}
+
 /// `tidb_use_plan_baselines = OFF` turns matching off wholesale, which is
 /// Go's `SessionVars.UsePlanBaselines` gate in `planner.optimize`.
 #[test]

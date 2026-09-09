@@ -20,6 +20,8 @@ use crate::executor::ExecError;
 /// A failure while running a SQL string through the driver.
 #[derive(Debug, Clone)]
 pub enum DriverError {
+    /// An internal storage service's already-classified MySQL failure.
+    Mysql(super::MysqlError),
     /// The SQL failed to parse.
     Parse(String),
     /// A grammar-action refusal that carries its own errno, the way Go's

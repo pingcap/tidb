@@ -1,0 +1,2640 @@
+{
+  "date": "2026-09-07",
+  "status": "WIP; targeted batch-write latency reduction verified; modest mixed TPC-C gains, no sysbench gain; consistency checks passed; broad goal remains active",
+  "base_head": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "increment": "Reuse the existing ordered batched record reader for UPDATE/DELETE Batch write access paths instead of serial get_row_by_handle calls",
+  "production_file": "rust/crates/tidb-executor/src/driver/dml.rs",
+  "test": "access_path::tests::batch_writes_fetch_records_in_one_storage_request",
+  "before": {
+    "port": 53013,
+    "sha256": "2814764b8feacdce212eb854b3e9a47706d832c5156787fd518f5ef6b1bf1580",
+    "binary": "/private/tmp/tidb-dirty-boundary-preserved-Rs5tE4/tidb-server"
+  },
+  "after": {
+    "port": 53014,
+    "sha256": "60703f86052f9fbce8ebd23978a8f4b993f5aca4da072dfde2b5a546038df267",
+    "server_log": "/private/tmp/tidb-batch-write-server.log"
+  },
+  "go_port": 45000,
+  "diagnosis": {
+    "coprocessor_rpc_count": 3600,
+    "client_rpc_total_ms": 4314.48,
+    "tikv_rpc_total_ms": 3737.972725,
+    "tikv_process_total_ms": 3594.647052,
+    "trace_log": "/private/tmp/tidb-cop-timing-server.log",
+    "go_read_ms": 2.4618544848635793,
+    "rust_read_ms": 2.462957985699177,
+    "go_explain_total_keys": 16070,
+    "go_explain_processed_keys": 1,
+    "profile": "/private/tmp/tidb-update-profile.sample.txt",
+    "profile_observation": "975 SQL-worker thread-state observations in fetch_write_rows -> read_row; 960 in SessionSnapshot.get waiting for the transaction worker. These are not CPU-time or network-time measurements."
+  },
+  "phase_command": "python3 /private/tmp/tidb-delivery-phase-compare.py --ports 45000 53013 53014",
+  "phase_results": {
+    "protocol": "text",
+    "rollback": true,
+    "warmup_iterations": 2,
+    "samples": [
+      {
+        "port": 45000,
+        "iteration": 0,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.316708,
+          "deliverySelectNewOrder": 25.487873999999998,
+          "deliveryDeleteNewOrder": 0.450958,
+          "deliveryUpdateOrder": 0.676333,
+          "deliverySelectOrders": 0.183167,
+          "deliveryUpdateOrderLine": 1.898375,
+          "deliverySelectSumAmount": 1.196958,
+          "deliveryUpdateCustomer": 3.8527920000000004,
+          "ROLLBACK": 1.247917
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 0,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.252834,
+          "deliverySelectNewOrder": 21.885916,
+          "deliveryDeleteNewOrder": 1.687125,
+          "deliveryUpdateOrder": 2.861292,
+          "deliverySelectOrders": 0.674042,
+          "deliveryUpdateOrderLine": 2.565667,
+          "deliverySelectSumAmount": 2.7525,
+          "deliveryUpdateCustomer": 3.15629,
+          "ROLLBACK": 2.154792
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 0,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.443042,
+          "deliverySelectNewOrder": 19.787375,
+          "deliveryDeleteNewOrder": 0.591708,
+          "deliveryUpdateOrder": 0.928542,
+          "deliverySelectOrders": 0.916042,
+          "deliveryUpdateOrderLine": 3.583625,
+          "deliverySelectSumAmount": 2.778584,
+          "deliveryUpdateCustomer": 3.40575,
+          "ROLLBACK": 2.175667
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 1,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.169334,
+          "deliverySelectNewOrder": 15.313168000000001,
+          "deliveryDeleteNewOrder": 0.3815,
+          "deliveryUpdateOrder": 0.554833,
+          "deliverySelectOrders": 0.539125,
+          "deliveryUpdateOrderLine": 2.566084,
+          "deliverySelectSumAmount": 2.638,
+          "deliveryUpdateCustomer": 2.936458,
+          "ROLLBACK": 1.954083
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 1,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.218333,
+          "deliverySelectNewOrder": 16.512084,
+          "deliveryDeleteNewOrder": 1.364709,
+          "deliveryUpdateOrder": 1.588792,
+          "deliverySelectOrders": 0.56075,
+          "deliveryUpdateOrderLine": 2.532125,
+          "deliverySelectSumAmount": 2.657125,
+          "deliveryUpdateCustomer": 3.0005,
+          "ROLLBACK": 1.839917
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 1,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.297917,
+          "deliverySelectNewOrder": 16.966624,
+          "deliveryDeleteNewOrder": 0.402834,
+          "deliveryUpdateOrder": 0.474166,
+          "deliverySelectOrders": 0.186,
+          "deliveryUpdateOrderLine": 1.592583,
+          "deliverySelectSumAmount": 1.093292,
+          "deliveryUpdateCustomer": 2.8500409999999996,
+          "ROLLBACK": 0.750083
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 2,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.152416,
+          "deliverySelectNewOrder": 15.585083999999998,
+          "deliveryDeleteNewOrder": 0.364292,
+          "deliveryUpdateOrder": 0.383958,
+          "deliverySelectOrders": 0.179458,
+          "deliveryUpdateOrderLine": 1.572834,
+          "deliverySelectSumAmount": 1.027958,
+          "deliveryUpdateCustomer": 2.72625,
+          "ROLLBACK": 0.721333
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 2,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.234042,
+          "deliverySelectNewOrder": 15.734208999999998,
+          "deliveryDeleteNewOrder": 1.381833,
+          "deliveryUpdateOrder": 1.563208,
+          "deliverySelectOrders": 0.5215,
+          "deliveryUpdateOrderLine": 2.33225,
+          "deliverySelectSumAmount": 2.552541,
+          "deliveryUpdateCustomer": 3.2193739999999997,
+          "ROLLBACK": 2.157
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 2,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.198708,
+          "deliverySelectNewOrder": 15.718875999999998,
+          "deliveryDeleteNewOrder": 0.376792,
+          "deliveryUpdateOrder": 0.535166,
+          "deliverySelectOrders": 0.509584,
+          "deliveryUpdateOrderLine": 2.368042,
+          "deliverySelectSumAmount": 2.559917,
+          "deliveryUpdateCustomer": 3.074039,
+          "ROLLBACK": 1.81725
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 3,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.158625,
+          "deliverySelectNewOrder": 15.347665000000001,
+          "deliveryDeleteNewOrder": 0.369917,
+          "deliveryUpdateOrder": 0.551708,
+          "deliverySelectOrders": 0.493542,
+          "deliveryUpdateOrderLine": 2.715042,
+          "deliverySelectSumAmount": 2.60525,
+          "deliveryUpdateCustomer": 3.020334,
+          "ROLLBACK": 2.268208
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 3,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.238875,
+          "deliverySelectNewOrder": 15.909542,
+          "deliveryDeleteNewOrder": 1.502416,
+          "deliveryUpdateOrder": 1.68375,
+          "deliverySelectOrders": 0.555208,
+          "deliveryUpdateOrderLine": 2.37225,
+          "deliverySelectSumAmount": 2.497583,
+          "deliveryUpdateCustomer": 3.002414,
+          "ROLLBACK": 2.101167
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 3,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.287209,
+          "deliverySelectNewOrder": 16.682333999999997,
+          "deliveryDeleteNewOrder": 0.408083,
+          "deliveryUpdateOrder": 0.407083,
+          "deliverySelectOrders": 0.161208,
+          "deliveryUpdateOrderLine": 1.756834,
+          "deliverySelectSumAmount": 1.101583,
+          "deliveryUpdateCustomer": 2.8832940000000002,
+          "ROLLBACK": 0.650541
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 4,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.17175,
+          "deliverySelectNewOrder": 15.444080999999999,
+          "deliveryDeleteNewOrder": 0.359916,
+          "deliveryUpdateOrder": 0.389833,
+          "deliverySelectOrders": 0.166167,
+          "deliveryUpdateOrderLine": 1.456083,
+          "deliverySelectSumAmount": 1.132959,
+          "deliveryUpdateCustomer": 2.686124,
+          "ROLLBACK": 0.652583
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 4,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.241,
+          "deliverySelectNewOrder": 16.137502,
+          "deliveryDeleteNewOrder": 1.451584,
+          "deliveryUpdateOrder": 1.612459,
+          "deliverySelectOrders": 0.563083,
+          "deliveryUpdateOrderLine": 2.413083,
+          "deliverySelectSumAmount": 2.5865,
+          "deliveryUpdateCustomer": 2.9653780000000003,
+          "ROLLBACK": 2.337875
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 4,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.244625,
+          "deliverySelectNewOrder": 15.890958999999999,
+          "deliveryDeleteNewOrder": 0.420917,
+          "deliveryUpdateOrder": 0.601708,
+          "deliverySelectOrders": 0.52325,
+          "deliveryUpdateOrderLine": 2.352958,
+          "deliverySelectSumAmount": 2.463917,
+          "deliveryUpdateCustomer": 2.8620400000000004,
+          "ROLLBACK": 2.10625
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 5,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.20775,
+          "deliverySelectNewOrder": 15.372542,
+          "deliveryDeleteNewOrder": 0.385125,
+          "deliveryUpdateOrder": 0.551333,
+          "deliverySelectOrders": 0.500334,
+          "deliveryUpdateOrderLine": 2.384167,
+          "deliverySelectSumAmount": 2.365167,
+          "deliveryUpdateCustomer": 2.789458,
+          "ROLLBACK": 2.163708
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 5,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.212083,
+          "deliverySelectNewOrder": 15.585085,
+          "deliveryDeleteNewOrder": 1.342125,
+          "deliveryUpdateOrder": 1.521708,
+          "deliverySelectOrders": 0.527167,
+          "deliveryUpdateOrderLine": 2.302167,
+          "deliverySelectSumAmount": 2.450292,
+          "deliveryUpdateCustomer": 2.7320429999999996,
+          "ROLLBACK": 2.260083
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 5,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.3015,
+          "deliverySelectNewOrder": 16.159042000000003,
+          "deliveryDeleteNewOrder": 0.38025,
+          "deliveryUpdateOrder": 0.429166,
+          "deliverySelectOrders": 0.161041,
+          "deliveryUpdateOrderLine": 1.529833,
+          "deliverySelectSumAmount": 1.018792,
+          "deliveryUpdateCustomer": 2.9563340000000005,
+          "ROLLBACK": 0.610792
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 6,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.175917,
+          "deliverySelectNewOrder": 15.918416,
+          "deliveryDeleteNewOrder": 0.356,
+          "deliveryUpdateOrder": 0.368416,
+          "deliverySelectOrders": 0.1775,
+          "deliveryUpdateOrderLine": 1.500666,
+          "deliverySelectSumAmount": 1.160333,
+          "deliveryUpdateCustomer": 2.8209579999999996,
+          "ROLLBACK": 0.685667
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 6,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.24425,
+          "deliverySelectNewOrder": 15.896082000000002,
+          "deliveryDeleteNewOrder": 1.449667,
+          "deliveryUpdateOrder": 1.570417,
+          "deliverySelectOrders": 0.513875,
+          "deliveryUpdateOrderLine": 2.40975,
+          "deliverySelectSumAmount": 2.57725,
+          "deliveryUpdateCustomer": 2.9142900000000003,
+          "ROLLBACK": 1.908708
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 6,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.216333,
+          "deliverySelectNewOrder": 15.845833000000002,
+          "deliveryDeleteNewOrder": 0.377,
+          "deliveryUpdateOrder": 0.567375,
+          "deliverySelectOrders": 0.520958,
+          "deliveryUpdateOrderLine": 2.389916,
+          "deliverySelectSumAmount": 2.54775,
+          "deliveryUpdateCustomer": 2.9350009999999997,
+          "ROLLBACK": 2.060958
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 7,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.175042,
+          "deliverySelectNewOrder": 15.433708,
+          "deliveryDeleteNewOrder": 0.378708,
+          "deliveryUpdateOrder": 0.564125,
+          "deliverySelectOrders": 0.497583,
+          "deliveryUpdateOrderLine": 2.342917,
+          "deliverySelectSumAmount": 2.481292,
+          "deliveryUpdateCustomer": 2.958166,
+          "ROLLBACK": 1.97125
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 7,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.230125,
+          "deliverySelectNewOrder": 15.820583999999998,
+          "deliveryDeleteNewOrder": 1.396709,
+          "deliveryUpdateOrder": 1.592542,
+          "deliverySelectOrders": 0.536,
+          "deliveryUpdateOrderLine": 2.372708,
+          "deliverySelectSumAmount": 2.536541,
+          "deliveryUpdateCustomer": 2.946043,
+          "ROLLBACK": 1.752083
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 7,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.274417,
+          "deliverySelectNewOrder": 16.340582999999995,
+          "deliveryDeleteNewOrder": 0.372708,
+          "deliveryUpdateOrder": 0.413,
+          "deliverySelectOrders": 0.175167,
+          "deliveryUpdateOrderLine": 1.572792,
+          "deliverySelectSumAmount": 1.056209,
+          "deliveryUpdateCustomer": 2.790125,
+          "ROLLBACK": 0.621708
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 8,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.172625,
+          "deliverySelectNewOrder": 15.991125,
+          "deliveryDeleteNewOrder": 0.360041,
+          "deliveryUpdateOrder": 0.365625,
+          "deliverySelectOrders": 0.172417,
+          "deliveryUpdateOrderLine": 1.490917,
+          "deliverySelectSumAmount": 0.990833,
+          "deliveryUpdateCustomer": 2.6875410000000004,
+          "ROLLBACK": 0.582
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 8,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.204834,
+          "deliverySelectNewOrder": 15.849708,
+          "deliveryDeleteNewOrder": 1.376583,
+          "deliveryUpdateOrder": 1.561083,
+          "deliverySelectOrders": 0.516208,
+          "deliveryUpdateOrderLine": 2.33675,
+          "deliverySelectSumAmount": 2.522208,
+          "deliveryUpdateCustomer": 3.0217919999999996,
+          "ROLLBACK": 2.168375
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 8,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.221875,
+          "deliverySelectNewOrder": 16.061126,
+          "deliveryDeleteNewOrder": 0.407917,
+          "deliveryUpdateOrder": 0.717875,
+          "deliverySelectOrders": 0.490917,
+          "deliveryUpdateOrderLine": 2.322875,
+          "deliverySelectSumAmount": 2.537666,
+          "deliveryUpdateCustomer": 3.296709,
+          "ROLLBACK": 1.902583
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 9,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.147,
+          "deliverySelectNewOrder": 15.214127,
+          "deliveryDeleteNewOrder": 0.35475,
+          "deliveryUpdateOrder": 0.501,
+          "deliverySelectOrders": 0.479917,
+          "deliveryUpdateOrderLine": 2.349708,
+          "deliverySelectSumAmount": 2.462208,
+          "deliveryUpdateCustomer": 2.8596650000000006,
+          "ROLLBACK": 1.727083
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 9,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.182291,
+          "deliverySelectNewOrder": 15.615667000000002,
+          "deliveryDeleteNewOrder": 1.329708,
+          "deliveryUpdateOrder": 1.533375,
+          "deliverySelectOrders": 0.516459,
+          "deliveryUpdateOrderLine": 2.30275,
+          "deliverySelectSumAmount": 2.582666,
+          "deliveryUpdateCustomer": 2.987583,
+          "ROLLBACK": 2.026042
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 9,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.272167,
+          "deliverySelectNewOrder": 16.437374000000002,
+          "deliveryDeleteNewOrder": 0.376542,
+          "deliveryUpdateOrder": 0.429667,
+          "deliverySelectOrders": 0.159667,
+          "deliveryUpdateOrderLine": 1.515041,
+          "deliverySelectSumAmount": 1.032333,
+          "deliveryUpdateCustomer": 2.6519179999999998,
+          "ROLLBACK": 0.764875
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 10,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.196416,
+          "deliverySelectNewOrder": 15.860958,
+          "deliveryDeleteNewOrder": 0.351459,
+          "deliveryUpdateOrder": 0.382209,
+          "deliverySelectOrders": 0.15475,
+          "deliveryUpdateOrderLine": 1.551375,
+          "deliverySelectSumAmount": 1.011917,
+          "deliveryUpdateCustomer": 2.4685029999999997,
+          "ROLLBACK": 0.66725
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 10,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.209708,
+          "deliverySelectNewOrder": 15.911122999999998,
+          "deliveryDeleteNewOrder": 1.420083,
+          "deliveryUpdateOrder": 1.583333,
+          "deliverySelectOrders": 0.513709,
+          "deliveryUpdateOrderLine": 2.405542,
+          "deliverySelectSumAmount": 2.491834,
+          "deliveryUpdateCustomer": 2.965415,
+          "ROLLBACK": 1.775417
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 10,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.209459,
+          "deliverySelectNewOrder": 15.742001,
+          "deliveryDeleteNewOrder": 0.376416,
+          "deliveryUpdateOrder": 0.577334,
+          "deliverySelectOrders": 0.517916,
+          "deliveryUpdateOrderLine": 2.366458,
+          "deliverySelectSumAmount": 2.659375,
+          "deliveryUpdateCustomer": 3.043581,
+          "ROLLBACK": 2.382334
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 11,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.181375,
+          "deliverySelectNewOrder": 15.652876,
+          "deliveryDeleteNewOrder": 0.367042,
+          "deliveryUpdateOrder": 0.571333,
+          "deliverySelectOrders": 0.481917,
+          "deliveryUpdateOrderLine": 2.331792,
+          "deliverySelectSumAmount": 2.488334,
+          "deliveryUpdateCustomer": 2.928457,
+          "ROLLBACK": 2.419916
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 11,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.228792,
+          "deliverySelectNewOrder": 16.057126999999998,
+          "deliveryDeleteNewOrder": 1.379292,
+          "deliveryUpdateOrder": 1.594125,
+          "deliverySelectOrders": 0.535708,
+          "deliveryUpdateOrderLine": 2.363792,
+          "deliverySelectSumAmount": 2.468583,
+          "deliveryUpdateCustomer": 2.960583,
+          "ROLLBACK": 2.145084
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 11,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.3125,
+          "deliverySelectNewOrder": 16.458998,
+          "deliveryDeleteNewOrder": 0.383916,
+          "deliveryUpdateOrder": 0.408083,
+          "deliverySelectOrders": 0.158541,
+          "deliveryUpdateOrderLine": 1.496459,
+          "deliverySelectSumAmount": 1.026375,
+          "deliveryUpdateCustomer": 2.766251,
+          "ROLLBACK": 0.73625
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 12,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.19975,
+          "deliverySelectNewOrder": 16.075581,
+          "deliveryDeleteNewOrder": 0.361625,
+          "deliveryUpdateOrder": 0.502542,
+          "deliverySelectOrders": 0.163458,
+          "deliveryUpdateOrderLine": 1.569292,
+          "deliverySelectSumAmount": 0.998917,
+          "deliveryUpdateCustomer": 2.6143759999999996,
+          "ROLLBACK": 0.639375
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 12,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.2325,
+          "deliverySelectNewOrder": 15.876249999999999,
+          "deliveryDeleteNewOrder": 1.54275,
+          "deliveryUpdateOrder": 1.670458,
+          "deliverySelectOrders": 0.544834,
+          "deliveryUpdateOrderLine": 2.416167,
+          "deliverySelectSumAmount": 2.624042,
+          "deliveryUpdateCustomer": 2.9339579999999996,
+          "ROLLBACK": 2.046459
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 12,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.216458,
+          "deliverySelectNewOrder": 17.259874999999997,
+          "deliveryDeleteNewOrder": 0.480791,
+          "deliveryUpdateOrder": 0.663666,
+          "deliverySelectOrders": 0.659292,
+          "deliveryUpdateOrderLine": 2.783959,
+          "deliverySelectSumAmount": 2.854709,
+          "deliveryUpdateCustomer": 3.334876,
+          "ROLLBACK": 2.290583
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 13,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.225417,
+          "deliverySelectNewOrder": 16.643043,
+          "deliveryDeleteNewOrder": 0.4055,
+          "deliveryUpdateOrder": 0.581,
+          "deliverySelectOrders": 0.502084,
+          "deliveryUpdateOrderLine": 2.393292,
+          "deliverySelectSumAmount": 2.557375,
+          "deliveryUpdateCustomer": 3.036125,
+          "ROLLBACK": 2.122875
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 13,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.215,
+          "deliverySelectNewOrder": 15.675791,
+          "deliveryDeleteNewOrder": 1.210708,
+          "deliveryUpdateOrder": 1.571584,
+          "deliverySelectOrders": 0.535292,
+          "deliveryUpdateOrderLine": 2.410625,
+          "deliverySelectSumAmount": 2.639667,
+          "deliveryUpdateCustomer": 2.954288,
+          "ROLLBACK": 2.039375
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 13,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.318083,
+          "deliverySelectNewOrder": 16.507625,
+          "deliveryDeleteNewOrder": 0.396584,
+          "deliveryUpdateOrder": 0.424459,
+          "deliverySelectOrders": 0.192375,
+          "deliveryUpdateOrderLine": 1.630375,
+          "deliverySelectSumAmount": 1.061625,
+          "deliveryUpdateCustomer": 2.8285430000000003,
+          "ROLLBACK": 0.640666
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 14,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.189709,
+          "deliverySelectNewOrder": 15.718166,
+          "deliveryDeleteNewOrder": 0.359416,
+          "deliveryUpdateOrder": 0.392583,
+          "deliverySelectOrders": 0.182417,
+          "deliveryUpdateOrderLine": 1.554083,
+          "deliverySelectSumAmount": 1.08675,
+          "deliveryUpdateCustomer": 2.6001250000000002,
+          "ROLLBACK": 0.65
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 14,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.219542,
+          "deliverySelectNewOrder": 15.768500000000001,
+          "deliveryDeleteNewOrder": 1.402417,
+          "deliveryUpdateOrder": 1.653667,
+          "deliverySelectOrders": 0.528,
+          "deliveryUpdateOrderLine": 2.41275,
+          "deliverySelectSumAmount": 2.54025,
+          "deliveryUpdateCustomer": 2.977291,
+          "ROLLBACK": 1.743917
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 14,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.2205,
+          "deliverySelectNewOrder": 15.784457999999999,
+          "deliveryDeleteNewOrder": 0.575625,
+          "deliveryUpdateOrder": 0.583541,
+          "deliverySelectOrders": 0.509667,
+          "deliveryUpdateOrderLine": 2.388708,
+          "deliverySelectSumAmount": 2.463584,
+          "deliveryUpdateCustomer": 3.1735829999999994,
+          "ROLLBACK": 2.067542
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 15,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.1785,
+          "deliverySelectNewOrder": 15.573374999999999,
+          "deliveryDeleteNewOrder": 0.424083,
+          "deliveryUpdateOrder": 0.563125,
+          "deliverySelectOrders": 0.477541,
+          "deliveryUpdateOrderLine": 2.368875,
+          "deliverySelectSumAmount": 2.52975,
+          "deliveryUpdateCustomer": 3.0003759999999997,
+          "ROLLBACK": 1.956375
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 15,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.209666,
+          "deliverySelectNewOrder": 15.818039999999996,
+          "deliveryDeleteNewOrder": 1.356083,
+          "deliveryUpdateOrder": 1.601083,
+          "deliverySelectOrders": 0.544417,
+          "deliveryUpdateOrderLine": 2.4655,
+          "deliverySelectSumAmount": 2.65975,
+          "deliveryUpdateCustomer": 3.044206,
+          "ROLLBACK": 2.010042
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 15,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.23275,
+          "deliverySelectNewOrder": 15.932541,
+          "deliveryDeleteNewOrder": 0.395458,
+          "deliveryUpdateOrder": 0.440917,
+          "deliverySelectOrders": 0.182458,
+          "deliveryUpdateOrderLine": 1.499041,
+          "deliverySelectSumAmount": 1.10875,
+          "deliveryUpdateCustomer": 2.8319599999999996,
+          "ROLLBACK": 0.650542
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 16,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.18225,
+          "deliverySelectNewOrder": 15.628665999999999,
+          "deliveryDeleteNewOrder": 0.342583,
+          "deliveryUpdateOrder": 0.35825,
+          "deliverySelectOrders": 0.160917,
+          "deliveryUpdateOrderLine": 1.607792,
+          "deliverySelectSumAmount": 1.04125,
+          "deliveryUpdateCustomer": 2.646375,
+          "ROLLBACK": 0.737375
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 16,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.217958,
+          "deliverySelectNewOrder": 15.848167000000002,
+          "deliveryDeleteNewOrder": 1.409,
+          "deliveryUpdateOrder": 1.759083,
+          "deliverySelectOrders": 0.515709,
+          "deliveryUpdateOrderLine": 2.384334,
+          "deliverySelectSumAmount": 2.482375,
+          "deliveryUpdateCustomer": 2.939209,
+          "ROLLBACK": 1.918834
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 16,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.215,
+          "deliverySelectNewOrder": 15.629332999999999,
+          "deliveryDeleteNewOrder": 0.384834,
+          "deliveryUpdateOrder": 0.547083,
+          "deliverySelectOrders": 0.545209,
+          "deliveryUpdateOrderLine": 2.377084,
+          "deliverySelectSumAmount": 2.545166,
+          "deliveryUpdateCustomer": 2.99929,
+          "ROLLBACK": 1.6665
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 17,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.140333,
+          "deliverySelectNewOrder": 15.075293000000002,
+          "deliveryDeleteNewOrder": 0.341167,
+          "deliveryUpdateOrder": 0.502916,
+          "deliverySelectOrders": 0.508459,
+          "deliveryUpdateOrderLine": 2.361666,
+          "deliverySelectSumAmount": 2.4805,
+          "deliveryUpdateCustomer": 2.7905009999999995,
+          "ROLLBACK": 1.950875
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 17,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.201,
+          "deliverySelectNewOrder": 15.797291999999999,
+          "deliveryDeleteNewOrder": 1.388208,
+          "deliveryUpdateOrder": 1.658292,
+          "deliverySelectOrders": 0.521416,
+          "deliveryUpdateOrderLine": 2.338916,
+          "deliverySelectSumAmount": 2.4865,
+          "deliveryUpdateCustomer": 2.9037909999999996,
+          "ROLLBACK": 2.083333
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 17,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.293375,
+          "deliverySelectNewOrder": 16.153582999999998,
+          "deliveryDeleteNewOrder": 0.367125,
+          "deliveryUpdateOrder": 0.413791,
+          "deliverySelectOrders": 0.197333,
+          "deliveryUpdateOrderLine": 1.566084,
+          "deliverySelectSumAmount": 1.056167,
+          "deliveryUpdateCustomer": 2.7354590000000005,
+          "ROLLBACK": 0.6375
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 18,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.182,
+          "deliverySelectNewOrder": 15.916627000000002,
+          "deliveryDeleteNewOrder": 0.37975,
+          "deliveryUpdateOrder": 0.408042,
+          "deliverySelectOrders": 0.178,
+          "deliveryUpdateOrderLine": 1.511583,
+          "deliverySelectSumAmount": 1.070625,
+          "deliveryUpdateCustomer": 2.5897509999999997,
+          "ROLLBACK": 0.668208
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 18,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.237792,
+          "deliverySelectNewOrder": 15.884792999999998,
+          "deliveryDeleteNewOrder": 1.437208,
+          "deliveryUpdateOrder": 1.693542,
+          "deliverySelectOrders": 0.526875,
+          "deliveryUpdateOrderLine": 2.397708,
+          "deliverySelectSumAmount": 2.496167,
+          "deliveryUpdateCustomer": 2.9679590000000005,
+          "ROLLBACK": 1.654542
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 18,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.20525,
+          "deliverySelectNewOrder": 16.075875,
+          "deliveryDeleteNewOrder": 0.407792,
+          "deliveryUpdateOrder": 0.600458,
+          "deliverySelectOrders": 0.508708,
+          "deliveryUpdateOrderLine": 2.425375,
+          "deliverySelectSumAmount": 2.535125,
+          "deliveryUpdateCustomer": 3.0275,
+          "ROLLBACK": 2.191
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 19,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.161625,
+          "deliverySelectNewOrder": 15.652877,
+          "deliveryDeleteNewOrder": 0.373958,
+          "deliveryUpdateOrder": 0.574542,
+          "deliverySelectOrders": 0.495792,
+          "deliveryUpdateOrderLine": 2.347916,
+          "deliverySelectSumAmount": 2.565333,
+          "deliveryUpdateCustomer": 2.9418339999999996,
+          "ROLLBACK": 1.974625
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 19,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.220833,
+          "deliverySelectNewOrder": 16.064125000000004,
+          "deliveryDeleteNewOrder": 1.367,
+          "deliveryUpdateOrder": 1.515459,
+          "deliverySelectOrders": 0.527833,
+          "deliveryUpdateOrderLine": 2.350625,
+          "deliverySelectSumAmount": 2.532667,
+          "deliveryUpdateCustomer": 2.9929989999999997,
+          "ROLLBACK": 2.033667
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 19,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.302042,
+          "deliverySelectNewOrder": 16.301289999999998,
+          "deliveryDeleteNewOrder": 0.383208,
+          "deliveryUpdateOrder": 0.407875,
+          "deliverySelectOrders": 0.157042,
+          "deliveryUpdateOrderLine": 1.472458,
+          "deliverySelectSumAmount": 1.101958,
+          "deliveryUpdateCustomer": 2.7185829999999997,
+          "ROLLBACK": 0.642792
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 20,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.168166,
+          "deliverySelectNewOrder": 15.597,
+          "deliveryDeleteNewOrder": 0.325667,
+          "deliveryUpdateOrder": 0.328167,
+          "deliverySelectOrders": 0.151625,
+          "deliveryUpdateOrderLine": 1.512458,
+          "deliverySelectSumAmount": 1.023292,
+          "deliveryUpdateCustomer": 2.6045429999999996,
+          "ROLLBACK": 0.650833
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 20,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.218333,
+          "deliverySelectNewOrder": 15.764209,
+          "deliveryDeleteNewOrder": 1.445417,
+          "deliveryUpdateOrder": 1.560333,
+          "deliverySelectOrders": 0.532667,
+          "deliveryUpdateOrderLine": 2.377208,
+          "deliverySelectSumAmount": 2.655042,
+          "deliveryUpdateCustomer": 2.519541,
+          "ROLLBACK": 1.777583
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 20,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.215667,
+          "deliverySelectNewOrder": 15.791708999999997,
+          "deliveryDeleteNewOrder": 0.369875,
+          "deliveryUpdateOrder": 0.595875,
+          "deliverySelectOrders": 0.51225,
+          "deliveryUpdateOrderLine": 2.385125,
+          "deliverySelectSumAmount": 2.536833,
+          "deliveryUpdateCustomer": 2.9592090000000004,
+          "ROLLBACK": 2.027833
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 21,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.182459,
+          "deliverySelectNewOrder": 15.378706,
+          "deliveryDeleteNewOrder": 0.393583,
+          "deliveryUpdateOrder": 0.583916,
+          "deliverySelectOrders": 0.477791,
+          "deliveryUpdateOrderLine": 2.321875,
+          "deliverySelectSumAmount": 2.531292,
+          "deliveryUpdateCustomer": 2.830793,
+          "ROLLBACK": 6.02
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 21,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.308333,
+          "deliverySelectNewOrder": 15.337123,
+          "deliveryDeleteNewOrder": 1.418167,
+          "deliveryUpdateOrder": 1.584583,
+          "deliverySelectOrders": 0.559,
+          "deliveryUpdateOrderLine": 2.409042,
+          "deliverySelectSumAmount": 2.64275,
+          "deliveryUpdateCustomer": 2.9512510000000005,
+          "ROLLBACK": 1.660208
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 21,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.262042,
+          "deliverySelectNewOrder": 15.917498999999998,
+          "deliveryDeleteNewOrder": 0.385083,
+          "deliveryUpdateOrder": 0.430833,
+          "deliverySelectOrders": 0.159041,
+          "deliveryUpdateOrderLine": 1.532084,
+          "deliverySelectSumAmount": 1.027292,
+          "deliveryUpdateCustomer": 2.669707,
+          "ROLLBACK": 0.723667
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 22,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.158917,
+          "deliverySelectNewOrder": 15.622624000000002,
+          "deliveryDeleteNewOrder": 0.332167,
+          "deliveryUpdateOrder": 0.350416,
+          "deliverySelectOrders": 0.160083,
+          "deliveryUpdateOrderLine": 1.484417,
+          "deliverySelectSumAmount": 1.015292,
+          "deliveryUpdateCustomer": 2.6328729999999996,
+          "ROLLBACK": 0.736917
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 22,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.194,
+          "deliverySelectNewOrder": 15.846960000000001,
+          "deliveryDeleteNewOrder": 1.455791,
+          "deliveryUpdateOrder": 1.555708,
+          "deliverySelectOrders": 0.548083,
+          "deliveryUpdateOrderLine": 2.361458,
+          "deliverySelectSumAmount": 2.5195,
+          "deliveryUpdateCustomer": 2.988877,
+          "ROLLBACK": 2.048833
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 22,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.228,
+          "deliverySelectNewOrder": 15.877250000000002,
+          "deliveryDeleteNewOrder": 0.413875,
+          "deliveryUpdateOrder": 0.599167,
+          "deliverySelectOrders": 0.520208,
+          "deliveryUpdateOrderLine": 2.38675,
+          "deliverySelectSumAmount": 2.505375,
+          "deliveryUpdateCustomer": 3.129207,
+          "ROLLBACK": 2.021458
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 23,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.165208,
+          "deliverySelectNewOrder": 15.527625999999998,
+          "deliveryDeleteNewOrder": 0.38225,
+          "deliveryUpdateOrder": 0.578917,
+          "deliverySelectOrders": 0.477208,
+          "deliveryUpdateOrderLine": 2.398916,
+          "deliverySelectSumAmount": 2.503375,
+          "deliveryUpdateCustomer": 2.927209,
+          "ROLLBACK": 1.885208
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 23,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.19825,
+          "deliverySelectNewOrder": 15.661498000000002,
+          "deliveryDeleteNewOrder": 1.205542,
+          "deliveryUpdateOrder": 1.741625,
+          "deliverySelectOrders": 0.538333,
+          "deliveryUpdateOrderLine": 2.342458,
+          "deliverySelectSumAmount": 2.555083,
+          "deliveryUpdateCustomer": 2.8888740000000004,
+          "ROLLBACK": 2.094375
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 23,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.307,
+          "deliverySelectNewOrder": 16.233708,
+          "deliveryDeleteNewOrder": 0.356042,
+          "deliveryUpdateOrder": 0.375625,
+          "deliverySelectOrders": 0.152667,
+          "deliveryUpdateOrderLine": 1.575,
+          "deliverySelectSumAmount": 1.052417,
+          "deliveryUpdateCustomer": 2.5100020000000005,
+          "ROLLBACK": 0.711375
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 24,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.181833,
+          "deliverySelectNewOrder": 16.732207,
+          "deliveryDeleteNewOrder": 0.420166,
+          "deliveryUpdateOrder": 0.465875,
+          "deliverySelectOrders": 0.169542,
+          "deliveryUpdateOrderLine": 1.620208,
+          "deliverySelectSumAmount": 1.020583,
+          "deliveryUpdateCustomer": 2.8401670000000006,
+          "ROLLBACK": 0.669875
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 24,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.262958,
+          "deliverySelectNewOrder": 15.799166999999997,
+          "deliveryDeleteNewOrder": 1.509542,
+          "deliveryUpdateOrder": 1.630333,
+          "deliverySelectOrders": 0.563541,
+          "deliveryUpdateOrderLine": 2.553875,
+          "deliverySelectSumAmount": 2.595042,
+          "deliveryUpdateCustomer": 3.2071240000000003,
+          "ROLLBACK": 2.243875
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 24,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.261708,
+          "deliverySelectNewOrder": 16.113127000000002,
+          "deliveryDeleteNewOrder": 0.438,
+          "deliveryUpdateOrder": 0.60275,
+          "deliverySelectOrders": 0.523667,
+          "deliveryUpdateOrderLine": 2.392667,
+          "deliverySelectSumAmount": 2.570542,
+          "deliveryUpdateCustomer": 3.0600830000000006,
+          "ROLLBACK": 2.029917
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 25,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.158125,
+          "deliverySelectNewOrder": 15.183459,
+          "deliveryDeleteNewOrder": 0.347291,
+          "deliveryUpdateOrder": 0.510417,
+          "deliverySelectOrders": 0.497042,
+          "deliveryUpdateOrderLine": 2.474917,
+          "deliverySelectSumAmount": 2.521375,
+          "deliveryUpdateCustomer": 2.9318750000000002,
+          "ROLLBACK": 1.822917
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 25,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.191875,
+          "deliverySelectNewOrder": 15.319415,
+          "deliveryDeleteNewOrder": 1.209125,
+          "deliveryUpdateOrder": 1.540125,
+          "deliverySelectOrders": 0.50525,
+          "deliveryUpdateOrderLine": 2.366375,
+          "deliverySelectSumAmount": 2.7875,
+          "deliveryUpdateCustomer": 3.049291,
+          "ROLLBACK": 2.041292
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 25,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.308417,
+          "deliverySelectNewOrder": 16.485332,
+          "deliveryDeleteNewOrder": 0.390167,
+          "deliveryUpdateOrder": 0.416791,
+          "deliverySelectOrders": 0.170541,
+          "deliveryUpdateOrderLine": 1.599334,
+          "deliverySelectSumAmount": 1.1095,
+          "deliveryUpdateCustomer": 2.638793,
+          "ROLLBACK": 0.627208
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 26,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.186334,
+          "deliverySelectNewOrder": 15.648168,
+          "deliveryDeleteNewOrder": 0.349542,
+          "deliveryUpdateOrder": 0.371875,
+          "deliverySelectOrders": 0.151375,
+          "deliveryUpdateOrderLine": 1.578167,
+          "deliverySelectSumAmount": 0.957875,
+          "deliveryUpdateCustomer": 2.626542,
+          "ROLLBACK": 0.597042
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 26,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.234,
+          "deliverySelectNewOrder": 15.509666999999999,
+          "deliveryDeleteNewOrder": 1.38975,
+          "deliveryUpdateOrder": 1.5525,
+          "deliverySelectOrders": 0.530875,
+          "deliveryUpdateOrderLine": 2.343042,
+          "deliverySelectSumAmount": 2.487542,
+          "deliveryUpdateCustomer": 2.886084,
+          "ROLLBACK": 1.945625
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 26,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.215667,
+          "deliverySelectNewOrder": 16.048834,
+          "deliveryDeleteNewOrder": 0.38675,
+          "deliveryUpdateOrder": 0.570667,
+          "deliverySelectOrders": 0.514167,
+          "deliveryUpdateOrderLine": 2.388542,
+          "deliverySelectSumAmount": 2.580292,
+          "deliveryUpdateCustomer": 3.040163,
+          "ROLLBACK": 2.05875
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 27,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.180625,
+          "deliverySelectNewOrder": 15.272834000000001,
+          "deliveryDeleteNewOrder": 0.384084,
+          "deliveryUpdateOrder": 0.585833,
+          "deliverySelectOrders": 0.489333,
+          "deliveryUpdateOrderLine": 2.292708,
+          "deliverySelectSumAmount": 2.537917,
+          "deliveryUpdateCustomer": 2.9532939999999996,
+          "ROLLBACK": 2.064791
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 27,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.227292,
+          "deliverySelectNewOrder": 16.045457,
+          "deliveryDeleteNewOrder": 1.461083,
+          "deliveryUpdateOrder": 1.566041,
+          "deliverySelectOrders": 0.531334,
+          "deliveryUpdateOrderLine": 2.391833,
+          "deliverySelectSumAmount": 2.64325,
+          "deliveryUpdateCustomer": 3.0077499999999997,
+          "ROLLBACK": 2.077416
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 27,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.205167,
+          "deliverySelectNewOrder": 15.904876,
+          "deliveryDeleteNewOrder": 0.384917,
+          "deliveryUpdateOrder": 0.449167,
+          "deliverySelectOrders": 0.172333,
+          "deliveryUpdateOrderLine": 1.457917,
+          "deliverySelectSumAmount": 1.038459,
+          "deliveryUpdateCustomer": 3.017919,
+          "ROLLBACK": 0.601167
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 28,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.186583,
+          "deliverySelectNewOrder": 15.477542,
+          "deliveryDeleteNewOrder": 0.372625,
+          "deliveryUpdateOrder": 0.378917,
+          "deliverySelectOrders": 0.169167,
+          "deliveryUpdateOrderLine": 1.488958,
+          "deliverySelectSumAmount": 1.011958,
+          "deliveryUpdateCustomer": 2.737542,
+          "ROLLBACK": 0.550166
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 28,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.187334,
+          "deliverySelectNewOrder": 15.634248,
+          "deliveryDeleteNewOrder": 1.395042,
+          "deliveryUpdateOrder": 1.744167,
+          "deliverySelectOrders": 0.544,
+          "deliveryUpdateOrderLine": 2.386292,
+          "deliverySelectSumAmount": 2.530875,
+          "deliveryUpdateCustomer": 2.981958,
+          "ROLLBACK": 2.022375
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 28,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.227166,
+          "deliverySelectNewOrder": 16.167374,
+          "deliveryDeleteNewOrder": 0.407833,
+          "deliveryUpdateOrder": 0.582208,
+          "deliverySelectOrders": 0.520667,
+          "deliveryUpdateOrderLine": 2.463625,
+          "deliverySelectSumAmount": 2.579792,
+          "deliveryUpdateCustomer": 2.942624,
+          "ROLLBACK": 1.707791
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 29,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.150375,
+          "deliverySelectNewOrder": 15.290581,
+          "deliveryDeleteNewOrder": 0.337167,
+          "deliveryUpdateOrder": 0.545125,
+          "deliverySelectOrders": 0.467916,
+          "deliveryUpdateOrderLine": 2.425625,
+          "deliverySelectSumAmount": 2.491166,
+          "deliveryUpdateCustomer": 2.909126,
+          "ROLLBACK": 1.716083
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 29,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.192,
+          "deliverySelectNewOrder": 15.863457999999998,
+          "deliveryDeleteNewOrder": 1.366209,
+          "deliveryUpdateOrder": 1.569,
+          "deliverySelectOrders": 0.537584,
+          "deliveryUpdateOrderLine": 2.370292,
+          "deliverySelectSumAmount": 2.514208,
+          "deliveryUpdateCustomer": 2.885541,
+          "ROLLBACK": 2.160125
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 29,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.27875,
+          "deliverySelectNewOrder": 16.337083,
+          "deliveryDeleteNewOrder": 0.361167,
+          "deliveryUpdateOrder": 0.439584,
+          "deliverySelectOrders": 0.18825,
+          "deliveryUpdateOrderLine": 1.556708,
+          "deliverySelectSumAmount": 1.038917,
+          "deliveryUpdateCustomer": 2.7194160000000003,
+          "ROLLBACK": 0.689625
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 30,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.169875,
+          "deliverySelectNewOrder": 15.585876,
+          "deliveryDeleteNewOrder": 0.35975,
+          "deliveryUpdateOrder": 0.406083,
+          "deliverySelectOrders": 0.16675,
+          "deliveryUpdateOrderLine": 1.51325,
+          "deliverySelectSumAmount": 0.983833,
+          "deliveryUpdateCustomer": 2.5604999999999993,
+          "ROLLBACK": 0.622917
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 30,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.225375,
+          "deliverySelectNewOrder": 15.737208,
+          "deliveryDeleteNewOrder": 1.441958,
+          "deliveryUpdateOrder": 1.586917,
+          "deliverySelectOrders": 0.529542,
+          "deliveryUpdateOrderLine": 2.386333,
+          "deliverySelectSumAmount": 2.659667,
+          "deliveryUpdateCustomer": 3.025376,
+          "ROLLBACK": 1.852833
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 30,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.240042,
+          "deliverySelectNewOrder": 15.890207999999998,
+          "deliveryDeleteNewOrder": 0.420334,
+          "deliveryUpdateOrder": 0.576042,
+          "deliverySelectOrders": 0.513792,
+          "deliveryUpdateOrderLine": 2.3565,
+          "deliverySelectSumAmount": 2.567958,
+          "deliveryUpdateCustomer": 3.3488339999999996,
+          "ROLLBACK": 2.083958
+        }
+      },
+      {
+        "port": 53014,
+        "iteration": 31,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.197708,
+          "deliverySelectNewOrder": 15.513082,
+          "deliveryDeleteNewOrder": 0.368333,
+          "deliveryUpdateOrder": 0.582834,
+          "deliverySelectOrders": 0.485666,
+          "deliveryUpdateOrderLine": 2.374875,
+          "deliverySelectSumAmount": 2.536125,
+          "deliveryUpdateCustomer": 2.884125,
+          "ROLLBACK": 1.894458
+        }
+      },
+      {
+        "port": 53013,
+        "iteration": 31,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.210875,
+          "deliverySelectNewOrder": 15.976084,
+          "deliveryDeleteNewOrder": 1.308875,
+          "deliveryUpdateOrder": 1.587833,
+          "deliverySelectOrders": 0.535667,
+          "deliveryUpdateOrderLine": 2.369458,
+          "deliverySelectSumAmount": 2.5635,
+          "deliveryUpdateCustomer": 2.9947489999999997,
+          "ROLLBACK": 2.052917
+        }
+      },
+      {
+        "port": 45000,
+        "iteration": 31,
+        "timings_ms": {
+          "BEGIN PESSIMISTIC": 0.297375,
+          "deliverySelectNewOrder": 16.451584,
+          "deliveryDeleteNewOrder": 0.375166,
+          "deliveryUpdateOrder": 0.436292,
+          "deliverySelectOrders": 0.169875,
+          "deliveryUpdateOrderLine": 1.525583,
+          "deliverySelectSumAmount": 1.053708,
+          "deliveryUpdateCustomer": 2.818334,
+          "ROLLBACK": 0.685125
+        }
+      }
+    ],
+    "result_equivalence": true
+  },
+  "validation": {
+    "red": "/private/tmp/tidb-batch-write-read-before.log; expected 1 storage request, actual 3",
+    "green": "/private/tmp/tidb-batch-write-read-after.log; 1 test passed, integer and common-handle UPDATE and DELETE, duplicate and absent keys",
+    "dml": "/private/tmp/tidb-batch-write-dml-tests.log; 10 passed",
+    "formatted_test": "/private/tmp/tidb-batch-write-read-formatted.log; 1 passed",
+    "build": "/private/tmp/tidb-batch-write-build.log",
+    "profile": "WIP",
+    "ready_lint_run": false,
+    "postchecks": {
+      "standard_conditions_passed": 11,
+      "customers_checked": 30000,
+      "bad_balances": 0,
+      "bad_delivery_counts": 0,
+      "standard_command": "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc tpcc check -H 127.0.0.1 -P 45000 -U root -D perf_tpcc_locking_v1 --warehouses 1 -T 1",
+      "standard_log": "/private/tmp/tidb-batch-write-tpcc-check.log",
+      "balances_command": "mysql --protocol=tcp -h127.0.0.1 -P45000 -uroot --plugin-dir=/opt/homebrew/opt/mysql-client/lib/plugin perf_tpcc_locking_v1 < /private/tmp/tidb-tpcc-locking-balance-check.sql",
+      "balances_log": "/private/tmp/tidb-batch-write-balances.tsv"
+    },
+    "commands": [
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib batch_writes_fetch_records_in_one_storage_request -- --nocapture",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib driver::tests::dml::",
+      "cd rust && cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "git diff --check -- rust/crates/tidb-executor/src/driver/dml.rs rust/crates/tidb-executor/src/access_path.rs rust/docs/select-lock-execplan.md"
+    ]
+  },
+  "limitations": [
+    "Text-protocol statement diagnostic, not the prepared mixed workload.",
+    "All diagnostic phase transactions rolled back; locking, commit performance and contended throughput require separate evidence.",
+    "Shared evolving TiKV dataset; tombstone/version scan cost also affects Go.",
+    "Prior row-estimate mismatch and full locking-shape matrix remain unresolved."
+  ],
+  "sysbench": {
+    "configuration": {
+      "server": [
+        [
+          "before",
+          53013
+        ],
+        [
+          "after",
+          53014
+        ],
+        [
+          "go",
+          45000
+        ]
+      ],
+      "database": "perf_sysbench_locking_v2",
+      "workload": [
+        "oltp_read_write"
+      ],
+      "host": "127.0.0.1",
+      "user": "root",
+      "threads": 2,
+      "seconds": 20,
+      "rounds": 3,
+      "table_size": 100000,
+      "tables": 1,
+      "ps_mode": "auto",
+      "output": "/private/tmp/tidb-batch-write-sysbench-comparison"
+    },
+    "samples": [
+      {
+        "transactions": 9283,
+        "queries": 185660,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.003,
+        "tps": 464.08038794180874,
+        "qps": 9281.607758836175,
+        "server": "before",
+        "workload": "oltp_read_write",
+        "round": 0,
+        "log": "/private/tmp/tidb-batch-write-sysbench-comparison/w0-r0-before.log"
+      },
+      {
+        "transactions": 8932,
+        "queries": 178640,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.0052,
+        "tps": 446.4839141823126,
+        "qps": 8929.678283646253,
+        "server": "after",
+        "workload": "oltp_read_write",
+        "round": 0,
+        "log": "/private/tmp/tidb-batch-write-sysbench-comparison/w0-r0-after.log"
+      },
+      {
+        "transactions": 10010,
+        "queries": 200200,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.0021,
+        "tps": 500.4474530174332,
+        "qps": 10008.949060348665,
+        "server": "go",
+        "workload": "oltp_read_write",
+        "round": 0,
+        "log": "/private/tmp/tidb-batch-write-sysbench-comparison/w0-r0-go.log"
+      },
+      {
+        "transactions": 9127,
+        "queries": 182540,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.0048,
+        "tps": 456.2405022794529,
+        "qps": 9124.810045589058,
+        "server": "after",
+        "workload": "oltp_read_write",
+        "round": 1,
+        "log": "/private/tmp/tidb-batch-write-sysbench-comparison/w0-r1-after.log"
+      },
+      {
+        "transactions": 9702,
+        "queries": 194040,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.0045,
+        "tps": 484.99087705266317,
+        "qps": 9699.817541053262,
+        "server": "go",
+        "workload": "oltp_read_write",
+        "round": 1,
+        "log": "/private/tmp/tidb-batch-write-sysbench-comparison/w0-r1-go.log"
+      },
+      {
+        "transactions": 9020,
+        "queries": 180400,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.0045,
+        "tps": 450.898547826739,
+        "qps": 9017.97095653478,
+        "server": "before",
+        "workload": "oltp_read_write",
+        "round": 1,
+        "log": "/private/tmp/tidb-batch-write-sysbench-comparison/w0-r1-before.log"
+      },
+      {
+        "transactions": 9640,
+        "queries": 192800,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.0024,
+        "tps": 481.9421669399672,
+        "qps": 9638.843338799343,
+        "server": "go",
+        "workload": "oltp_read_write",
+        "round": 2,
+        "log": "/private/tmp/tidb-batch-write-sysbench-comparison/w0-r2-go.log"
+      },
+      {
+        "transactions": 8748,
+        "queries": 174960,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.0032,
+        "tps": 437.3300271956487,
+        "qps": 8746.600543912975,
+        "server": "before",
+        "workload": "oltp_read_write",
+        "round": 2,
+        "log": "/private/tmp/tidb-batch-write-sysbench-comparison/w0-r2-before.log"
+      },
+      {
+        "transactions": 8948,
+        "queries": 178960,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.0068,
+        "tps": 447.2479357018614,
+        "qps": 8944.958714037228,
+        "server": "after",
+        "workload": "oltp_read_write",
+        "round": 2,
+        "log": "/private/tmp/tidb-batch-write-sysbench-comparison/w0-r2-after.log"
+      }
+    ],
+    "summary": [
+      {
+        "server": "before",
+        "workload": "oltp_read_write",
+        "median_tps": 450.898547826739,
+        "min_tps": 437.3300271956487,
+        "max_tps": 464.08038794180874,
+        "samples": 3
+      },
+      {
+        "server": "after",
+        "workload": "oltp_read_write",
+        "median_tps": 447.2479357018614,
+        "min_tps": 446.4839141823126,
+        "max_tps": 456.2405022794529,
+        "samples": 3
+      },
+      {
+        "server": "go",
+        "workload": "oltp_read_write",
+        "median_tps": 484.99087705266317,
+        "min_tps": 481.9421669399672,
+        "max_tps": 500.4474530174332,
+        "samples": 3
+      }
+    ]
+  },
+  "tpcc": {
+    "database": "perf_tpcc_locking_v1",
+    "count_per_run": 10000,
+    "note": "Shared evolving dataset; tool RNG is time-seeded; no ignored errors or time cutoff",
+    "samples": [
+      {
+        "server": "before",
+        "threads": 2,
+        "round": 0,
+        "seconds": 19.62086145801004,
+        "counts": {
+          "DELIVERY": 402,
+          "NEW_ORDER": 4460,
+          "ORDER_STATUS": 420,
+          "PAYMENT": 4301,
+          "STOCK_LEVEL": 417
+        },
+        "tps": 509.6616181405017,
+        "new_order_tpm": 13638.544901439825,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t2-r0-before.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "53013",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "2",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "after",
+        "threads": 2,
+        "round": 0,
+        "seconds": 19.5525561250397,
+        "counts": {
+          "DELIVERY": 391,
+          "NEW_ORDER": 4453,
+          "ORDER_STATUS": 377,
+          "PAYMENT": 4373,
+          "STOCK_LEVEL": 406
+        },
+        "tps": 511.44208133450354,
+        "new_order_tpm": 13664.709529095266,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t2-r0-after.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "53014",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "2",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "go",
+        "threads": 2,
+        "round": 0,
+        "seconds": 16.971905208018143,
+        "counts": {
+          "DELIVERY": 392,
+          "NEW_ORDER": 4515,
+          "ORDER_STATUS": 413,
+          "PAYMENT": 4254,
+          "STOCK_LEVEL": 426
+        },
+        "tps": 589.2090414973351,
+        "new_order_tpm": 15961.672934162809,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t2-r0-go.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "45000",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "2",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "after",
+        "threads": 2,
+        "round": 1,
+        "seconds": 20.330815250054002,
+        "counts": {
+          "DELIVERY": 414,
+          "NEW_ORDER": 4445,
+          "ORDER_STATUS": 375,
+          "PAYMENT": 4367,
+          "STOCK_LEVEL": 399
+        },
+        "tps": 491.86419122929357,
+        "new_order_tpm": 13118.01798008526,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t2-r1-after.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "53014",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "2",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "go",
+        "threads": 2,
+        "round": 1,
+        "seconds": 18.09996012499323,
+        "counts": {
+          "DELIVERY": 431,
+          "NEW_ORDER": 4491,
+          "ORDER_STATUS": 368,
+          "PAYMENT": 4336,
+          "STOCK_LEVEL": 374
+        },
+        "tps": 552.4874049966306,
+        "new_order_tpm": 14887.325615039208,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t2-r1-go.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "45000",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "2",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "before",
+        "threads": 2,
+        "round": 1,
+        "seconds": 21.06052229105262,
+        "counts": {
+          "DELIVERY": 367,
+          "NEW_ORDER": 4511,
+          "ORDER_STATUS": 383,
+          "PAYMENT": 4285,
+          "STOCK_LEVEL": 454
+        },
+        "tps": 474.8220325119103,
+        "new_order_tpm": 12851.533131967366,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t2-r1-before.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "53013",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "2",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "go",
+        "threads": 2,
+        "round": 2,
+        "seconds": 17.987223167030606,
+        "counts": {
+          "DELIVERY": 380,
+          "NEW_ORDER": 4507,
+          "ORDER_STATUS": 383,
+          "PAYMENT": 4321,
+          "STOCK_LEVEL": 409
+        },
+        "tps": 555.9501823677454,
+        "new_order_tpm": 15034.00483158857,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t2-r2-go.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "45000",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "2",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "before",
+        "threads": 2,
+        "round": 2,
+        "seconds": 22.114378999976907,
+        "counts": {
+          "DELIVERY": 396,
+          "NEW_ORDER": 4495,
+          "ORDER_STATUS": 405,
+          "PAYMENT": 4287,
+          "STOCK_LEVEL": 417
+        },
+        "tps": 452.19447491654375,
+        "new_order_tpm": 12195.684988499186,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t2-r2-before.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "53013",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "2",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "after",
+        "threads": 2,
+        "round": 2,
+        "seconds": 20.21369741699891,
+        "counts": {
+          "DELIVERY": 403,
+          "NEW_ORDER": 4508,
+          "ORDER_STATUS": 397,
+          "PAYMENT": 4331,
+          "STOCK_LEVEL": 361
+        },
+        "tps": 494.71404432869366,
+        "new_order_tpm": 13381.025471002506,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t2-r2-after.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "53014",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "2",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "before",
+        "threads": 8,
+        "round": 0,
+        "seconds": 13.24917170900153,
+        "counts": {
+          "DELIVERY": 383,
+          "NEW_ORDER": 4481,
+          "ORDER_STATUS": 434,
+          "PAYMENT": 4313,
+          "STOCK_LEVEL": 389
+        },
+        "tps": 754.7641633481109,
+        "new_order_tpm": 20292.58929577731,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t8-r0-before.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "53013",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "8",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "after",
+        "threads": 8,
+        "round": 0,
+        "seconds": 13.03002791601466,
+        "counts": {
+          "DELIVERY": 410,
+          "NEW_ORDER": 4464,
+          "ORDER_STATUS": 396,
+          "PAYMENT": 4330,
+          "STOCK_LEVEL": 400
+        },
+        "tps": 767.4580641311919,
+        "new_order_tpm": 20555.596789689844,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t8-r0-after.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "53014",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "8",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "go",
+        "threads": 8,
+        "round": 0,
+        "seconds": 11.477373916015495,
+        "counts": {
+          "DELIVERY": 408,
+          "NEW_ORDER": 4569,
+          "ORDER_STATUS": 431,
+          "PAYMENT": 4201,
+          "STOCK_LEVEL": 391
+        },
+        "tps": 871.2794471256207,
+        "new_order_tpm": 23885.254763501765,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t8-r0-go.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "45000",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "8",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "after",
+        "threads": 8,
+        "round": 1,
+        "seconds": 13.813628249976318,
+        "counts": {
+          "DELIVERY": 421,
+          "NEW_ORDER": 4541,
+          "ORDER_STATUS": 390,
+          "PAYMENT": 4225,
+          "STOCK_LEVEL": 423
+        },
+        "tps": 723.9227680835514,
+        "new_order_tpm": 19723.999739204442,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t8-r1-after.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "53014",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "8",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "go",
+        "threads": 8,
+        "round": 1,
+        "seconds": 11.162886083009653,
+        "counts": {
+          "DELIVERY": 376,
+          "NEW_ORDER": 4543,
+          "ORDER_STATUS": 436,
+          "PAYMENT": 4242,
+          "STOCK_LEVEL": 403
+        },
+        "tps": 895.8256785599908,
+        "new_order_tpm": 24418.41634618823,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t8-r1-go.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "45000",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "8",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "before",
+        "threads": 8,
+        "round": 1,
+        "seconds": 14.434955040982459,
+        "counts": {
+          "DELIVERY": 387,
+          "NEW_ORDER": 4550,
+          "ORDER_STATUS": 384,
+          "PAYMENT": 4282,
+          "STOCK_LEVEL": 397
+        },
+        "tps": 692.7628088628525,
+        "new_order_tpm": 18912.424681955872,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t8-r1-before.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "53013",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "8",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "go",
+        "threads": 8,
+        "round": 2,
+        "seconds": 11.972445874998812,
+        "counts": {
+          "DELIVERY": 399,
+          "NEW_ORDER": 4477,
+          "ORDER_STATUS": 389,
+          "PAYMENT": 4359,
+          "STOCK_LEVEL": 376
+        },
+        "tps": 835.2512180391037,
+        "new_order_tpm": 22436.518218966405,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t8-r2-go.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "45000",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "8",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "before",
+        "threads": 8,
+        "round": 2,
+        "seconds": 13.943359625001904,
+        "counts": {
+          "DELIVERY": 385,
+          "NEW_ORDER": 4625,
+          "ORDER_STATUS": 411,
+          "PAYMENT": 4182,
+          "STOCK_LEVEL": 397
+        },
+        "tps": 717.1872682727736,
+        "new_order_tpm": 19901.946694569466,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t8-r2-before.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "53013",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "8",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "after",
+        "threads": 8,
+        "round": 2,
+        "seconds": 14.129189208964817,
+        "counts": {
+          "DELIVERY": 400,
+          "NEW_ORDER": 4577,
+          "ORDER_STATUS": 379,
+          "PAYMENT": 4201,
+          "STOCK_LEVEL": 443
+        },
+        "tps": 707.7546950574565,
+        "new_order_tpm": 19436.359435667873,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t8-r2-after.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "53014",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "8",
+          "--count",
+          "10000",
+          "--interval",
+          "10s"
+        ]
+      }
+    ],
+    "warmups": [
+      {
+        "server": "go",
+        "threads": 2,
+        "round": -1,
+        "seconds": 1.6916024159872904,
+        "counts": {
+          "DELIVERY": 45,
+          "NEW_ORDER": 432,
+          "ORDER_STATUS": 38,
+          "PAYMENT": 448,
+          "STOCK_LEVEL": 37
+        },
+        "tps": 591.1554574225161,
+        "new_order_tpm": 15322.749456391617,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t2-r-1-go.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "45000",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "2",
+          "--count",
+          "1000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "before",
+        "threads": 2,
+        "round": -1,
+        "seconds": 1.8583961249678396,
+        "counts": {
+          "DELIVERY": 31,
+          "NEW_ORDER": 457,
+          "ORDER_STATUS": 40,
+          "PAYMENT": 441,
+          "STOCK_LEVEL": 31
+        },
+        "tps": 538.098410002499,
+        "new_order_tpm": 14754.658402268524,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t2-r-1-before.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "53013",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "2",
+          "--count",
+          "1000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "after",
+        "threads": 2,
+        "round": -1,
+        "seconds": 2.1298037079977803,
+        "counts": {
+          "DELIVERY": 50,
+          "NEW_ORDER": 441,
+          "ORDER_STATUS": 34,
+          "PAYMENT": 421,
+          "STOCK_LEVEL": 54
+        },
+        "tps": 469.5268377291426,
+        "new_order_tpm": 12423.680126313113,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t2-r-1-after.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "53014",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "2",
+          "--count",
+          "1000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "go",
+        "threads": 8,
+        "round": -1,
+        "seconds": 1.0584515419905074,
+        "counts": {
+          "DELIVERY": 33,
+          "NEW_ORDER": 441,
+          "ORDER_STATUS": 40,
+          "PAYMENT": 446,
+          "STOCK_LEVEL": 40
+        },
+        "tps": 944.7763646500204,
+        "new_order_tpm": 24998.78260863954,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t8-r-1-go.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "45000",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "8",
+          "--count",
+          "1000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "before",
+        "threads": 8,
+        "round": -1,
+        "seconds": 1.3204745830153115,
+        "counts": {
+          "DELIVERY": 38,
+          "NEW_ORDER": 454,
+          "ORDER_STATUS": 31,
+          "PAYMENT": 444,
+          "STOCK_LEVEL": 33
+        },
+        "tps": 757.3034822953533,
+        "new_order_tpm": 20628.946857725423,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t8-r-1-before.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "53013",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "8",
+          "--count",
+          "1000",
+          "--interval",
+          "10s"
+        ]
+      },
+      {
+        "server": "after",
+        "threads": 8,
+        "round": -1,
+        "seconds": 1.3697926659951918,
+        "counts": {
+          "DELIVERY": 39,
+          "NEW_ORDER": 454,
+          "ORDER_STATUS": 31,
+          "PAYMENT": 445,
+          "STOCK_LEVEL": 31
+        },
+        "tps": 730.0374902164283,
+        "new_order_tpm": 19886.221233495507,
+        "log": "/private/tmp/tidb-batch-write-tpcc-comparison/t8-r-1-after.log",
+        "command": [
+          "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+          "tpcc",
+          "run",
+          "-H",
+          "127.0.0.1",
+          "-P",
+          "53014",
+          "-U",
+          "root",
+          "-D",
+          "perf_tpcc_locking_v1",
+          "--warehouses",
+          "1",
+          "-T",
+          "8",
+          "--count",
+          "1000",
+          "--interval",
+          "10s"
+        ]
+      }
+    ],
+    "summary": [
+      {
+        "server": "before",
+        "threads": 2,
+        "median_tps": 474.8220325119103
+      },
+      {
+        "server": "after",
+        "threads": 2,
+        "median_tps": 494.71404432869366
+      },
+      {
+        "server": "go",
+        "threads": 2,
+        "median_tps": 555.9501823677454
+      },
+      {
+        "server": "before",
+        "threads": 8,
+        "median_tps": 717.1872682727736
+      },
+      {
+        "server": "after",
+        "threads": 8,
+        "median_tps": 723.9227680835514
+      },
+      {
+        "server": "go",
+        "threads": 8,
+        "median_tps": 871.2794471256207
+      }
+    ]
+  },
+  "conclusion": {
+    "sysbench": {
+      "before_median_tps": 450.898547826739,
+      "after_median_tps": 447.2479357018614,
+      "go_median_tps": 484.99087705266317,
+      "change_percent": -0.8096304905999219
+    },
+    "tpcc_2": {
+      "before_median_tps": 474.8220325119103,
+      "after_median_tps": 494.71404432869366,
+      "go_median_tps": 555.9501823677454,
+      "change_percent": 4.1893615828124675
+    },
+    "tpcc_8": {
+      "before_median_tps": 717.1872682727736,
+      "after_median_tps": 723.9227680835514,
+      "go_median_tps": 871.2794471256207,
+      "change_percent": 0.9391549611580619
+    },
+    "note": "Three rotating samples per endpoint/concurrency; all accepted. Eight-client pairs are mixed and shared dataset evolves. These observations do not establish the broad goal or statistical significance."
+  },
+  "sysbench_command": "python3 rust/scripts/compare-sysbench.py --server before:53013 --server after:53014 --server go:45000 --database perf_sysbench_locking_v2 --workload oltp_read_write --threads 2 --seconds 20 --rounds 3 --table-size 100000 --output /private/tmp/tidb-batch-write-sysbench-comparison",
+  "tpcc_command": "python3 /private/tmp/tidb-agg-tpcc-compare.py --server before:53013 --server after:53014 --server go:45000 --output /private/tmp/tidb-batch-write-tpcc-comparison"
+}

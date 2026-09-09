@@ -16,7 +16,7 @@
 
 use std::fmt;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// One observable stage in a BatchCommands request lifecycle.
@@ -198,6 +198,7 @@ pub struct BatchRequestProgress {
     batch_state: Mutex<Option<BatchRequestState>>,
     received_after_arrival_ns: AtomicU64,
     forwarded_host: Mutex<Option<String>>,
+    publication_route: OnceLock<super::BatchRoute>,
 }
 
 impl Default for BatchRequestProgress {
@@ -221,12 +222,29 @@ impl BatchRequestProgress {
             batch_state: Mutex::new(None),
             received_after_arrival_ns: AtomicU64::new(0),
             forwarded_host: Mutex::new(forwarded_host),
+            publication_route: OnceLock::new(),
         }
     }
 
     /// Returns the request ID assigned during batch selection.
     pub fn request_id(&self) -> u64 {
         self.request_id.load(Ordering::Acquire)
+    }
+
+    pub(in crate::rpc) const fn arrived_at(&self) -> Instant {
+        self.arrived_at
+    }
+
+    pub(in crate::rpc) fn publication_route(&self) -> Option<&super::BatchRoute> {
+        self.publication_route.get()
+    }
+
+    // The in-flight table records identity before making a request available
+    // to send/receive. Reading a completed response never needs a second
+    // acknowledgement from the submission worker.
+    pub(super) fn record_publication(&self, route: &super::BatchRoute) {
+        self.publication_route.get_or_init(|| route.clone());
+        debug_assert_eq!(self.publication_route.get(), Some(route));
     }
 
     /// Returns the delay from arrival until batch selection.

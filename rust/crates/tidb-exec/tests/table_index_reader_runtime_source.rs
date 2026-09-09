@@ -20,6 +20,8 @@ mod direct_unary_table_index_reader_source;
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use prost::Message;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -41,8 +43,8 @@ struct SharedTransportState {
 
 struct TrackingResponse {
     rows: VecDeque<i64>,
-    required_rows: Rc<RefCell<Vec<usize>>>,
-    close_count: Rc<Cell<usize>>,
+    required_rows: Arc<Mutex<Vec<usize>>>,
+    close_count: Arc<AtomicUsize>,
     cancellation: Option<std::sync::Arc<tidb_distsql::CancelHandle>>,
 }
 
@@ -58,7 +60,7 @@ impl QueryResponse for TrackingResponse {
         if self.rows.is_empty() {
             return Ok(None);
         }
-        self.required_rows.borrow_mut().push(required_rows);
+        self.required_rows.lock().unwrap().push(required_rows);
         let take = required_rows.min(self.rows.len());
         let rows = self.rows.drain(..take).collect::<Vec<_>>();
         Ok(Some(QueryResultSubset {
@@ -71,7 +73,7 @@ impl QueryResponse for TrackingResponse {
         if let Some(cancellation) = &self.cancellation {
             cancellation.cancel();
         }
-        self.close_count.set(self.close_count.get() + 1);
+        self.close_count.fetch_add(1, Ordering::SeqCst);
         self.rows.clear();
     }
 }
@@ -144,14 +146,14 @@ fn encoded_rows(values: &[i64]) -> Vec<u8> {
     .encode_to_vec()
 }
 
-fn response(values: &[i64], close_count: Rc<Cell<usize>>) -> TrackingResponse {
-    response_with_required_rows(values, close_count, Rc::new(RefCell::new(Vec::new())))
+fn response(values: &[i64], close_count: Arc<AtomicUsize>) -> TrackingResponse {
+    response_with_required_rows(values, close_count, Arc::new(Mutex::new(Vec::new())))
 }
 
 fn response_with_required_rows(
     values: &[i64],
-    close_count: Rc<Cell<usize>>,
-    required_rows: Rc<RefCell<Vec<usize>>>,
+    close_count: Arc<AtomicUsize>,
+    required_rows: Arc<Mutex<Vec<usize>>>,
 ) -> TrackingResponse {
     TrackingResponse {
         rows: values.iter().copied().collect(),
@@ -163,8 +165,8 @@ fn response_with_required_rows(
 
 fn response_rows(
     total_rows: usize,
-    close_count: Rc<Cell<usize>>,
-    required_rows: Rc<RefCell<Vec<usize>>>,
+    close_count: Arc<AtomicUsize>,
+    required_rows: Arc<Mutex<Vec<usize>>>,
 ) -> TrackingResponse {
     response_with_required_rows(&vec![1; total_rows], close_count, required_rows)
 }
@@ -199,16 +201,16 @@ fn table_and_index_reader_honor_every_required_rows_bound() {
             (3_073, vec![3, 10, 1_024], vec![3, 10, 1_024]),
         ] {
             let state = Rc::new(SharedTransportState::default());
-            let closed = Rc::new(Cell::new(0));
-            let observed_required_rows = Rc::new(RefCell::new(Vec::new()));
+            let closed = Arc::new(AtomicUsize::new(0));
+            let observed_required_rows = Arc::new(Mutex::new(Vec::new()));
             let plan = ReaderPlan::new(kind, vec![request()], field_types());
             let mut reader = TableIndexReader::new(
                 plan,
                 transport(
                     [Ok(Some(response_rows(
                         total_rows,
-                        Rc::clone(&closed),
-                        Rc::clone(&observed_required_rows),
+                        Arc::clone(&closed),
+                        Arc::clone(&observed_required_rows),
                     )))],
                     state,
                 ),
@@ -218,11 +220,11 @@ fn table_and_index_reader_honor_every_required_rows_bound() {
                 assert_eq!(reader.next(required).unwrap().len(), expected);
             }
             assert_eq!(
-                observed_required_rows.borrow().as_slice(),
+                observed_required_rows.lock().unwrap().as_slice(),
                 required_rows.as_slice()
             );
             reader.close();
-            assert_eq!(closed.get(), 1);
+            assert_eq!(closed.load(Ordering::SeqCst), 1);
             assert_eq!(reader.state(), ReaderState::Closed);
         }
     }
@@ -231,16 +233,16 @@ fn table_and_index_reader_honor_every_required_rows_bound() {
 #[test]
 fn open_transfers_each_response_once_and_consumes_requests_serially() {
     let state = Rc::new(SharedTransportState::default());
-    let first_closed = Rc::new(Cell::new(0));
-    let second_closed = Rc::new(Cell::new(0));
+    let first_closed = Arc::new(AtomicUsize::new(0));
+    let second_closed = Arc::new(AtomicUsize::new(0));
     let plan = ReaderPlan::new(ReaderKind::Table, vec![request(), request()], field_types())
         .with_runtime_stats(vec![7, 8], 9, true);
     let mut reader = TableIndexReader::new(
         plan,
         transport(
             [
-                Ok(Some(response(&[1, 2], Rc::clone(&first_closed)))),
-                Ok(Some(response(&[3, 4], Rc::clone(&second_closed)))),
+                Ok(Some(response(&[1, 2], Arc::clone(&first_closed)))),
+                Ok(Some(response(&[3, 4], Arc::clone(&second_closed)))),
             ],
             Rc::clone(&state),
         ),
@@ -256,12 +258,12 @@ fn open_transfers_each_response_once_and_consumes_requests_serially() {
     assert_eq!(ints(reader.next(3).unwrap()), vec![1, 2, 3]);
     assert_eq!(ints(reader.next(3).unwrap()), vec![4]);
     assert!(reader.next(3).unwrap().is_empty());
-    assert_eq!(first_closed.get(), 1);
-    assert_eq!(second_closed.get(), 1);
+    assert_eq!(first_closed.load(Ordering::SeqCst), 1);
+    assert_eq!(second_closed.load(Ordering::SeqCst), 1);
     reader.close();
     reader.close();
-    assert_eq!(first_closed.get(), 1);
-    assert_eq!(second_closed.get(), 1);
+    assert_eq!(first_closed.load(Ordering::SeqCst), 1);
+    assert_eq!(second_closed.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -280,8 +282,8 @@ fn explicit_reader_close_cancels_every_request_local_authority_only() {
         plan,
         transport(
             [
-                Ok(Some(response(&[1], Rc::new(Cell::new(0))))),
-                Ok(Some(response(&[2], Rc::new(Cell::new(0))))),
+                Ok(Some(response(&[1], Arc::new(AtomicUsize::new(0))))),
+                Ok(Some(response(&[2], Arc::new(AtomicUsize::new(0))))),
             ],
             Rc::clone(&state),
         ),
@@ -328,15 +330,15 @@ fn temporary_table_reader_is_structurally_a_zero_send_path() {
 #[test]
 fn close_before_drain_closes_every_opened_response_once() {
     let state = Rc::new(SharedTransportState::default());
-    let first_closed = Rc::new(Cell::new(0));
-    let second_closed = Rc::new(Cell::new(0));
+    let first_closed = Arc::new(AtomicUsize::new(0));
+    let second_closed = Arc::new(AtomicUsize::new(0));
     let plan = ReaderPlan::new(ReaderKind::Index, vec![request(), request()], field_types());
     let mut reader = TableIndexReader::new(
         plan,
         transport(
             [
-                Ok(Some(response(&[1], Rc::clone(&first_closed)))),
-                Ok(Some(response(&[2], Rc::clone(&second_closed)))),
+                Ok(Some(response(&[1], Arc::clone(&first_closed)))),
+                Ok(Some(response(&[2], Arc::clone(&second_closed)))),
             ],
             state,
         ),
@@ -344,43 +346,43 @@ fn close_before_drain_closes_every_opened_response_once() {
     reader.open().unwrap();
     reader.close();
     reader.close();
-    assert_eq!(first_closed.get(), 1);
-    assert_eq!(second_closed.get(), 1);
+    assert_eq!(first_closed.load(Ordering::SeqCst), 1);
+    assert_eq!(second_closed.load(Ordering::SeqCst), 1);
 }
 
 #[test]
 fn dropping_open_reader_closes_every_response_once() {
     let state = Rc::new(SharedTransportState::default());
-    let first_closed = Rc::new(Cell::new(0));
-    let second_closed = Rc::new(Cell::new(0));
+    let first_closed = Arc::new(AtomicUsize::new(0));
+    let second_closed = Arc::new(AtomicUsize::new(0));
     let plan = ReaderPlan::new(ReaderKind::Table, vec![request(), request()], field_types());
     {
         let mut reader = TableIndexReader::new(
             plan,
             transport(
                 [
-                    Ok(Some(response(&[1], Rc::clone(&first_closed)))),
-                    Ok(Some(response(&[2], Rc::clone(&second_closed)))),
+                    Ok(Some(response(&[1], Arc::clone(&first_closed)))),
+                    Ok(Some(response(&[2], Arc::clone(&second_closed)))),
                 ],
                 state,
             ),
         );
         reader.open().unwrap();
     }
-    assert_eq!(first_closed.get(), 1);
-    assert_eq!(second_closed.get(), 1);
+    assert_eq!(first_closed.load(Ordering::SeqCst), 1);
+    assert_eq!(second_closed.load(Ordering::SeqCst), 1);
 }
 
 #[test]
 fn later_open_error_closes_earlier_response_and_terminally_closes_reader() {
     let state = Rc::new(SharedTransportState::default());
-    let first_closed = Rc::new(Cell::new(0));
+    let first_closed = Arc::new(AtomicUsize::new(0));
     let plan = ReaderPlan::new(ReaderKind::Index, vec![request(), request()], field_types());
     let mut reader = TableIndexReader::new(
         plan,
         transport(
             [
-                Ok(Some(response(&[1], Rc::clone(&first_closed)))),
+                Ok(Some(response(&[1], Arc::clone(&first_closed)))),
                 Err("second send failed".to_owned()),
             ],
             state,
@@ -392,14 +394,14 @@ fn later_open_error_closes_earlier_response_and_terminally_closes_reader() {
             tidb_distsql::QueryRuntimeError::Transport("second send failed".to_owned())
         ))
     );
-    assert_eq!(first_closed.get(), 1);
+    assert_eq!(first_closed.load(Ordering::SeqCst), 1);
     assert_eq!(reader.state(), ReaderState::Closed);
     assert_eq!(
         reader.next(1),
         Err(StorageReaderError::NotOpen(ReaderState::Closed))
     );
     reader.close();
-    assert_eq!(first_closed.get(), 1);
+    assert_eq!(first_closed.load(Ordering::SeqCst), 1);
 }
 
 #[test]

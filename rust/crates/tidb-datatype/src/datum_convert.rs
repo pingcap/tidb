@@ -14,12 +14,18 @@
 
 //! Source-shaped `pkg/types/datum.go::Datum.ConvertTo` implementation.
 //!
-//! Conversion produces a value and an event separately. Go routes the same
-//! event through statement flags to become an error, warning, or ignored
-//! condition. Keeping that policy out of the representation layer prevents
-//! executor/session state from leaking into the datatype crate.
+//! Contextful conversion reports typed diagnostics at their originating stage
+//! through the caller's warning sink. The legacy value/event interface shares
+//! the value engine, but cannot represent multiple diagnostics for one value.
 
 use chrono::Utc;
+
+pub(crate) mod diagnostics;
+use crate::parser_types_errors::{
+    ERR_DATA_TOO_LONG, ERR_OVERFLOW, ERR_TRUNCATED, ERR_TRUNCATED_WRONG_VALUE,
+};
+pub use diagnostics::DatumConversion;
+use diagnostics::Diagnostics;
 
 use crate::{
     convert_decimal_to_uint, convert_float_to_int, convert_float_to_uint, convert_int_to_int,
@@ -75,6 +81,42 @@ impl Datum {
         flags: ConversionFlags,
         zone: &SessionTimeZone,
     ) -> Result<Converted<Self>, DatumValueError> {
+        self.convert_to_reported(target, flags, zone, &mut Diagnostics::new(None))
+    }
+
+    /// Converts through the same value engine while preserving each stage's
+    /// typed diagnostics and the caller-owned warning order. The zone is the
+    /// evaluated session location; the context supplies flags and warning policy.
+    /// Unported diagnostic stages return `DatumValueError::Unsupported`; they
+    /// must not be treated as successful contextful conversions.
+    pub fn convert_to_in_context(
+        &self,
+        target: &FieldType,
+        context: &crate::ConversionContext<'_>,
+        zone: &SessionTimeZone,
+    ) -> Result<DatumConversion, DatumValueError> {
+        let mut diagnostics = Diagnostics::new(Some(context));
+        let converted =
+            self.convert_to_reported(target, context.flags(), zone, &mut diagnostics)?;
+        if diagnostics.unmapped {
+            return Err(DatumValueError::Unsupported(
+                self.kind(),
+                "conversion diagnostic",
+            ));
+        }
+        Ok(DatumConversion {
+            value: converted.value,
+            error: diagnostics.error,
+        })
+    }
+
+    fn convert_to_reported(
+        &self,
+        target: &FieldType,
+        flags: ConversionFlags,
+        zone: &SessionTimeZone,
+        diagnostics: &mut Diagnostics<'_, '_>,
+    ) -> Result<Converted<Self>, DatumValueError> {
         if self.is_null() || matches!(target.code(), FieldTypeCode::Null) {
             return Ok(exact(Self::Null));
         }
@@ -85,17 +127,32 @@ impl Datum {
             | FieldTypeCode::Long
             | FieldTypeCode::LongLong => {
                 if target.is_unsigned() {
-                    self.convert_to_unsigned(target.code(), flags)
+                    diagnostics
+                        .unreported(self.convert_to_unsigned(target.code(), flags))
                         .map(map_converted(Self::UInt))
                 } else {
-                    self.convert_to_signed(target.code(), flags, zone)
+                    self.convert_to_signed_reported(target.code(), flags, zone, diagnostics)
                         .map(map_converted(Self::Int))
                 }
             }
             FieldTypeCode::Float | FieldTypeCode::Double => {
-                let converted = self.to_f64()?;
-                let produced = produce_float_with_type(converted.value, target);
-                let event = prefer_event(converted.event, produced.event);
+                let converted = match self {
+                    Self::String(value) => {
+                        crate::convert::str_to_float_reported(value.as_utf8()?, false, diagnostics)
+                    }
+                    Self::Bytes(value) => crate::convert::str_to_float_reported(
+                        std::str::from_utf8(value)?,
+                        false,
+                        diagnostics,
+                    ),
+                    _ => {
+                        let converted = self.to_f64()?;
+                        diagnostics.unhandled(converted.event.as_ref());
+                        converted
+                    }
+                };
+                let produced = produce_float_reported(converted.value, target, diagnostics);
+                let event = numeric_conversion_event(converted.event, produced.event, flags);
                 Ok(Converted {
                     value: if matches!(target.code(), FieldTypeCode::Float) {
                         Self::Float32(f64::from(produced.value as f32))
@@ -113,7 +170,7 @@ impl Datum {
             | FieldTypeCode::MediumBlob
             | FieldTypeCode::LongBlob => {
                 let bytes = self.string_conversion_bytes(target, flags)?;
-                let produced = produce_string_with_type(bytes, target, true)?;
+                let produced = produce_string_reported(bytes, target, true, diagnostics)?;
                 Ok(Converted {
                     value: if target.charset() == Charset::Binary {
                         Self::new_bytes(produced.value)
@@ -123,17 +180,19 @@ impl Datum {
                     event: produced.event,
                 })
             }
-            FieldTypeCode::NewDecimal => self.convert_to_decimal_target(target),
+            FieldTypeCode::NewDecimal => self.convert_to_decimal_target(target, diagnostics),
             FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
-                self.convert_to_time_target(target, flags, zone)
+                diagnostics.unreported(self.convert_to_time_target(target, flags, zone))
             }
-            FieldTypeCode::Duration => self.convert_to_duration_target(target, zone),
-            FieldTypeCode::Year => self.convert_to_year(flags, zone),
-            FieldTypeCode::Enum => self.convert_to_enum(target, flags),
-            FieldTypeCode::Set => self.convert_to_set(target, flags),
-            FieldTypeCode::Bit => self.convert_to_bit(target, flags),
-            FieldTypeCode::Json => self.convert_to_json_target(),
-            FieldTypeCode::VectorFloat32 => self.convert_to_vector(target),
+            FieldTypeCode::Duration => {
+                diagnostics.unreported(self.convert_to_duration_target(target, zone))
+            }
+            FieldTypeCode::Year => diagnostics.unreported(self.convert_to_year(flags, zone)),
+            FieldTypeCode::Enum => diagnostics.unreported(self.convert_to_enum(target, flags)),
+            FieldTypeCode::Set => diagnostics.unreported(self.convert_to_set(target, flags)),
+            FieldTypeCode::Bit => diagnostics.unreported(self.convert_to_bit(target, flags)),
+            FieldTypeCode::Json => diagnostics.unreported(self.convert_to_json_target()),
+            FieldTypeCode::VectorFloat32 => diagnostics.unreported(self.convert_to_vector(target)),
             other => Err(DatumValueError::Unsupported(
                 self.kind(),
                 field_target_name(other),
@@ -188,6 +247,16 @@ impl Datum {
         flags: ConversionFlags,
         zone: &SessionTimeZone,
     ) -> Result<Converted<i64>, DatumValueError> {
+        self.convert_to_signed_reported(target, flags, zone, &mut Diagnostics::new(None))
+    }
+
+    fn convert_to_signed_reported(
+        &self,
+        target: FieldTypeCode,
+        flags: ConversionFlags,
+        zone: &SessionTimeZone,
+        diagnostics: &mut Diagnostics<'_, '_>,
+    ) -> Result<Converted<i64>, DatumValueError> {
         let lower = integer_signed_lower_bound(target);
         let upper = integer_signed_upper_bound(target);
         let converted = match self {
@@ -197,29 +266,33 @@ impl Datum {
                 numeric_outcome(convert_float_to_int(*value, lower, upper, target))
             }
             Self::String(value) => {
-                let parsed = crate::convert::str_to_int_with_truncate_policy(
+                let parsed = crate::convert::str_to_int_reported(
                     value.as_utf8()?,
                     false,
                     flags.truncate_as_warning() || flags.ignore_truncate_err(),
+                    diagnostics,
                 );
                 let bounded =
                     numeric_outcome(convert_int_to_int(parsed.value, lower, upper, target));
+                diagnostics.numeric_overflow(bounded.event.as_ref());
                 Converted {
                     value: bounded.value,
-                    event: prefer_event(parsed.event, bounded.event),
+                    event: numeric_conversion_event(parsed.event, bounded.event, flags),
                 }
             }
             Self::Bytes(value) => {
-                let parsed = crate::convert::str_to_int_with_truncate_policy(
+                let parsed = crate::convert::str_to_int_reported(
                     std::str::from_utf8(value)?,
                     false,
                     flags.truncate_as_warning() || flags.ignore_truncate_err(),
+                    diagnostics,
                 );
                 let bounded =
                     numeric_outcome(convert_int_to_int(parsed.value, lower, upper, target));
+                diagnostics.numeric_overflow(bounded.event.as_ref());
                 Converted {
                     value: bounded.value,
-                    event: prefer_event(parsed.event, bounded.event),
+                    event: numeric_conversion_event(parsed.event, bounded.event, flags),
                 }
             }
             // Go rounds the temporal value itself before rendering it as a
@@ -284,6 +357,20 @@ impl Datum {
             Self::Json(value) => json_to_int(value, false, target, flags),
             _ => return Err(DatumValueError::Unsupported(self.kind(), "signed integer")),
         };
+        match self {
+            Self::String(_) | Self::Bytes(_) => {}
+            Self::Int(_) | Self::UInt(_) => diagnostics.numeric_overflow(converted.event.as_ref()),
+            Self::Real(value) | Self::Float32(value) if converted.event.is_some() => {
+                diagnostics.error(|| {
+                    ERR_OVERFLOW.generate(format!(
+                        "constant {} overflows {}",
+                        crate::format_float_g_shortest(crate::round_float(*value)),
+                        crate::type_str(target),
+                    ))
+                });
+            }
+            _ => diagnostics.unhandled(converted.event.as_ref()),
+        }
         Ok(converted)
     }
 
@@ -351,8 +438,17 @@ impl Datum {
     fn convert_to_decimal_target(
         &self,
         target: &FieldType,
+        diagnostics: &mut Diagnostics<'_, '_>,
     ) -> Result<Converted<Self>, DatumValueError> {
         let converted = self.to_decimal()?;
+        match (self, converted.event.as_ref()) {
+            (Self::String(_) | Self::Bytes(_), Some(ScalarConversionEvent::Truncated)) => {
+                // Datum.ConvertTo uses MyDecimal.FromString directly, not
+                // ConvertDatumToDecimal's context-dependent truncation policy.
+                diagnostics.error(|| ERR_TRUNCATED.clone());
+            }
+            (_, event) => diagnostics.unhandled(event),
+        }
         let original = converted.value;
         let mut value = original.clone();
         let mut event = converted.event;
@@ -374,14 +470,22 @@ impl Datum {
                 ))
             });
             if overflowed {
-                event = Some(overflow_event(value.to_string(), target.code()));
+                diagnostics.error(|| decimal_target_overflow(target));
+                event = event.or_else(|| Some(overflow_event(value.to_string(), target.code())));
             } else if value != original {
+                diagnostics.warn(|| {
+                    ERR_TRUNCATED_WRONG_VALUE
+                        .generate(format!("Truncated incorrect DECIMAL value: '{original}'",))
+                });
                 event = event.or(Some(ScalarConversionEvent::RoundedToScale));
             }
         }
         if target.is_unsigned() && value.is_negative() {
+            diagnostics.error(|| decimal_target_overflow(target));
             value = Decimal::from_int(0);
-            event = Some(overflow_event(original.to_string(), target.code()));
+            event = event
+                .filter(|event| !matches!(event, ScalarConversionEvent::RoundedToScale))
+                .or_else(|| Some(overflow_event(original.to_string(), target.code())));
         }
         // Go `convertToMysqlDecimal` opens with
         // `ret.SetLength(target.GetFlen()); ret.SetFrac(target.GetDecimal())`,
@@ -761,13 +865,23 @@ impl Datum {
 
 /// Source `ProduceFloatWithSpecifiedTp`.
 pub fn produce_float_with_type(value: f64, target: &FieldType) -> Converted<f64> {
+    produce_float_reported(value, target, &mut Diagnostics::new(None))
+}
+
+fn produce_float_reported(
+    value: f64,
+    target: &FieldType,
+    diagnostics: &mut Diagnostics<'_, '_>,
+) -> Converted<f64> {
     if value.is_nan() {
+        diagnostics.error(|| float_target_overflow(value, target));
         return Converted {
             value: 0.0,
             event: Some(overflow_event(value.to_string(), target.code())),
         };
     }
     if value.is_infinite() {
+        diagnostics.error(|| float_target_overflow(value, target));
         return Converted {
             value,
             event: Some(overflow_event(value.to_string(), target.code())),
@@ -790,15 +904,23 @@ pub fn produce_float_with_type(value: f64, target: &FieldType) -> Converted<f64>
         }
     }
     if target.is_unsigned() && value < 0.0 {
+        diagnostics.error(|| float_target_overflow(value, target));
         return Converted {
             value: 0.0,
             event: Some(overflow_event(value.to_string(), target.code())),
         };
     }
+    if event.is_some() {
+        diagnostics.error(|| ERR_OVERFLOW.generate("DOUBLE value is out of range in ''"));
+        // Go returns TruncateFloat's value/error before applying the FLOAT
+        // storage range. The enclosing conversion still casts this to f32.
+        return Converted { value, event };
+    }
     if matches!(target.code(), FieldTypeCode::Float)
         && !(-f64::from(f32::MAX)..=f64::from(f32::MAX)).contains(&value)
     {
         let source = value;
+        diagnostics.error(|| float_target_overflow(source, target));
         value = if value.is_sign_positive() {
             f64::from(f32::MAX)
         } else {
@@ -811,9 +933,18 @@ pub fn produce_float_with_type(value: f64, target: &FieldType) -> Converted<f64>
 
 /// Source `ProduceStrWithSpecifiedTp`, retaining truncation as an event.
 pub fn produce_string_with_type(
+    value: Vec<u8>,
+    target: &FieldType,
+    pad_zero: bool,
+) -> Result<Converted<Vec<u8>>, DatumValueError> {
+    produce_string_reported(value, target, pad_zero, &mut Diagnostics::new(None))
+}
+
+fn produce_string_reported(
     mut value: Vec<u8>,
     target: &FieldType,
     pad_zero: bool,
+    diagnostics: &mut Diagnostics<'_, '_>,
 ) -> Result<Converted<Vec<u8>>, DatumValueError> {
     let flen = target.flen();
     if flen < 0 {
@@ -823,26 +954,67 @@ pub fn produce_string_with_type(
     let binary = target.charset() == Charset::Binary;
     let byte_limited = binary || target.code().is_type_blob();
     let split = if byte_limited {
-        (value.len() > flen).then_some(flen)
+        (value.len() > flen).then(|| {
+            if binary {
+                flen
+            } else {
+                complete_utf8_prefix(&value, flen)
+            }
+        })
     } else {
         utf8_split_at(&value, flen)?
     };
     let mut event = None;
     if let Some(split) = split {
-        let overflow = value.split_off(split);
-        if !overflow
+        // Only the error path needs the original logical length for messages.
+        let data_len = if byte_limited || !diagnostics.enabled() {
+            value.len()
+        } else {
+            crate::collation::go_rune_count(&value)
+        };
+        let overflow = &value[split..];
+        let whitespace_only = overflow
             .iter()
-            .all(|byte| matches!(byte, b' ' | b'\t' | b'\n' | b'\r'))
-            || !target.code().is_type_char()
-            || matches!(target.code(), FieldTypeCode::Varchar)
-        {
+            .all(|byte| matches!(byte, b' ' | b'\t' | b'\n' | b'\r'));
+        if whitespace_only && !binary && target.code().is_type_char() {
+            if matches!(target.code(), FieldTypeCode::Varchar) {
+                diagnostics.warn(|| {
+                    ERR_TRUNCATED.generate(format!(
+                        "Data truncated, field len {flen}, data len {data_len}",
+                    ))
+                });
+                event = Some(ScalarConversionEvent::Truncated);
+            }
+        } else {
+            diagnostics.truncate(|| {
+                ERR_DATA_TOO_LONG.generate(format!(
+                    "Data Too Long, field len {flen}, data len {data_len}",
+                ))
+            });
             event = Some(ScalarConversionEvent::Truncated);
         }
+        value.truncate(split);
     }
     if pad_zero && binary && matches!(target.code(), FieldTypeCode::String) && value.len() < flen {
         value.resize(flen, 0);
     }
     Ok(Converted { value, event })
+}
+
+fn float_target_overflow(value: f64, target: &FieldType) -> tidb_error::terror::TerrorError {
+    ERR_OVERFLOW.generate(format!(
+        "constant {} overflows {}",
+        crate::format_float_g_shortest(value),
+        crate::type_str(target.code()),
+    ))
+}
+
+fn decimal_target_overflow(target: &FieldType) -> tidb_error::terror::TerrorError {
+    ERR_OVERFLOW.generate(format!(
+        "DECIMAL value is out of range in '({}, {})'",
+        target.flen(),
+        target.decimal(),
+    ))
 }
 
 /// Source `GetMaxValue`.
@@ -1189,6 +1361,29 @@ fn utf8_split_at(bytes: &[u8], flen: usize) -> Result<Option<usize>, DatumValueE
     Ok((index < bytes.len()).then_some(index))
 }
 
+/// Go's text/blob byte limit must end with a complete, valid rune. Invalid
+/// trailing bytes do not become part of the accepted prefix; preceding bytes
+/// remain byte-preserving, like DecodeLastRuneInString in ProduceStrWithSpecifiedTp.
+fn complete_utf8_prefix(bytes: &[u8], limit: usize) -> usize {
+    let mut end = limit;
+    while end > 0 {
+        if bytes[end - 1].is_ascii() {
+            return end;
+        }
+        let mut start = end - 1;
+        let minimum_start = end.saturating_sub(4);
+        while start > minimum_start && bytes[start] & 0xc0 == 0x80 {
+            start -= 1;
+        }
+        let width = crate::collation::rune_width(&bytes[start..end]);
+        if width > 1 && start + width == end {
+            return end;
+        }
+        end -= 1;
+    }
+    end
+}
+
 fn max_decimal_text(flen: usize, scale: usize) -> String {
     let integer = flen.saturating_sub(scale);
     if scale == 0 {
@@ -1223,6 +1418,20 @@ fn prefer_event(
     second: Option<ScalarConversionEvent>,
 ) -> Option<ScalarConversionEvent> {
     second.or(first)
+}
+
+fn numeric_conversion_event(
+    parsed: Option<ScalarConversionEvent>,
+    bounded: Option<ScalarConversionEvent>,
+    flags: ConversionFlags,
+) -> Option<ScalarConversionEvent> {
+    if matches!(parsed, Some(ScalarConversionEvent::Truncated))
+        && (flags.truncate_as_warning() || flags.ignore_truncate_err())
+    {
+        bounded.or(parsed)
+    } else {
+        parsed.or(bounded)
+    }
 }
 
 fn overflow_event(value: String, target: FieldTypeCode) -> ScalarConversionEvent {
@@ -1372,6 +1581,89 @@ mod tests {
     }
 
     #[test]
+    fn contextual_legacy_numeric_events_preserve_first_fatal_error() {
+        let source = Datum::new_string("128tail");
+        let float = FieldType::new(FieldTypeCode::Double)
+            .with_flen(3)
+            .with_decimal(1);
+        assert_eq!(
+            source
+                .convert_to(&float, crate::STRICT_FLAGS)
+                .unwrap()
+                .event,
+            Some(ScalarConversionEvent::Truncated)
+        );
+    }
+
+    #[test]
+    fn contextual_legacy_decimal_events_preserve_first_fatal_error() {
+        let source = Datum::new_string("128tail");
+        let decimal = FieldType::new(FieldTypeCode::NewDecimal)
+            .with_flen(3)
+            .with_decimal(1);
+        for flags in [
+            crate::STRICT_FLAGS,
+            crate::STRICT_FLAGS.with_truncate_as_warning(true),
+            crate::STRICT_FLAGS.with_ignore_truncate_err(true),
+        ] {
+            assert_eq!(
+                source.convert_to(&decimal, flags).unwrap().event,
+                Some(ScalarConversionEvent::Truncated)
+            );
+        }
+        let unsigned = FieldType::new(FieldTypeCode::NewDecimal)
+            .with_flen(10)
+            .with_decimal(2)
+            .with_added_flags(FieldTypeFlags::UNSIGNED);
+        let converted = Datum::new_string("-12.345")
+            .convert_to(&unsigned, crate::STRICT_FLAGS)
+            .unwrap();
+        assert!(
+            matches!(converted.event, Some(ScalarConversionEvent::Overflow(_))),
+            "a rounding warning must not hide a later fatal unsigned overflow"
+        );
+    }
+
+    #[test]
+    fn contextual_string_conversion_preserves_binary_and_utf8_boundaries() {
+        let binary = FieldType::new(FieldTypeCode::String)
+            .with_flen(2)
+            .with_collation(Collation::Binary);
+        let converted = Datum::new_string("ab  ")
+            .convert_to(&binary, crate::STRICT_FLAGS)
+            .unwrap();
+        assert_eq!(converted.value.as_raw_bytes(), Some(&b"ab"[..]));
+        assert_eq!(converted.event, Some(ScalarConversionEvent::Truncated));
+
+        let text = FieldType::new(FieldTypeCode::Blob)
+            .with_flen(3)
+            .with_collation(Collation::Utf8Mb4Bin);
+        let converted = Datum::new_string("a界z")
+            .convert_to(&text, crate::STRICT_FLAGS)
+            .unwrap();
+        assert_eq!(converted.value.as_raw_bytes(), Some(&b"a"[..]));
+
+        // ProduceStrWithSpecifiedTp checks only the final rune, preserving
+        // earlier invalid bytes. A valid U+FFFD is not an invalid one-byte rune.
+        for (input, limit, expected) in [
+            (&b"abc"[..], 0, &b""[..]),
+            ("界z".as_bytes(), 1, &b""[..]),
+            ("界z".as_bytes(), 2, &b""[..]),
+            ("界z".as_bytes(), 3, "界".as_bytes()),
+            ("a😀z".as_bytes(), 4, &b"a"[..]),
+            ("a😀z".as_bytes(), 5, "a😀".as_bytes()),
+            ("�z".as_bytes(), 3, "�".as_bytes()),
+            (&b"\xffa\xffz"[..], 3, &b"\xffa"[..]),
+            (&b"\xff\xffz"[..], 2, &b""[..]),
+        ] {
+            let target = text.clone().with_flen(limit);
+            let converted = produce_string_with_type(input.to_vec(), &target, false).unwrap();
+            assert_eq!(converted.value, expected, "{input:?} / {limit}");
+            assert_eq!(converted.event, Some(ScalarConversionEvent::Truncated));
+        }
+    }
+
+    #[test]
     fn source_convert_to_integer_float_string_decimal_rows() {
         let signed_tiny = FieldType::new(FieldTypeCode::Tiny);
         let unsigned_tiny =
@@ -1421,6 +1713,27 @@ mod tests {
                 .value,
             Datum::new_decimal(Decimal::from_signed_literal("12.35"))
         );
+    }
+
+    #[test]
+    fn contextual_integer_conversion_keeps_first_fatal_error() {
+        let target = FieldType::new(FieldTypeCode::Tiny);
+        let source = Datum::new_string("128tail".to_owned());
+        let strict = source.convert_to(&target, crate::STRICT_FLAGS).unwrap();
+        assert_eq!(strict.value, Datum::Int(127));
+        // Go StrToInt retains the prefix error after successful ParseInt;
+        // toSignedInteger only substitutes the range error if err == nil.
+        assert_eq!(strict.event, Some(ScalarConversionEvent::Truncated));
+        let warn = source
+            .convert_to(
+                &target,
+                crate::DEFAULT_STATEMENT_FLAGS.with_truncate_as_warning(true),
+            )
+            .unwrap();
+        assert!(matches!(
+            warn.event,
+            Some(ScalarConversionEvent::Overflow(_))
+        ));
     }
 
     /// Go `pkg/types/convert_test.go::TestGetValidIntPrefix` keeps the

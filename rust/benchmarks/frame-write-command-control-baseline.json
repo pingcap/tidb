@@ -1,0 +1,224 @@
+{
+  "status": "WIP: read-only repeated-baseline control complete; isolated PING benefit does not establish a generic mixed-workload speedup.",
+  "change": "Longer repetitions of the existing fixed-command diagnostic; no production server changes, fixture access, persistent writes, or TLS policy changes.",
+  "validation": {
+    "profile": "WIP",
+    "session": 44551,
+    "status": "terminal exit 0",
+    "command": "python3 /private/tmp/tidb-frame-write-command-compare.py --server before:53051 --server after:53052 --server repeat_before:53051 --server go:45000 --count 50000 --rounds 4 --output /private/tmp/tidb-frame-write-command-control",
+    "results": "/private/tmp/tidb-frame-write-command-control/results.json",
+    "log": "/private/tmp/tidb-frame-write-command-control.log",
+    "samples": 64,
+    "commands": 3200000,
+    "warmup_commands": 6400,
+    "errors": 0,
+    "rounds": 4,
+    "commands_per_sample": 50000,
+    "coverage": "Only PING and SELECT 1, explicit plaintext/TLS verified on the client socket. SELECT 1 must return exactly ((1,),). Each command finishes before the next; connection setup/warmup are outside timing. Python/client overhead remains in timings.",
+    "tls_identity": "Local self-signed endpoints: encrypted mode checks TLS socket use but disables certificate identity verification. Independent Rust TLS coverage is recorded in frame-write-baseline.json."
+  },
+  "endpoints": {
+    "before": {
+      "port": 53051,
+      "pid": 17058,
+      "sha256": "4f081c5fd78090b28191e5067906a25eee654791c2e6eb33fe6b25f5a58742d4"
+    },
+    "after": {
+      "port": 53052,
+      "pid": 24677,
+      "sha256": "68730b1de1185340661edf516676c8002ce8e1818cf037a247fbc77aa99efee5"
+    },
+    "repeat_before": {
+      "port": 53051,
+      "same_process_as": "before"
+    },
+    "go": {
+      "port": 45000,
+      "pid": 14166
+    }
+  },
+  "groups": [
+    {
+      "tls": false,
+      "operation": "ping",
+      "median_ops_per_second": {
+        "before": 41313.13016391934,
+        "after": 44736.999777500314,
+        "repeat_before": 41585.0158614105,
+        "go": 40583.18145844082
+      },
+      "after_median_change_percent": 8.28760638565993,
+      "repeat_before_median_change_percent": 0.6581096528207597,
+      "paired_change_vs_before_percent": {
+        "after": [
+          7.065660777782878,
+          3.3965375819932087,
+          8.661838412912083,
+          10.907833636752517
+        ],
+        "repeat_before": [
+          1.5372558619476617,
+          -3.5070425755767465,
+          0.31253690313663984,
+          1.9985519695746357
+        ],
+        "go": [
+          -1.2656911703769147,
+          -4.020872352309768,
+          -2.263316089382139,
+          -2.1687775747687876
+        ]
+      },
+      "after_vs_repeat_before_percent": [
+        5.444705855899579,
+        7.154491210384029,
+        8.32328816271255,
+        8.734713871070877
+      ]
+    },
+    {
+      "tls": false,
+      "operation": "select",
+      "median_ops_per_second": {
+        "before": 16772.66676843939,
+        "after": 16568.6517013098,
+        "repeat_before": 16662.782882388386,
+        "go": 13977.548190274214
+      },
+      "after_median_change_percent": -1.2163543814838196,
+      "repeat_before_median_change_percent": -0.6551366432544281,
+      "paired_change_vs_before_percent": {
+        "after": [
+          -3.4426307033980974,
+          0.558534155853696,
+          0.9209909212116285,
+          -1.338479475630594
+        ],
+        "repeat_before": [
+          -1.8178054226837936,
+          0.7670318085571948,
+          -0.9904175431328599,
+          -0.3752717812077089
+        ],
+        "go": [
+          -17.43104876192455,
+          -15.56617724019993,
+          -17.31590411860474,
+          -16.374557302675264
+        ]
+      },
+      "after_vs_repeat_before_percent": [
+        -1.6549082934123938,
+        -0.20691058271876672,
+        1.9305287598573306,
+        -0.9668359569398488
+      ]
+    },
+    {
+      "tls": true,
+      "operation": "ping",
+      "median_ops_per_second": {
+        "before": 38046.09587663437,
+        "after": 39086.034616551755,
+        "repeat_before": 38115.70521373361,
+        "go": 36841.46815250765
+      },
+      "after_median_change_percent": 2.733365187559378,
+      "repeat_before_median_change_percent": 0.18296052589719114,
+      "paired_change_vs_before_percent": {
+        "after": [
+          4.250049608940998,
+          2.698679678278726,
+          -0.6250049196272367,
+          4.761715483420148
+        ],
+        "repeat_before": [
+          1.607607765429142,
+          0.781688973262229,
+          -3.400435591536466,
+          0.28256021939103704
+        ],
+        "go": [
+          -2.2651823777323554,
+          -0.8260047852434615,
+          -6.934977181501212,
+          -3.4279691600935025
+        ]
+      },
+      "after_vs_repeat_before_percent": [
+        2.60063385176057,
+        1.9021220268744088,
+        2.8731295931869294,
+        4.466534614024553
+      ]
+    },
+    {
+      "tls": true,
+      "operation": "select",
+      "median_ops_per_second": {
+        "before": 15913.071127504852,
+        "after": 15795.83884394772,
+        "repeat_before": 16133.663210668183,
+        "go": 13826.755858091597
+      },
+      "after_median_change_percent": -0.7367043270139262,
+      "repeat_before_median_change_percent": 1.3862319937856027,
+      "paired_change_vs_before_percent": {
+        "after": [
+          -2.7839161092667375,
+          -0.7290849537134325,
+          -0.3510725122023439,
+          -0.2230917180653491
+        ],
+        "repeat_before": [
+          3.2742100271379693,
+          0.9629461467588252,
+          1.9241033903595994,
+          1.2999685420895357
+        ],
+        "go": [
+          -15.69634842239045,
+          -12.808237832095381,
+          -12.251990104031595,
+          -13.413312646360332
+        ]
+      },
+      "after_vs_repeat_before_percent": [
+        -5.866059043020311,
+        -1.675893151941843,
+        -2.232225574600588,
+        -1.5035150376399797
+      ]
+    }
+  ],
+  "interpretation": [
+    "Plaintext PING improves against both baseline observations in all four rounds; +8.29% median versus +0.66% for the unchanged baseline repetition.",
+    "TLS PING has +2.73% median, three positive pairs versus the first baseline and four positive pairs versus the repeated baseline. The one negative first-baseline pair accompanies an even slower unchanged-baseline repetition.",
+    "Plaintext SELECT 1 is -1.22% median with mixed paired signs. TLS SELECT 1 is -0.74% median and slower than both baseline observations in all four rounds. The latter is not erased by positive PING results.",
+    "Source inspection shows SELECT 1 uses PacketIoWriter::write_packets, whose uncompressed implementation and ClientStream scalar write are unchanged by frame coalescing. Therefore these observations do not isolate a vectored-write cause for the SELECT difference; binary/server/process and time variation remain possible, unproven factors.",
+    "The longer diagnostic supports a benefit on single OK frames, not generic sysbench/TPC-C throughput. Prior all-negative TPC-C evidence remains authoritative for those runs."
+  ],
+  "read_only_state_probe": {
+    "command": "python3 /private/tmp/tidb-frame-control-state.py > /private/tmp/tidb-frame-control-state.jsonl",
+    "validation_command": "jq -se 'map(select(has(\"matches_before\"))) | (length == 30) and all(.[]; .matches_before == true)' /private/tmp/tidb-frame-control-state.jsonl",
+    "status": "terminal exit 0; all 30 SQL result comparisons match",
+    "records": 36,
+    "endpoints": "before, after, repeated-before; each over explicit plaintext and TLS",
+    "session_variables_per_connection": 948,
+    "global_variables_per_connection": 948,
+    "different_variable_names": [],
+    "variable_values_saved": false,
+    "plan": "Projection over TableDual, one row; identical on every connection",
+    "tls_cipher": "TLS_AES_256_GCM_SHA384",
+    "tls_version": "TLSv1.3",
+    "client_socket_settings": {
+      "plaintext": {"receive_bytes": 408256, "send_bytes": 146988, "tcp_nodelay_raw": 4},
+      "tls": {"receive_bytes": 407488, "send_bytes": 146988, "tcp_nodelay_raw": 4},
+      "same_across_endpoints_in_each_mode": true
+    },
+    "binary_hashes_rechecked": true,
+    "source_trace": "TcpResultSetSink::flush_pending -> ConnectionPacketOutput for PacketIoWriter::write_packets -> uncompressed inner.write_all -> ClientStream::write -> StreamOwned::write. These scalar/result-batching paths are not changed by the vectored-frame increment.",
+    "interpretation": "No current mismatch in queried variables, plan, TLS negotiation or client socket settings. This snapshot does not establish unchanged state during earlier timing or explain the regression. No table data was accessed or changed. Do not invent a production fix from the lack of differences."
+  },
+  "remaining": "Seeded mixed TPC-C comparison not started because auto-review requires explicit approval for 320000 measured plus 8000 warmup persistent benchmark transactions. No mutation retry or fixture reset was performed. The second goal turn encountering that boundary completed unaffected read-only state checks; approval is still pending. Keep the goal active; no Ready/lint, commit, push, or whole-package parity claim."
+}

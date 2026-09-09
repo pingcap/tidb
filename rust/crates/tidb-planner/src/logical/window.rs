@@ -32,7 +32,7 @@
 //!   `*expression.Column`. This crate's [`crate::physical_property::SortItem`]
 //!   narrows that to the `UniqueID`, which is enough for a required ORDER but
 //!   not for `GetPartitionByCols`, which hands the columns to
-//!   `expression.NewSchema`. So the window carries [`WindowSortItem`], which
+//!   `expression.NewSchema`. So the window carries [`ColumnSortItem`], which
 //!   keeps the column.
 //! * `FrameBound.CmpFuncs []expression.CompareFunc` is a slice of FUNCTION
 //!   POINTERS, and both Go's `Hash64` and its `Equals` compare them by
@@ -44,6 +44,8 @@
 //!   `property.GetCollateIDByNameForPartition`; `ReplaceExprColumns` needs
 //!   `ruleutil.ResolveExprAndReplace`. None is transcreated.
 //! * `GetGroupNDVs` is vacuous: [`StatsInfo`] has no `GroupNDVs` field.
+
+use crate::physical_property::ColumnSortItem;
 
 use tidb_datatype::EvalType;
 use tidb_expr::aggregation::WindowFuncDesc;
@@ -98,28 +100,6 @@ pub enum RangeCmpDataType {
     DateTime,
     /// Go `tipb.RangeCmpDataType_Duration`.
     Duration,
-}
-
-/// Go `property.SortItem` as `LogicalWindow` uses it: a whole column plus a
-/// direction. See this module's header for why
-/// [`crate::physical_property::SortItem`] cannot stand in.
-///
-/// No `PartialEq`: [`Column`] has none, and Go compares these items by
-/// `UniqueID` anyway — see [`LogicalWindow::equal_order_by`].
-#[derive(Clone, Debug)]
-pub struct WindowSortItem {
-    /// Go `SortItem.Col`.
-    pub col: Column,
-    /// Go `SortItem.Desc`.
-    pub desc: bool,
-}
-
-impl WindowSortItem {
-    /// A sort item over `col`, ascending when `desc` is false.
-    #[must_use]
-    pub const fn new(col: Column, desc: bool) -> Self {
-        Self { col, desc }
-    }
 }
 
 /// Go `logicalop.FrameBound` (`logical_window.go:88`): one boundary of a
@@ -302,9 +282,9 @@ pub struct LogicalWindow {
     /// `len(WindowFuncDescs)` columns of this operator's schema.
     pub window_func_descs: Vec<WindowFuncDesc>,
     /// Go `PartitionBy`.
-    pub partition_by: Vec<WindowSortItem>,
+    pub partition_by: Vec<ColumnSortItem>,
     /// Go `OrderBy`.
-    pub order_by: Vec<WindowSortItem>,
+    pub order_by: Vec<ColumnSortItem>,
     /// Go `Frame`.
     pub frame: Option<WindowFrame>,
 }
@@ -327,7 +307,7 @@ impl LogicalWindow {
 
     /// Go `LogicalWindow.GetPartitionBy()` (`logical_window.go:495`).
     #[must_use]
-    pub fn get_partition_by(&self) -> &[WindowSortItem] {
+    pub fn get_partition_by(&self) -> &[ColumnSortItem] {
         &self.partition_by
     }
 

@@ -403,7 +403,7 @@ impl QueryResponse for ResponseChannel<Vec<u8>> {
 
 enum SelectResponseSource {
     Channel(ResponseChannel<Vec<u8>>),
-    Query(Box<dyn QueryResponse>),
+    Query(Box<dyn QueryResponse + Send>),
 }
 
 impl SelectResponseSource {
@@ -774,7 +774,7 @@ impl SelectResponseIter {
     }
 
     pub(crate) fn from_query_response(
-        response: Box<dyn QueryResponse>,
+        response: Box<dyn QueryResponse + Send>,
         final_field_types: Vec<FieldType>,
         intermediate_output_types: Vec<Vec<FieldType>>,
         time_zone: SessionTimeZone,

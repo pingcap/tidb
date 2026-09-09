@@ -1,0 +1,41 @@
+{
+  "scope": "Corrected SELECT-lock implementation; reference measurement, not a new performance win or full goal acceptance",
+  "base_commit": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "rust_binary_sha256": "0cf5656920906e05c35985d48246e40a998cd5501d36d317674703bb18db306d",
+  "build": "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+  "cluster": "Shared local PD/TiKV, Go TiDB v9.0.0-beta.2.pre-nightly; Rust port 53007, Go port 45000",
+  "workload": "oltp_read_write",
+  "sysbench_version": "1.0.20",
+  "protocol": "prepared",
+  "threads": 2,
+  "sample_seconds": 20,
+  "rounds": 3,
+  "random_seed": 1,
+  "data": {
+    "database": "perf_sysbench_locking_v2",
+    "tables": 1,
+    "prepared_rows": 100000,
+    "prepared_min_id": 1,
+    "prepared_max_id": 100278,
+    "prepared_rows_above_100000": 278,
+    "analyzed_before_warmup": true,
+    "notes": "Go-only preparation already has auto-increment gaps. Explicit DELETE/INSERT pairs may fill gaps and increase row count. Both servers share the dataset; MVCC history grows across runs."
+  },
+  "warmup_seconds_per_server": 5,
+  "order": [["rust", "go"], ["go", "rust"], ["rust", "go"]],
+  "rust": {
+    "transactions": [8849, 8271, 8178],
+    "seconds": [20.0039, 20.0028, 20.0057],
+    "median_tps": 413.49211110444537
+  },
+  "go": {
+    "transactions": [9806, 9633, 9329],
+    "seconds": [20.0021, 20.0018, 20.0037],
+    "median_tps": 481.60665540101394
+  },
+  "errors": 0,
+  "reconnects": 0,
+  "reproduce": "python3 rust/scripts/compare-sysbench.py --server rust:53007 --server go:45000 --database perf_sysbench_locking_v2 --workload oltp_read_write --threads 2 --seconds 20 --rounds 3 --table-size 100000",
+  "artifacts": "/private/tmp/tidb-sysbench-locking-v2-comparison/results.json",
+  "notes": "No builds, profiling, manual analysis, or other benchmark runs overlapped this measured batch. All six samples retained. The preceding v1 batch is excluded in full because ANALYZE overlapped its first measured sample. A subsequent separate profiling run is not performance evidence. Three superseded diagnostic Rust servers were stopped; the current Rust server, original baseline Rust server, Go TiDB, PD, and TiKV remained running."
+}

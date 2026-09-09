@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/util/ranger`, ported WHOLE: scan-range construction — the
+//! Go `pkg/util/ranger`: compiled-expression scan-range construction — the
 //! machinery that turns predicates into index/table key ranges.
 //!
 //! * [`types`] — `types.go`: the `Range`/`Ranges` model, the Go-format
@@ -40,9 +40,12 @@
 //! * `RangesToString`/`RangeSingleColToString` are not ported: nothing in
 //!   the production tree consumes them (only `ranger.go` itself defines
 //!   them), and no upstream test covers them.
-//! * A `Constant`'s plan-cache mutability (`ParamMarker`/`DeferredExpr`)
-//!   is structurally absent from this expression model; `ValueInfo`'s
-//!   `mutable` leg activates with the plan-cache track.
+//! * Index, table and column `_in` entry points evaluate retained constants
+//!   with the caller's current context. Context-free entries are for static
+//!   expressions; unbound parameters fail rather than using saved values.
+//!   `ValueInfo` preserves parameter/deferred mutability. Complete cache
+//!   admission, conversion diagnostics and executor migration remain open;
+//!   this module is not a whole-package completion claim.
 //! * `TestTableShardIndex` and `TestRangeFallback*`'s warning surface are
 //!   testkit/plan-level: their ranger-observable cores are pinned here,
 //!   and the plan-level halves belong to the driver's rule track.

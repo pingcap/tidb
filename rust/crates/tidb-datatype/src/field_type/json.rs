@@ -222,8 +222,8 @@ impl From<&FieldType> for JsonFieldType {
             Flag: field.flags,
             Flen: field.flen,
             Decimal: field.decimal,
-            Charset: GoString::from(&field.charset_name),
-            Collate: GoString::from(&field.collation_name),
+            Charset: GoString::from(field.charset_name()),
+            Collate: GoString::from(field.collation_name()),
             Elems: field.elems.clone(),
             ElemsIsBinaryLit: field.elems_is_binary_literal.clone(),
             Array: field.array,
@@ -237,8 +237,8 @@ impl From<JsonFieldType> for FieldType {
         result.flags = field.Flag;
         result.flen = field.Flen;
         result.decimal = field.Decimal;
-        result.charset_name = field.Charset.to_utf8_lossy_go();
-        result.collation_name = field.Collate.to_utf8_lossy_go();
+        result.charset_name = field.Charset.to_utf8_lossy_go().into();
+        result.collation_name = field.Collate.to_utf8_lossy_go().into();
         result.collation = crate::get_collator_with_mode(true, &result.collation_name)
             .new_collation()
             .expect("new-collation lookup always returns a concrete collation");

@@ -17,6 +17,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -84,18 +85,18 @@ struct SharedTransportState {
 
 struct ScriptedResponse {
     subsets: VecDeque<QueryResultSubset>,
-    next_count: Rc<Cell<usize>>,
-    close_count: Rc<Cell<usize>>,
+    next_count: Arc<AtomicUsize>,
+    close_count: Arc<AtomicUsize>,
 }
 
 impl QueryResponse for ScriptedResponse {
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
-        self.next_count.set(self.next_count.get() + 1);
+        self.next_count.fetch_add(1, Ordering::SeqCst);
         Ok(self.subsets.pop_front())
     }
 
     fn close(&mut self) {
-        self.close_count.set(self.close_count.get() + 1);
+        self.close_count.fetch_add(1, Ordering::SeqCst);
         self.subsets.clear();
     }
 }
@@ -187,8 +188,8 @@ fn encoded_rows(rows: &[&[i64]]) -> Vec<u8> {
 
 fn response(
     values: &[i64],
-    next_count: Rc<Cell<usize>>,
-    close_count: Rc<Cell<usize>>,
+    next_count: Arc<AtomicUsize>,
+    close_count: Arc<AtomicUsize>,
 ) -> ScriptedResponse {
     let rows = values.iter().map(std::slice::from_ref).collect::<Vec<_>>();
     response_rows(&rows, next_count, close_count)
@@ -196,8 +197,8 @@ fn response(
 
 fn response_rows(
     rows: &[&[i64]],
-    next_count: Rc<Cell<usize>>,
-    close_count: Rc<Cell<usize>>,
+    next_count: Arc<AtomicUsize>,
+    close_count: Arc<AtomicUsize>,
 ) -> ScriptedResponse {
     ScriptedResponse {
         subsets: VecDeque::from([QueryResultSubset {
@@ -213,12 +214,12 @@ fn response_rows(
 fn reordered_two_column_projection_preserves_scan_decode_and_mysql_metadata() {
     let timestamps = ScriptedTimestampSource::new([5_252]);
     let state = Rc::new(SharedTransportState::default());
-    let next_count = Rc::new(Cell::new(0));
-    let close_count = Rc::new(Cell::new(0));
+    let next_count = Arc::new(AtomicUsize::new(0));
+    let close_count = Arc::new(AtomicUsize::new(0));
     let scripted_response = response_rows(
         &[&[-7, 21]],
-        Rc::clone(&next_count),
-        Rc::clone(&close_count),
+        Arc::clone(&next_count),
+        Arc::clone(&close_count),
     );
     let mut engine = RealTiKvReadSession::new(
         configured_table(),
@@ -277,9 +278,9 @@ fn reordered_two_column_projection_preserves_scan_decode_and_mysql_metadata() {
         record_set.next_batch(1).unwrap(),
         vec![vec![Datum::Int(-7), Datum::Int(21)]]
     );
-    assert_eq!(next_count.get(), 1);
+    assert_eq!(next_count.load(Ordering::SeqCst), 1);
     record_set.close().unwrap();
-    assert_eq!(close_count.get(), 1);
+    assert_eq!(close_count.load(Ordering::SeqCst), 1);
 }
 
 fn transport(
@@ -347,8 +348,8 @@ fn chunk_response(columns: &[Vec<u8>]) -> Vec<u8> {
 
 fn chunk_response_result(
     columns: &[Vec<u8>],
-    next_count: Rc<Cell<usize>>,
-    close_count: Rc<Cell<usize>>,
+    next_count: Arc<AtomicUsize>,
+    close_count: Arc<AtomicUsize>,
 ) -> ScriptedResponse {
     ScriptedResponse {
         subsets: VecDeque::from([QueryResultSubset {
@@ -377,8 +378,8 @@ fn chunk_response_result(
 fn configured_scalar_types_decode_their_own_coprocessor_chunk_layout() {
     let timestamps = ScriptedTimestampSource::new([9_001]);
     let state = Rc::new(SharedTransportState::default());
-    let next_count = Rc::new(Cell::new(0));
-    let close_count = Rc::new(Cell::new(0));
+    let next_count = Arc::new(AtomicUsize::new(0));
+    let close_count = Arc::new(AtomicUsize::new(0));
 
     let id_column = chunk_fixed_column(&[7_i64.to_le_bytes().to_vec()]);
     let unsigned_column = chunk_fixed_column(&[u64::MAX.to_le_bytes().to_vec()]);
@@ -386,8 +387,8 @@ fn configured_scalar_types_decode_their_own_coprocessor_chunk_layout() {
     let name_column = chunk_variable_column(&[b"ab"]);
     let scripted_response = chunk_response_result(
         &[id_column, unsigned_column, double_column, name_column],
-        Rc::clone(&next_count),
-        Rc::clone(&close_count),
+        Arc::clone(&next_count),
+        Arc::clone(&close_count),
     );
 
     let table = ConfiguredTable::new(
@@ -432,8 +433,8 @@ fn configured_scalar_types_decode_their_own_coprocessor_chunk_layout() {
 fn configured_temporal_types_decode_their_own_coprocessor_chunk_layout() {
     let timestamps = ScriptedTimestampSource::new([9_002]);
     let state = Rc::new(SharedTransportState::default());
-    let next_count = Rc::new(Cell::new(0));
-    let close_count = Rc::new(Cell::new(0));
+    let next_count = Arc::new(AtomicUsize::new(0));
+    let close_count = Arc::new(AtomicUsize::new(0));
 
     let date = parse_time("2024-05-06", TimeType::Date, 0, false, false, false, &Utc)
         .expect("valid DATE literal")
@@ -477,8 +478,8 @@ fn configured_temporal_types_decode_their_own_coprocessor_chunk_layout() {
             timestamp_column,
             duration_column,
         ],
-        Rc::clone(&next_count),
-        Rc::clone(&close_count),
+        Arc::clone(&next_count),
+        Arc::clone(&close_count),
     );
 
     let table = ConfiguredTable::new(
@@ -520,9 +521,9 @@ fn configured_temporal_types_decode_their_own_coprocessor_chunk_layout() {
 fn exact_select_builds_one_timestamped_table_request_and_decodes_lazily() {
     let timestamps = ScriptedTimestampSource::new([4_242]);
     let state = Rc::new(SharedTransportState::default());
-    let next_count = Rc::new(Cell::new(0));
-    let close_count = Rc::new(Cell::new(0));
-    let scripted_response = response(&[21], Rc::clone(&next_count), Rc::clone(&close_count));
+    let next_count = Arc::new(AtomicUsize::new(0));
+    let close_count = Arc::new(AtomicUsize::new(0));
+    let scripted_response = response(&[21], Arc::clone(&next_count), Arc::clone(&close_count));
     let mut engine = RealTiKvReadSession::new(
         configured_table(),
         transport([scripted_response], Rc::clone(&state)),
@@ -543,8 +544,8 @@ fn exact_select_builds_one_timestamped_table_request_and_decodes_lazily() {
     assert_eq!(engine.last_snapshot_ts(), Some(4_242));
     assert_eq!(timestamps.calls(), 1);
     assert_eq!(state.sends.get(), 1);
-    assert_eq!(next_count.get(), 0, "execute must not pull the response");
-    assert_eq!(close_count.get(), 0, "the returned query owns the response");
+    assert_eq!(next_count.load(Ordering::SeqCst), 0, "execute must not pull the response");
+    assert_eq!(close_count.load(Ordering::SeqCst), 0, "the returned query owns the response");
 
     let requests = state.requests.borrow();
     let [request] = requests.as_slice() else {
@@ -585,17 +586,17 @@ fn exact_select_builds_one_timestamped_table_request_and_decodes_lazily() {
     let mut record_set = query.into_record_set();
     assert_eq!(record_set.columns().len(), 1);
     assert_eq!(record_set.columns()[0].name, "id");
-    assert_eq!(next_count.get(), 0, "ownership transfer remains lazy");
+    assert_eq!(next_count.load(Ordering::SeqCst), 0, "ownership transfer remains lazy");
     assert_eq!(
         record_set.next_batch(1).unwrap(),
         vec![vec![Datum::Int(21)]]
     );
-    assert_eq!(next_count.get(), 1);
-    assert_eq!(close_count.get(), 0);
+    assert_eq!(next_count.load(Ordering::SeqCst), 1);
+    assert_eq!(close_count.load(Ordering::SeqCst), 0);
     record_set.close().unwrap();
-    assert_eq!(close_count.get(), 1);
+    assert_eq!(close_count.load(Ordering::SeqCst), 1);
     record_set.close().unwrap();
-    assert_eq!(close_count.get(), 1, "close is idempotent");
+    assert_eq!(close_count.load(Ordering::SeqCst), 1, "close is idempotent");
 }
 
 /// `set_time_zone` reaches every DAG request from that point on — the same
@@ -617,8 +618,8 @@ fn set_time_zone_threads_into_every_subsequent_dag_request() {
     let stamp = |zone: &tidb_datatype::SessionTimeZone| {
         let state = Rc::new(SharedTransportState::default());
         let responses = [
-            response(&[1], Rc::new(Cell::new(0)), Rc::new(Cell::new(0))),
-            response(&[1], Rc::new(Cell::new(0)), Rc::new(Cell::new(0))),
+            response(&[1], Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0))),
+            response(&[1], Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0))),
         ];
         let mut engine = RealTiKvReadSession::new(
             configured_table(),
@@ -661,8 +662,8 @@ fn caller_cancellation_remains_the_query_transport_authority() {
         transport(
             [response(
                 &[21],
-                Rc::new(Cell::new(0)),
-                Rc::new(Cell::new(0)),
+                Arc::new(AtomicUsize::new(0)),
+                Arc::new(AtomicUsize::new(0)),
             )],
             Rc::clone(&state),
         ),
@@ -735,14 +736,14 @@ fn zero_timestamp_fails_before_send() {
 fn one_transport_is_retained_across_two_queries() {
     let timestamps = ScriptedTimestampSource::new([11, 12]);
     let state = Rc::new(SharedTransportState::default());
-    let first_close = Rc::new(Cell::new(0));
-    let second_close = Rc::new(Cell::new(0));
+    let first_close = Arc::new(AtomicUsize::new(0));
+    let second_close = Arc::new(AtomicUsize::new(0));
     let mut engine = RealTiKvReadSession::new(
         configured_table(),
         transport(
             [
-                response(&[1], Rc::new(Cell::new(0)), Rc::clone(&first_close)),
-                response(&[2], Rc::new(Cell::new(0)), Rc::clone(&second_close)),
+                response(&[1], Arc::new(AtomicUsize::new(0)), Arc::clone(&first_close)),
+                response(&[2], Arc::new(AtomicUsize::new(0)), Arc::clone(&second_close)),
             ],
             Rc::clone(&state),
         ),
@@ -770,8 +771,8 @@ fn one_transport_is_retained_across_two_queries() {
     assert_eq!(second.next_batch(1).unwrap(), vec![vec![Datum::Int(2)]]);
     first.close().unwrap();
     second.close().unwrap();
-    assert_eq!(first_close.get(), 1);
-    assert_eq!(second_close.get(), 1);
+    assert_eq!(first_close.load(Ordering::SeqCst), 1);
+    assert_eq!(second_close.load(Ordering::SeqCst), 1);
 }
 
 /// Encodes one fixed-width `chunk.Column` whose row 1 of 2 is `NULL`.
@@ -830,8 +831,8 @@ fn chunk_all_null_fixed_column(width: usize) -> Vec<u8> {
 fn every_nullable_scalar_type_decodes_a_null_chunk_cell() {
     let timestamps = ScriptedTimestampSource::new([9_101]);
     let state = Rc::new(SharedTransportState::default());
-    let next_count = Rc::new(Cell::new(0));
-    let close_count = Rc::new(Cell::new(0));
+    let next_count = Arc::new(AtomicUsize::new(0));
+    let close_count = Arc::new(AtomicUsize::new(0));
 
     // A `DECIMAL(10,2)` cell is the fixed 40-byte `MyDecimal` binary form; the
     // live row is `12.34`, taken from `pkg/util/chunk`'s own encoder output.
@@ -856,7 +857,7 @@ fn every_nullable_scalar_type_decodes_a_null_chunk_cell() {
         chunk_all_null_fixed_column(8),
     ];
     let scripted_response =
-        chunk_response_result(&columns, Rc::clone(&next_count), Rc::clone(&close_count));
+        chunk_response_result(&columns, Arc::clone(&next_count), Arc::clone(&close_count));
 
     let table = ConfiguredTable::new(
         "test",

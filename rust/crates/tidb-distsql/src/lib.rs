@@ -61,7 +61,7 @@ pub use context::{
 pub use cop_paging::{
     calculate_paging_remain, calculate_paging_retry, coprocessor_response_process_time_nanos,
     paging_response_read_bytes, BatchBucketVersionUpdate, CopPagingError, CopPagingOutcome,
-    CopPagingState, DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryResponse,
+    CopPagingState, CopIterator, DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryResponse,
     DirectUnaryQueryTransport, DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig,
     DirectUnaryTransportError, DirectUnaryTransportEvidence, DirectUnaryTransportEvidenceHandle,
     LockedResponseAction, LockedResponseDelegate, LockedResponseObservation,

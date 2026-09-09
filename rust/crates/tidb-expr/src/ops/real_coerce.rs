@@ -20,11 +20,6 @@
 //! `types.StrToFloat` numeric-prefix scan and the `1292 Truncated incorrect
 //! DOUBLE value` it raises), and the bounded `f64` -> integer conversions the
 //! bitwise operators need.
-//!
-//! It is one module because these are the pieces a reader has to hold together
-//! to answer "what does this pair of operands become", and keeping them beside
-//! the promotion hierarchy in `ops.rs` was what pushed that file past the
-//! source-size ratchet.
 
 use super::*;
 

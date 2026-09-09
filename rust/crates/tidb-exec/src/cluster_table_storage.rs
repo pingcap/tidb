@@ -34,7 +34,7 @@
 //! DECLARED its whole read is one point get on the clustered handle uses
 //! [`MaxTsSnapshot`] instead, at `u64::MAX`, which is Go's
 //! `AdviseOptimizeWithPlan` shortcut. That reader runs directly on the
-//! connection worker and never opens a pinned transaction worker; the
+//! connection worker without activating a writable transaction; the
 //! declaration is a statement-level fact and never inferred from a read,
 //! because at this seam an `UPDATE`'s read-before-write is the same `get` on
 //! the same key.
@@ -60,21 +60,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-/// The request/reply transport for the transaction worker.
-///
-/// `std::sync::mpsc` allocates a fresh channel (two heap objects plus a
-/// mutex-protected queue) for EVERY reply, and the session thread and the
-/// transaction thread contend on that mutex once per statement RPC -- the
-/// profile's "kernel spin_unlock / futex wake" band. crossbeam's channels
-/// hand a message between threads without a shared lock on the hot path, and
-/// a zero-capacity (rendezvous) reply channel turns each answer into a direct
-/// producer-to-consumer handoff with no buffer at all: Go answers its RPCs
-/// through a gRPC HTTP/2 stream, one lock-free frame per message; this is the
-/// closest Rust equivalent for the in-process hop.
-use crossbeam_channel as cc;
 use std::time::Duration;
 
 use crate::multi_statement_transaction::TRANSACTION_END_TIMEOUT;
@@ -90,486 +77,399 @@ use tidb_txnkv::transaction::{
     OptimisticCoordinatorError, OptimisticMutation, PessimisticLockFailure,
     RealOptimisticTransaction, RealOptimisticTransactionOpener, RealPessimisticTransaction,
     StorePdCapability, StoreWriteClient, StoreWriteLoader, TransactionCause,
-    MAX_OPTIMISTIC_MUTATIONS,
-    MAX_OPTIMISTIC_TRANSACTION_BYTES,
+    MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 use tidb_txnkv::Key;
 use tidb_txnkv::PdRegionLoader;
 
 use crate::pessimistic_lock_error::{
-    commit_outcome_to_sql_error_with_hint, duplicate_key_sql_error,
-    is_retryable_statement_failure, lock_failure_to_sql_error, transaction_cause_to_sql_error,
-    LockSqlError,
+    commit_outcome_to_sql_error_with_hint, duplicate_key_sql_error, is_retryable_statement_failure,
+    lock_failure_to_sql_error, transaction_cause_to_sql_error, LockSqlError,
 };
-use crate::pinned_thread_pool::PinnedThreadPool;
 
-/// One request the transaction's own thread serves, with the channel its answer
-/// goes back on.
-enum TransactionRequest {
-    Get {
-        key: Vec<u8>,
-        /// Whether the statement this read belongs to takes LOCKS -- Go's
-        /// `e.lock`. `PointGetExecutor.get` (`pkg/executor/point_get.go:677`)
-        /// consults the pessimistic lock cache only inside `if e.lock`, so a
-        /// plain `SELECT` falls through to the snapshot. The cached row is
-        /// the one its LOCK saw, at a `for_update_ts` at or after `start_ts`;
-        /// serving it to a non-locking read publishes a newer row into a
-        /// repeatable read.
-        locking: bool,
-
-        /// `Some` reads at this statement timestamp instead of the
-        /// transaction's `start_ts` -- a pessimistic statement retried after
-        /// a lock conflict reads at its advanced `for_update_ts` (Go rebuilds
-        /// the retried executor at `forUpdateTS`). `None` is every ordinary
-        /// read.
+/// The type-erased operations of the one transaction owned by a session.
+/// Type erasure keeps the public snapshot independent of the injected store;
+/// calls execute directly, without an in-process request/reply transport.
+trait TransactionAccess: Send {
+    fn get(
+        &mut self,
+        key: &[u8],
         read_ts: Option<u64>,
-        reply: cc::Sender<Result<Option<Vec<u8>>, StorageError>>,
-    },
-    BatchGet {
-        keys: Vec<Vec<u8>>,
-        /// See [`TransactionRequest::Get::locking`].
         locking: bool,
-        /// See [`TransactionRequest::Get::read_ts`].
+    ) -> Result<Option<Vec<u8>>, StorageError>;
+    fn batch_get(
+        &mut self,
+        keys: &[Vec<u8>],
         read_ts: Option<u64>,
-        reply: cc::Sender<Result<SnapshotPairs, StorageError>>,
-    },
-    Scan {
-        start: Vec<u8>,
-        end: Vec<u8>,
-        /// At most this many pairs, so an incremental cursor pays for the
-        /// batch it consumes rather than for its whole range.
+        locking: bool,
+    ) -> Result<SnapshotPairs, StorageError>;
+    fn scan(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
         limit: Option<usize>,
-        /// See [`TransactionRequest::Get::read_ts`].
         read_ts: Option<u64>,
-        reply: cc::Sender<Result<SnapshotPairs, StorageError>>,
-    },
-    /// Acquires pessimistic locks on `keys` at the transaction's current
-    /// `for_update_ts` -- Go's `KVTxn.LockKeys` for one DML statement's
-    /// written keys. Served only by a pessimistic transaction; the
-    /// optimistic worker refuses it.
-    ///
-    /// With `return_values`, TiKV is asked to answer each newly locked key's
-    /// current row WITH the lock — Go's `KeyReturningValue` flag, set from
-    /// `lockCtx.InitReturnValues` when an executor needs the row it is about
-    /// to modify (`pkg/executor/point_get.go:614`). The answered rows land in
-    /// the worker's pessimistic-lock cache (Go
-    /// `TxnCtx.SetPessimisticLockCache`) and later reads of those keys are
-    /// served from it without touching storage.
-    LockKeys {
-        keys: Vec<Vec<u8>>,
-        /// Keys whose staged INSERT carries Go's
-        /// `SetPresumeKeyNotExists` flag and therefore must assert absence
-        /// during pessimistic lock acquisition.
-        presume_not_exists: BTreeSet<Vec<u8>>,
-        /// Go's `ErrDupEntry` text for the corresponding encoded keys.
-        duplicate_hints: BTreeMap<Vec<u8>, DuplicateKeyHint>,
+    ) -> Result<SnapshotPairs, StorageError>;
+    fn advance_for_update_ts(&mut self) -> Result<u64, StorageError>;
+    fn lock_keys(
+        &mut self,
+        keys: &[Vec<u8>],
+        presume_not_exists: &BTreeSet<Vec<u8>>,
+        duplicate_hints: &BTreeMap<Vec<u8>, DuplicateKeyHint>,
         return_values: bool,
-        reply: cc::Sender<LockKeysOutcome>,
-    },
-    /// Releases the locks a FAILED statement accumulated across its retry
-    /// rounds -- Go `OnPessimisticStmtEnd(isSuccessful=false)` ->
-    /// `CancelFairLocking` (`pkg/sessiontxn/isolation/base.go`), which
-    /// pessimistically rolls back the statement's keys so a contender does
-    /// not block on a statement the client was told failed.
-    ReleaseKeys {
-        keys: Vec<Vec<u8>>,
-        reply: cc::Sender<Result<(), StorageError>>,
-    },
-    /// Publishes `mutations` at the transaction's original `start_ts` and ends
-    /// the thread, whatever the outcome.
-    Commit {
+    ) -> LockKeysOutcome;
+    fn release_keys(&mut self, keys: &[Vec<u8>]) -> Result<(), StorageError>;
+    fn commit(
+        self: Box<Self>,
         mutations: Vec<OptimisticMutation>,
-        reply: cc::Sender<Result<OptimisticCommitOutcome, String>>,
-    },
-    Finish {
-        reply: cc::Sender<Result<(), StorageError>>,
-    },
-    /// Ends a read-only statement snapshot without putting its caller on the
-    /// worker's cleanup path.
-    FinishDetached,
+    ) -> Result<OptimisticCommitOutcome, String>;
+    fn finish(self: Box<Self>) -> Result<(), StorageError>;
 }
 
-/// One real transaction pinned to the thread it was opened on.
-///
-/// The production transport is deliberately worker-local (`Rc<RefCell<..>>`),
-/// while `TableStorage` is `Send` because a `KvTable` lives in a catalog the
-/// server shares between workers. Both constraints hold at once here: the
-/// transaction is created, used and ended on one thread it has to itself, and
-/// what crosses threads is this handle -- a channel and a timestamp. No borrow
-/// of the transport ever leaves its thread.
-///
-/// The thread is borrowed from [`PinnedThreadPool`] rather than spawned, which
-/// is why the transaction still owns a thread for its whole life without every
-/// statement paying to create one. A statement that opens a snapshot and
-/// finishes it costs one channel handshake instead of a `pthread_create` plus a
-/// `join`; a statement that never reads storage keeps only its PD timestamp
-/// future and does not borrow a worker.
-struct TransactionThread {
-    requests: Option<cc::Sender<TransactionRequest>>,
+type TransactionHandle = Arc<Mutex<Option<Box<dyn TransactionAccess>>>>;
+
+fn ended_transaction() -> StorageError {
+    StorageError::Backend("the transaction is already finished".to_owned())
+}
+
+fn with_transaction<T>(
+    handle: &TransactionHandle,
+    operation: impl FnOnce(&mut dyn TransactionAccess) -> Result<T, StorageError>,
+) -> Result<T, StorageError> {
+    let mut state = handle
+        .lock()
+        .map_err(|_| StorageError::Backend("the transaction operation panicked".to_owned()))?;
+    operation(state.as_deref_mut().ok_or_else(ended_transaction)?)
+}
+
+/// The sole terminal authority. Snapshot handles share state, not authority to
+/// commit it. Taking the state marks every outstanding handle finished before
+/// commit/rollback starts, after any preceding read has released the mutex.
+struct TransactionOwner {
+    handle: TransactionHandle,
     start_ts: u64,
 }
 
-/// A transaction thread whose worker-local open result has not been waited for.
-struct PreparedTransactionThread {
-    requests: Option<cc::Sender<TransactionRequest>>,
-    opened: std::sync::mpsc::Receiver<Result<u64, OptimisticCoordinatorError>>,
-}
-
-impl PreparedTransactionThread {
-    fn wait(mut self) -> Result<TransactionThread, OptimisticCoordinatorError> {
-        let start_ts = self
-            .opened
-            .recv()
-            .map_err(|_| {
-                OptimisticCoordinatorError::SnapshotGet(
-                    "the transaction thread ended before opening a transaction".to_owned(),
-                )
-            })
-            .and_then(|result| result)?;
-        Ok(TransactionThread {
-            requests: self.requests.take(),
-            start_ts,
-        })
-    }
-}
-
-impl Drop for PreparedTransactionThread {
-    fn drop(&mut self) {
-        // Closing the request channel lets a transaction that already opened
-        // finish itself; if opening is still in flight, the worker observes the
-        // closed channel immediately after it publishes the result.
-        self.requests.take();
-    }
-}
-
-/// Which transaction a [`TransactionThread`] opens, and therefore what its
-/// `start_ts` costs.
-///
-/// MaxTS point reads are deliberately absent: [`MaxTsSnapshot`] sends those
-/// directly from the connection worker instead of opening a transaction
-/// worker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TransactionOpen {
     Writable,
-    /// An explicit pessimistic transaction: the same writable budget, plus
-    /// the statement-lock protocol its worker serves.
     WritablePessimistic,
     ReadOnly,
     ReadOnlyAt(u64),
 }
 
-impl TransactionOpen {
-    const fn writable(writable: bool) -> Self {
-        if writable {
-            TransactionOpen::Writable
-        } else {
-            TransactionOpen::ReadOnly
+enum TransactionKind<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> {
+    Optimistic(RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>),
+    Pessimistic {
+        transaction: RealPessimisticTransaction<C, L, CapabilityTimestampSource<P>>,
+        keep_alive: Option<LockKeepAlive>,
+        lock_values: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+    },
+}
+
+struct OwnedTransaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> {
+    kind: TransactionKind<C, L, P>,
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
+    timeout: Duration,
+}
+
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> OwnedTransaction<C, L, P> {
+    fn snapshot(&mut self) -> &mut RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>> {
+        match &mut self.kind {
+            TransactionKind::Optimistic(transaction) => transaction,
+            TransactionKind::Pessimistic { transaction, .. } => transaction.snapshot(),
         }
     }
 }
 
-impl TransactionThread {
-    /// Opens one transaction on a thread it owns until it ends, spending
-    /// exactly one PD timestamp.
-    ///
-    /// `writable` decides the publication budget the coordinator opens with: a
-    /// read-only transaction is opened with the tightest possible one (zero),
-    /// so a later attempt to publish a mutation through it is refused rather
-    /// than admitted by accident.
-    ///
-    /// The call returns only once the transaction exists, so `start_ts` is an
-    /// allocated timestamp rather than a promise.
-    fn open<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-        opener: &Arc<RealOptimisticTransactionOpener<C, L, P>>,
-        timeout: Duration,
-        writable: bool,
-        name: &str,
-        commit_protocol: CommitProtocol,
-    ) -> Result<Self, OptimisticCoordinatorError> {
-        Self::open_with(
-            opener,
-            timeout,
-            TransactionOpen::writable(writable),
-            name,
-            commit_protocol,
-        )
-    }
-
+impl TransactionOwner {
     fn open_with<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
         opener: &Arc<RealOptimisticTransactionOpener<C, L, P>>,
         timeout: Duration,
         open: TransactionOpen,
-        name: &str,
         commit_protocol: CommitProtocol,
     ) -> Result<Self, OptimisticCoordinatorError> {
-        Self::prepare_with(opener, timeout, open, name, commit_protocol)?.wait()
-    }
-
-    fn prepare_with<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-        opener: &Arc<RealOptimisticTransactionOpener<C, L, P>>,
-        timeout: Duration,
-        open: TransactionOpen,
-        name: &str,
-        commit_protocol: CommitProtocol,
-    ) -> Result<PreparedTransactionThread, OptimisticCoordinatorError> {
-        let (requests, incoming) = cc::unbounded::<TransactionRequest>();
-        let (opened, opened_reply) = mpsc::channel::<Result<u64, OptimisticCoordinatorError>>();
-        let opener = Arc::clone(opener);
-        PinnedThreadPool::shared()
-            .run(
-                name,
-                Box::new(move || {
-                    if open == TransactionOpen::WritablePessimistic {
-                        let transaction = match opener.begin_pessimistic(
-                            MAX_OPTIMISTIC_MUTATIONS,
-                            MAX_OPTIMISTIC_TRANSACTION_BYTES,
-                        ) {
-                            Ok(mut transaction) => {
-                                // `@@tidb_enable_async_commit` / `@@tidb_enable_1pc`
-                                // reach this transaction exactly as they reach the
-                                // explicit-transaction path: the commit-time
-                                // eligibility check still decides per transaction.
-                                transaction.set_commit_protocol(commit_protocol);
-                                if opened.send(Ok(transaction.start_ts())).is_err() {
-                                    let _ = transaction.into_two_pc().finish_without_writes();
-                                    return;
-                                }
-                                transaction
-                            }
-                            Err(error) => {
-                                let _ = opened.send(Err(error));
-                                return;
-                            }
-                        };
-                        serve_pessimistic_transaction(transaction, &opener, &incoming, timeout);
-                        return;
+        let (kind, start_ts) = match open {
+            TransactionOpen::WritablePessimistic => {
+                let mut transaction = opener.begin_pessimistic(
+                    MAX_OPTIMISTIC_MUTATIONS,
+                    MAX_OPTIMISTIC_TRANSACTION_BYTES,
+                )?;
+                transaction.set_commit_protocol(commit_protocol);
+                let start_ts = transaction.start_ts();
+                (
+                    TransactionKind::Pessimistic {
+                        transaction,
+                        keep_alive: None,
+                        lock_values: BTreeMap::new(),
+                    },
+                    start_ts,
+                )
+            }
+            _ => {
+                let mut transaction = match open {
+                    TransactionOpen::Writable => {
+                        opener.begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
                     }
-                    let begun = match open {
-                        TransactionOpen::Writable => {
-                            opener.begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
-                        }
-                        TransactionOpen::WritablePessimistic => {
-                            unreachable!("the pessimistic arm above returned")
-                        }
-                        TransactionOpen::ReadOnly => opener.begin_read_only(),
-                        TransactionOpen::ReadOnlyAt(start_ts) => {
-                            opener.begin_read_only_at(start_ts)
-                        }
-                    };
-                    let transaction = match begun {
-                        Ok(mut transaction) => {
-                            // The same protocol resolution the pessimistic arm
-                            // applies: a writable optimistic transaction may also
-                            // attempt the faster commit protocols, and read-only
-                            // transactions simply never commit.
-                            if open == TransactionOpen::Writable {
-                                transaction.set_commit_protocol(commit_protocol);
-                            }
-                            // A caller that stopped waiting leaves no lock
-                            // behind: the transaction ends here instead.
-                            if opened.send(Ok(transaction.start_ts())).is_err() {
-                                let _ = transaction.finish_without_writes();
-                                return;
-                            }
-                            transaction
-                        }
-                        Err(error) => {
-                            let _ = opened.send(Err(error));
-                            return;
-                        }
-                    };
-                    serve_transaction(transaction, &incoming, timeout);
-                }),
-            )
-            .map_err(OptimisticCoordinatorError::SnapshotGet)?;
-        Ok(PreparedTransactionThread {
-            requests: Some(requests),
-            opened: opened_reply,
+                    TransactionOpen::ReadOnly => opener.begin_read_only(),
+                    TransactionOpen::ReadOnlyAt(start_ts) => opener.begin_read_only_at(start_ts),
+                    TransactionOpen::WritablePessimistic => unreachable!(),
+                }?;
+                if open == TransactionOpen::Writable {
+                    transaction.set_commit_protocol(commit_protocol);
+                }
+                let start_ts = transaction.start_ts();
+                (TransactionKind::Optimistic(transaction), start_ts)
+            }
+        };
+        Ok(Self {
+            handle: Arc::new(Mutex::new(Some(Box::new(OwnedTransaction {
+                kind,
+                opener: Arc::clone(opener),
+                timeout,
+            })))),
+            start_ts,
         })
     }
 
-    /// Ends the transaction without publishing anything, leaving no locks
-    /// behind. Calling it twice is a no-op.
-    ///
-    /// The reply is what orders the cleanup: the worker sends it only after
-    /// `finish_without_writes` returned, so a caller that has this answer knows
-    /// the transaction is over. That is the same guarantee joining the thread
-    /// used to give, without ending a thread to get it.
+    fn handle(&self) -> Result<TransactionHandle, StorageError> {
+        with_transaction(&self.handle, |_| Ok(()))?;
+        Ok(Arc::clone(&self.handle))
+    }
+
+    fn is_open(&self) -> bool {
+        self.handle.lock().is_ok_and(|state| state.is_some())
+    }
+
+    fn take(&mut self) -> Option<Box<dyn TransactionAccess>> {
+        self.handle
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .take()
+    }
+
     fn finish(&mut self) -> Result<(), StorageError> {
-        let Some(requests) = self.requests.take() else {
-            return Ok(());
-        };
-        let (reply, answer) = cc::bounded(0);
-        match requests.send(TransactionRequest::Finish { reply }) {
-            Ok(()) => answer.recv().unwrap_or(Ok(())),
-            // The worker is already gone, which means it already finished the
-            // transaction on its way out.
-            Err(_) => Ok(()),
-        }
+        self.take()
+            .map_or(Ok(()), |transaction| transaction.finish())
     }
 
-    /// Hands read-only cleanup to the transaction worker without waiting for
-    /// its local state transition. This is reserved for statement snapshots:
-    /// they cannot have mutations or pessimistic locks to clean up.
-    fn finish_detached(&mut self) {
-        let Some(requests) = self.requests.take() else {
-            return;
-        };
-        let _ = requests.send(TransactionRequest::FinishDetached);
-    }
-
-    /// Publishes `mutations` on this very transaction, so the prewrite carries
-    /// the timestamp the transaction opened at.
     fn commit(
         &mut self,
         mutations: Vec<OptimisticMutation>,
     ) -> Result<OptimisticCommitOutcome, String> {
-        let requests = self
-            .requests
-            .take()
-            .ok_or_else(|| "the transaction is already finished".to_owned())?;
-        let (reply, answer) = cc::bounded(0);
-        match requests.send(TransactionRequest::Commit { mutations, reply }) {
-            Ok(()) => answer
-                .recv()
-                .unwrap_or_else(|_| Err("the transaction thread stopped mid-commit".to_owned())),
-            Err(_) => Err("the transaction thread is gone".to_owned()),
-        }
-    }
-
-    fn sender(&self) -> Result<cc::Sender<TransactionRequest>, StorageError> {
-        self.requests
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| StorageError::Backend("the transaction is already finished".to_owned()))
+        self.take()
+            .ok_or_else(|| ended_transaction().to_string())?
+            .commit(mutations)
     }
 }
 
-impl Drop for TransactionThread {
+impl Drop for TransactionOwner {
     fn drop(&mut self) {
-        // An owner that dropped the handle without finishing still must not
-        // leave a transaction open, and must not race ahead of its cleanup:
-        // `finish` waits for the worker's answer.
         let _ = self.finish();
     }
 }
 
-/// Sends one request to a transaction's thread and waits for its answer.
-fn ask<T>(
-    requests: &cc::Sender<TransactionRequest>,
-    request: impl FnOnce(cc::Sender<Result<T, StorageError>>) -> TransactionRequest,
-) -> Result<T, StorageError> {
-    // Zero capacity: the worker's send completes only when this thread has
-    // picked the answer up, so no allocation backs the reply at all.
-    let (reply, answer) = cc::bounded(0);
-    requests
-        .send(request(reply))
-        .map_err(|_| StorageError::Backend("the transaction thread is gone".to_owned()))?;
-    answer
-        .recv()
-        .map_err(|_| StorageError::Backend("the transaction thread stopped mid-read".to_owned()))?
-}
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> TransactionAccess
+    for OwnedTransaction<C, L, P>
+{
+    fn get(
+        &mut self,
+        key: &[u8],
+        read_ts: Option<u64>,
+        locking: bool,
+    ) -> Result<Option<Vec<u8>>, StorageError> {
+        // Go PointGetExecutor.get: MemBuffer (above this seam), locking-read
+        // cache, then snapshot. Plain SELECT never reads the lock-value cache.
+        if let TransactionKind::Pessimistic { lock_values, .. } = &self.kind {
+            if let Some(value) = lock_values.get(key).filter(|_| locking) {
+                return Ok(value.clone());
+            }
+        }
+        let call = UnaryCallContext::with_timeout(self.timeout);
+        let transaction = self.snapshot();
+        transaction
+            .snapshot_get_at(key, read_ts.unwrap_or(transaction.start_ts()), &call)
+            .map(|result| result.value)
+            .map_err(classify)
+    }
 
-/// Serves the transaction on its own thread until it is committed, finished, or
-/// its last handle goes away.
-fn serve_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    mut transaction: RealOptimisticTransaction<C, L, CapabilityTimestampSource<P>>,
-    incoming: &cc::Receiver<TransactionRequest>,
-    timeout: Duration,
-) {
-    while let Ok(request) = incoming.recv() {
-        // Minted per request, never once for the thread. `UnaryCallContext`
-        // carries an ABSOLUTE deadline, so a single context made when the
-        // transaction opened would charge every later statement — and the
-        // commit — for the wall-clock time the client spent holding the
-        // transaction, which is not work anything did.
-        let call = UnaryCallContext::with_timeout(timeout);
-        let call = &call;
-        match request {
-            TransactionRequest::Get {
-                key,
-                locking,
-                read_ts,
-                reply,
-            } => {
-                let read_ts = read_ts.unwrap_or_else(|| transaction.start_ts());
-                let answer = transaction
-                    .snapshot_get_at(&key, read_ts, call)
-                    .map(|result| result.value)
-                    .map_err(classify);
-                let _ = reply.send(answer);
+    fn batch_get(
+        &mut self,
+        keys: &[Vec<u8>],
+        read_ts: Option<u64>,
+        locking: bool,
+    ) -> Result<SnapshotPairs, StorageError> {
+        let mut answered = Vec::new();
+        let mut uncached = Vec::new();
+        let keys = if let TransactionKind::Pessimistic { lock_values, .. } = &self.kind {
+            if locking && !lock_values.is_empty() {
+                for key in keys {
+                    match lock_values.get(key) {
+                        Some(Some(value)) => answered.push((key.clone(), value.clone())),
+                        Some(None) => {}
+                        None => uncached.push(key.clone()),
+                    }
+                }
+                if uncached.is_empty() {
+                    return Ok(answered);
+                }
+                &uncached
+            } else {
+                keys
             }
-            TransactionRequest::BatchGet {
-                keys,
-                locking,
-                read_ts,
-                reply,
-            } => {
-                let read_ts = read_ts.unwrap_or_else(|| transaction.start_ts());
-                let answer = transaction
-                    .snapshot_batch_get_at(&keys, read_ts, call)
-                    .map_err(classify);
-                let _ = reply.send(answer);
-            }
-            TransactionRequest::Scan {
+        } else {
+            keys
+        };
+        let call = UnaryCallContext::with_timeout(self.timeout);
+        let transaction = self.snapshot();
+        transaction
+            .snapshot_batch_get_at(keys, read_ts.unwrap_or(transaction.start_ts()), &call)
+            .map(|mut pairs| {
+                pairs.extend(answered);
+                pairs
+            })
+            .map_err(classify)
+    }
+
+    fn scan(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+        limit: Option<usize>,
+        read_ts: Option<u64>,
+    ) -> Result<SnapshotPairs, StorageError> {
+        let call = UnaryCallContext::with_timeout(self.timeout);
+        let transaction = self.snapshot();
+        transaction
+            .snapshot_scan_at(
                 start,
                 end,
                 limit,
-                read_ts,
-                reply,
+                read_ts.unwrap_or(transaction.start_ts()),
+                &call,
+            )
+            .map_err(classify)
+    }
+
+    fn advance_for_update_ts(&mut self) -> Result<u64, StorageError> {
+        match &mut self.kind {
+            TransactionKind::Pessimistic { transaction, .. } => transaction
+                .advance_for_update_ts()
+                .map_err(|error| StorageError::Backend(format!("{error:?}"))),
+            TransactionKind::Optimistic(_) => Err(StorageError::Backend(
+                "only a pessimistic transaction advances its locking snapshot".to_owned(),
+            )),
+        }
+    }
+
+    fn lock_keys(
+        &mut self,
+        keys: &[Vec<u8>],
+        presume_not_exists: &BTreeSet<Vec<u8>>,
+        duplicate_hints: &BTreeMap<Vec<u8>, DuplicateKeyHint>,
+        return_values: bool,
+    ) -> LockKeysOutcome {
+        match &mut self.kind {
+            TransactionKind::Pessimistic {
+                transaction,
+                keep_alive,
+                lock_values,
             } => {
-                let read_ts = read_ts.unwrap_or_else(|| transaction.start_ts());
-                let answer = transaction
-                    .snapshot_scan_at(&start, &end, limit, read_ts, call)
-                    .map_err(classify);
-                let _ = reply.send(answer);
+                let call = UnaryCallContext::with_timeout(self.timeout);
+                acquire_statement_locks(
+                    transaction,
+                    &self.opener,
+                    keep_alive,
+                    lock_values,
+                    keys,
+                    presume_not_exists,
+                    duplicate_hints,
+                    return_values,
+                    &call,
+                )
             }
-            TransactionRequest::LockKeys { reply, .. } => {
-                // Fail closed: an optimistic transaction detects conflicts at
-                // COMMIT and has no locks to grant. Reaching this arm is a
-                // session-layer wiring fault, not a client-visible condition.
-                let _ = reply.send(LockKeysOutcome::TransactionError(LockSqlError {
-                    code: 1105,
-                    state: *b"HY000",
-                    message: "a pessimistic lock requires a pessimistic transaction".to_owned(),
-                }));
+            TransactionKind::Optimistic(_) => LockKeysOutcome::TransactionError(LockSqlError {
+                code: 1105,
+                state: *b"HY000",
+                message: "a pessimistic lock requires a pessimistic transaction".to_owned(),
+            }),
+        }
+    }
+
+    fn release_keys(&mut self, keys: &[Vec<u8>]) -> Result<(), StorageError> {
+        let TransactionKind::Pessimistic {
+            transaction,
+            lock_values,
+            ..
+        } = &mut self.kind
+        else {
+            return Ok(());
+        };
+        // Cleanup has the store's deadline, not the failed statement's.
+        let call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
+        transaction
+            .pessimistic_rollback(keys, &call)
+            .map_err(|cause| StorageError::Backend(cause.to_string()))?;
+        for key in keys {
+            lock_values.remove(key);
+        }
+        Ok(())
+    }
+
+    fn commit(
+        self: Box<Self>,
+        mutations: Vec<OptimisticMutation>,
+    ) -> Result<OptimisticCommitOutcome, String> {
+        let Self {
+            kind,
+            opener: _opener,
+            ..
+        } = *self;
+        let call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
+        match kind {
+            TransactionKind::Optimistic(transaction) => transaction.commit(mutations, &call),
+            TransactionKind::Pessimistic {
+                transaction,
+                keep_alive: _keep_alive,
+                ..
+            } => {
+                // Retain the primary heartbeat and opener until commit finishes.
+                transaction.commit(mutations, &call)
             }
-            TransactionRequest::ReleaseKeys { reply, .. } => {
-                // An optimistic transaction holds no locks; nothing to free.
-                let _ = reply.send(Ok(()));
-            }
-            TransactionRequest::Commit { mutations, reply } => {
-                // The coordinator re-enters the write phase from the read
-                // phase, so this prewrite carries the transaction's original
-                // start timestamp -- the whole point of holding one open.
-                // Ending the transaction is the store's work, not the last
-                // statement's: client-go builds its commit and cleanup
-                // backoffers on `c.store.Ctx()` with `cleanupMaxBackoff`,
-                // deliberately decoupled from the statement's context.
-                let end_call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
-                let _ = reply.send(
-                    transaction
-                        .commit(mutations, &end_call)
-                        .map_err(|error| error.to_string()),
-                );
-                return;
-            }
-            TransactionRequest::Finish { reply } => {
-                let _ = reply.send(
-                    transaction
-                        .finish_without_writes()
-                        .map(|_| ())
-                        .map_err(|error| StorageError::Backend(error.to_string())),
-                );
-                return;
-            }
-            TransactionRequest::FinishDetached => {
-                let _ = transaction.finish_without_writes();
-                return;
+        }
+        .map_err(|error| error.to_string())
+    }
+
+    fn finish(self: Box<Self>) -> Result<(), StorageError> {
+        let Self {
+            kind,
+            opener: _opener,
+            ..
+        } = *self;
+        match kind {
+            TransactionKind::Optimistic(transaction) => transaction
+                .finish_without_writes()
+                .map(|_| ())
+                .map_err(|error| StorageError::Backend(error.to_string())),
+            TransactionKind::Pessimistic {
+                mut transaction,
+                keep_alive: _keep_alive,
+                ..
+            } => {
+                let held = transaction.locked_keys();
+                let call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
+                let rolled_back = transaction
+                    .pessimistic_rollback(&held, &call)
+                    .map_err(|cause| StorageError::Backend(cause.to_string()));
+                let finished = transaction
+                    .into_two_pc()
+                    .finish_without_writes()
+                    .map(|_| ())
+                    .map_err(|error| StorageError::Backend(error.to_string()));
+                rolled_back.and(finished)
             }
         }
     }
-    let _ = transaction.finish_without_writes();
 }
 
 /// What one statement's lock acquisition came to -- the session layer's
@@ -603,202 +503,6 @@ pub enum LockKeysOutcome {
     StatementError(LockSqlError),
     /// The transaction itself is no longer usable.
     TransactionError(LockSqlError),
-}
-
-/// Serves one pessimistic explicit transaction on its own thread: the same
-/// read/commit/finish protocol as [`serve_transaction`], plus
-/// [`TransactionRequest::LockKeys`], the statement-lock step Go's
-/// `handlePessimisticDML` runs after each DML.
-fn serve_pessimistic_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
-    mut transaction: RealPessimisticTransaction<C, L, CapabilityTimestampSource<P>>,
-    opener: &Arc<RealOptimisticTransactionOpener<C, L, P>>,
-    incoming: &cc::Receiver<TransactionRequest>,
-    timeout: Duration,
-) {
-    // Refreshes the primary lock's TTL from the first lock on; `None` until
-    // one exists. Ending the transaction drops it, which stops the heartbeat.
-    let mut keep_alive: Option<LockKeepAlive> = None;
-    // Rows TiKV answered WITH a pessimistic lock, keyed by encoded key —
-    // Go's `TxnCtx.SetPessimisticLockCache`
-    // (`pkg/executor/point_get.go`'s lock fold). The transaction holds these
-    // locks until COMMIT or an explicit release, so an entry cannot go stale
-    // behind anyone's back; a read of a locked-but-unstaged key is answered
-    // from here instead of storage, which is what folds a point write's row
-    // read into its own PessimisticLock round trip.
-    let mut lock_values: BTreeMap<Vec<u8>, Option<Vec<u8>>> = BTreeMap::new();
-    while let Ok(request) = incoming.recv() {
-        let call = UnaryCallContext::with_timeout(timeout);
-        let call = &call;
-        match request {
-            TransactionRequest::Get {
-                key,
-                read_ts,
-                reply,
-                locking,
-            } => {
-                // Go `PointGetExecutor.get` (`pkg/executor/point_get.go:656-680`):
-                // memBuffer first (that overlay lives at the session layer,
-                // above this snapshot), then the pessimistic-lock cache, then
-                // storage. A cached answer is exact at ANY statement
-                // timestamp: the lock pins the key against every other
-                // writer, so no later commit can exist under it.
-                if locking {
-                    if let Some(cached) = lock_values.get(&key) {
-                        let _ = reply.send(Ok(cached.clone()));
-                        continue;
-                    }
-                }
-                let read_ts = read_ts.unwrap_or_else(|| transaction.start_ts());
-                let answer = transaction
-                    .snapshot()
-                    .snapshot_get_at(&key, read_ts, call)
-                    .map(|result| result.value)
-                    .map_err(classify);
-                let _ = reply.send(answer);
-            }
-            TransactionRequest::BatchGet {
-                keys,
-                read_ts,
-                reply,
-                locking,
-            } => {
-                // Same order as [`TransactionRequest::Get`], per key: a key
-                // the cache answers costs no batch member, and only the rest
-                // reach storage together.
-                let mut answered: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-                let mut uncached: Vec<Vec<u8>> = Vec::with_capacity(keys.len());
-                for key in keys {
-                    match lock_values.get(&key).filter(|_| locking) {
-                        Some(Some(value)) => answered.push((key, value.clone())),
-                        Some(None) => {}
-                        None => uncached.push(key),
-                    }
-                }
-                if uncached.is_empty() {
-                    let _ = reply.send(Ok(answered));
-                    continue;
-                }
-                let read_ts = read_ts.unwrap_or_else(|| transaction.start_ts());
-                let answer = transaction
-                    .snapshot()
-                    .snapshot_batch_get_at(&uncached, read_ts, call)
-                    .map(|mut pairs| {
-                        pairs.extend(answered);
-                        pairs
-                    })
-                    .map_err(classify);
-                let _ = reply.send(answer);
-            }
-            TransactionRequest::Scan {
-                start,
-                end,
-                limit,
-                read_ts,
-                reply,
-            } => {
-                let read_ts = read_ts.unwrap_or_else(|| transaction.start_ts());
-                let answer = transaction
-                    .snapshot()
-                    .snapshot_scan_at(&start, &end, limit, read_ts, call)
-                    .map_err(classify);
-                let _ = reply.send(answer);
-            }
-            TransactionRequest::LockKeys {
-                keys,
-                presume_not_exists,
-                duplicate_hints,
-                return_values,
-                reply,
-            } => {
-                let outcome = acquire_statement_locks(
-                    &mut transaction,
-                    opener,
-                    &mut keep_alive,
-                    &mut lock_values,
-                    &keys,
-                    &presume_not_exists,
-                    &duplicate_hints,
-                    return_values,
-                    call,
-                );
-                let fatal = matches!(outcome, LockKeysOutcome::TransactionError(_));
-                let _ = reply.send(outcome);
-                if fatal {
-                    // The transaction is unusable; release what it holds and
-                    // end truthfully, exactly as the Finish arm would.
-                    let held = transaction.locked_keys();
-                    let end_call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
-                    let _ = transaction.pessimistic_rollback(&held, &end_call);
-                    let _ = transaction.into_two_pc().finish_without_writes();
-                    return;
-                }
-            }
-            TransactionRequest::ReleaseKeys { keys, reply } => {
-                // Go `OnPessimisticStmtEnd(isSuccessful=false)` ->
-                // `CancelFairLocking`: the failed statement's accumulated
-                // locks go back, so a contender stops blocking on a
-                // statement the client was told failed.
-                // On the store's own deadline, never the statement's: this
-                // runs precisely BECAUSE the statement failed, so its context
-                // is spent and often already at zero. client-go builds its
-                // cleanup backoffer on `c.store.Ctx()` with
-                // `cleanupMaxBackoff` for the same reason -- see the `Commit`
-                // arm below, which cites it.
-                let cleanup_call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
-                let released = transaction
-                    .pessimistic_rollback(&keys, &cleanup_call)
-                    .map_err(|cause| StorageError::Backend(cause.to_string()));
-                if released.is_ok() {
-                    // The rows rode in WITH these locks; once the locks go,
-                    // another writer may change the keys, so their cached
-                    // images are dead (Go drops the whole TxnCtx cache only
-                    // at COMMIT; per-key release is this tier's failed-
-                    // statement cleanup, and it must not outlive its locks).
-                    for key in &keys {
-                        lock_values.remove(key);
-                    }
-                }
-                let _ = reply.send(released);
-            }
-            TransactionRequest::Commit { mutations, reply } => {
-                let end_call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
-                let _ = reply.send(
-                    transaction
-                        .commit(mutations, &end_call)
-                        .map_err(|error| error.to_string()),
-                );
-                return;
-            }
-            TransactionRequest::Finish { reply } => {
-                // A pessimistic transaction that publishes nothing still owes
-                // its locks back -- `into_two_pc` documents exactly this
-                // order.
-                let held = transaction.locked_keys();
-                let end_call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
-                let rolled_back = transaction
-                    .pessimistic_rollback(&held, &end_call)
-                    .map_err(|cause| StorageError::Backend(cause.to_string()));
-                let finished = transaction
-                    .into_two_pc()
-                    .finish_without_writes()
-                    .map(|_| ())
-                    .map_err(|error| StorageError::Backend(error.to_string()));
-                let _ = reply.send(rolled_back.and(finished));
-                return;
-            }
-            TransactionRequest::FinishDetached => {
-                let held = transaction.locked_keys();
-                let end_call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
-                let _ = transaction.pessimistic_rollback(&held, &end_call);
-                let _ = transaction.into_two_pc().finish_without_writes();
-                return;
-            }
-        }
-    }
-    let held = transaction.locked_keys();
-    let end_call = UnaryCallContext::with_timeout(TRANSACTION_END_TIMEOUT);
-    let _ = transaction.pessimistic_rollback(&held, &end_call);
-    let _ = transaction.into_two_pc().finish_without_writes();
 }
 
 /// The keys one statement's staged writes owe pessimistic locks -- Go
@@ -872,6 +576,26 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
     call: &UnaryCallContext,
 ) -> LockKeysOutcome {
     let held: BTreeSet<Vec<u8>> = transaction.locked_keys().into_iter().collect();
+    // Go KVTxn.LockKeys checks NeedCheckExists before skipping an owned key.
+    // Point locks remember existence in the returned-value cache. Go defaults
+    // HasLockedValueExists to true when a lock returned no existence result.
+    for key in presume_not_exists
+        .intersection(&held)
+        .filter(|key| keys.contains(*key))
+    {
+        if lock_values.get(key).is_none_or(Option::is_some) {
+            let error = duplicate_hints.get(key).map_or_else(
+                || {
+                    transaction_cause_to_sql_error(&TransactionCause::AlreadyExists {
+                        key: key.clone(),
+                        detail: "a held key already exists".to_owned(),
+                    })
+                },
+                duplicate_key_sql_error,
+            );
+            return LockKeysOutcome::StatementError(error);
+        }
+    }
     // Go `KVTxn.LockKeys` filters keys this transaction already holds BEFORE
     // any RPC (client-go `kv.go`: a key already in `txn.locks` is reported as
     // `AlreadyLocked`, never re-sent): the lock pins the key against every
@@ -984,9 +708,10 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
                         &cause,
                     ));
                 }
-                if let PessimisticLockFailure::Transaction(
-                    TransactionCause::AlreadyExists { key, .. },
-                ) = &failure
+                if let PessimisticLockFailure::Transaction(TransactionCause::AlreadyExists {
+                    key,
+                    ..
+                }) = &failure
                 {
                     if let Some(hint) = duplicate_hints.get(key) {
                         // Go reports this assertion as a statement error: the
@@ -1040,19 +765,18 @@ fn acquire_statement_locks<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdC
 }
 
 /// One statement's read snapshot: a real read-only transaction at one PD
-/// timestamp, owned by the thread that opened it.
+/// timestamp, owned directly by the statement.
 ///
 /// This is the autocommit shape. Inside an explicit transaction the session
 /// reads through [`SessionTransaction::snapshot`] instead, so every statement
 /// shares the one timestamp `BEGIN` took.
 pub struct StatementSnapshot {
-    thread: TransactionThread,
+    transaction: TransactionOwner,
 }
 
 /// One statement snapshot whose ordinary PD timestamp request is in flight.
 ///
-/// Unlike [`StatementSnapshot`], this owns no pinned transaction worker. Go's
-/// warmup stores only an oracle future; the worker-local transaction is opened
+/// Go's warmup stores only an oracle future; the transaction is opened
 /// when [`Self::wait`] activates the snapshot for the first storage read.
 pub struct PreparedStatementSnapshot<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
 where
@@ -1073,11 +797,10 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>
             .wait()
             .map_err(|error| OptimisticCoordinatorError::Timestamp(error.to_string()))?;
         Ok(StatementSnapshot {
-            thread: TransactionThread::open_with(
+            transaction: TransactionOwner::open_with(
                 &self.opener,
                 self.timeout,
                 TransactionOpen::ReadOnlyAt(start_ts),
-                "cluster-statement-snapshot",
                 CommitProtocol::two_phase_only(),
             )?,
         })
@@ -1088,15 +811,15 @@ impl fmt::Debug for StatementSnapshot {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("StatementSnapshot")
-            .field("start_ts", &self.thread.start_ts)
-            .field("open", &self.thread.requests.is_some())
+            .field("start_ts", &self.transaction.start_ts)
+            .field("open", &self.transaction.is_open())
             .finish()
     }
 }
 
 impl StatementSnapshot {
     /// Starts fetching one ordinary read-only transaction's PD timestamp
-    /// without opening its worker-local transaction.
+    /// without activating its transaction.
     pub fn prepare<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         timeout: Duration,
@@ -1109,18 +832,17 @@ impl StatementSnapshot {
         })
     }
 
-    /// Opens one read-only transaction on its own thread, spending exactly one
+    /// Opens one read-only transaction directly, spending exactly one
     /// PD timestamp.
     pub fn open<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         timeout: Duration,
     ) -> Result<Self, OptimisticCoordinatorError> {
         Ok(Self {
-            thread: TransactionThread::open(
+            transaction: TransactionOwner::open_with(
                 &opener,
                 timeout,
-                false,
-                "cluster-statement-snapshot",
+                TransactionOpen::ReadOnly,
                 // Read-only: no commit ever runs, so the protocol is moot.
                 CommitProtocol::two_phase_only(),
             )?,
@@ -1130,49 +852,31 @@ impl StatementSnapshot {
     /// The timestamp every read of this statement is served at.
     #[must_use]
     pub const fn start_ts(&self) -> u64 {
-        self.thread.start_ts
+        self.transaction.start_ts
     }
 
     /// Ends the statement's read transaction, leaving no locks behind.
     ///
     /// Calling it twice is a no-op: the statement is already finished.
     pub fn finish(&mut self) -> Result<(), StorageError> {
-        self.thread.finish()
-    }
-}
-
-impl Drop for StatementSnapshot {
-    fn drop(&mut self) {
-        // Go abandons an autocommit read snapshot after the statement: there
-        // are no writes or locks whose cleanup the foreground must observe.
-        // Keep the worker-owned transaction lifecycle ordered, but do not put
-        // the next statement behind its local read-only state transition.
-        self.thread.finish_detached();
+        self.transaction.finish()
     }
 }
 
 impl ClusterSnapshot for StatementSnapshot {
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
-        let bytes = key.as_bytes().to_vec();
-        ask(&self.thread.sender()?, |reply| TransactionRequest::Get {
-            key: bytes,
-            // A statement snapshot serves no locking statement.
-            locking: false,
-            read_ts: None,
-            reply,
+        with_transaction(&self.transaction.handle, |transaction| {
+            transaction.get(key.as_bytes(), None, false)
         })
     }
 
     fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
-        let keys = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
-        ask(&self.thread.sender()?, |reply| {
-            TransactionRequest::BatchGet {
-                keys,
-                // A statement snapshot serves no locking statement.
-                locking: false,
-                read_ts: None,
-                reply,
-            }
+        let keys = keys
+            .iter()
+            .map(|key| key.as_bytes().to_vec())
+            .collect::<Vec<_>>();
+        with_transaction(&self.transaction.handle, |transaction| {
+            transaction.batch_get(&keys, None, false)
         })
     }
 
@@ -1182,28 +886,22 @@ impl ClusterSnapshot for StatementSnapshot {
         end: &Key,
         limit: Option<usize>,
     ) -> Result<SnapshotPairs, StorageError> {
-        let start = start.as_bytes().to_vec();
-        let end = end.as_bytes().to_vec();
-        ask(&self.thread.sender()?, |reply| TransactionRequest::Scan {
-            start,
-            end,
-            limit,
-            read_ts: None,
-            reply,
+        with_transaction(&self.transaction.handle, |transaction| {
+            transaction.scan(start.as_bytes(), end.as_bytes(), limit, None)
         })
     }
 
     fn start_ts(&self) -> u64 {
-        self.thread.start_ts
+        self.transaction.start_ts
     }
 }
 
-/// One direct latest-committed point read with no transaction-worker state.
+/// One direct latest-committed point read with no writable transaction state.
 ///
 /// The session creates this only after the root plan has declared Go's
 /// autocommit point-get shape. A second read would not have snapshot isolation
 /// at `u64::MAX`, so this handle consumes exactly one Get and refuses every
-/// scan or later Get. Each accepted read opens only a thread-local read runtime;
+/// scan or later Get. Each accepted read opens only a shared read lease;
 /// region retries, lock recovery, GC visibility, and the call deadline remain
 /// those of the transaction snapshot reader.
 pub struct MaxTsSnapshot<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient> {
@@ -1262,7 +960,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
         self.consume()?;
         // A bounded single-row statement still has a range-shaped plan. Keep
         // its MaxTS declaration, but use the direct range reader rather than
-        // opening a pinned transaction worker for every YCSB E operation.
+        // activating a new transaction for each scan operation.
         let call = UnaryCallContext::with_timeout(self.timeout);
         self.opener
             .snapshot_scan_at_max_ts(start.as_bytes(), end.as_bytes(), limit, &call)
@@ -1283,8 +981,8 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnap
 /// every statement in between reads at that timestamp, which is repeatable
 /// read.
 pub struct SessionTransaction {
-    thread: TransactionThread,
-    /// Whether the worker hosts a pessimistic transaction -- decided by the
+    transaction: TransactionOwner,
+    /// Whether this is a pessimistic transaction -- decided by the
     /// session's `tidb_txn_mode` at `BEGIN`, Go's `DefTiDBTxnMode`
     /// (pessimistic) being the default.
     pessimistic: bool,
@@ -1294,13 +992,22 @@ impl fmt::Debug for SessionTransaction {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("SessionTransaction")
-            .field("start_ts", &self.thread.start_ts)
-            .field("open", &self.thread.requests.is_some())
+            .field("start_ts", &self.transaction.start_ts)
+            .field("open", &self.transaction.is_open())
             .finish()
     }
 }
 
 impl SessionTransaction {
+    /// Opens a locking statement at a fresh `for_update_ts`, as Go's
+    /// pessimistic repeatable-read provider does for a non-point locking read.
+    pub fn fresh_locking_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
+        let read_ts = with_transaction(&self.transaction.handle, |transaction| {
+            transaction.advance_for_update_ts()
+        })?;
+        self.snapshot_at_for(read_ts, true)
+    }
+
     /// Opens the transaction `BEGIN` holds, spending exactly one PD timestamp.
     ///
     /// The publication budget is the transaction-size limit itself, because a
@@ -1312,11 +1019,10 @@ impl SessionTransaction {
         commit_protocol: CommitProtocol,
     ) -> Result<Self, OptimisticCoordinatorError> {
         Ok(Self {
-            thread: TransactionThread::open(
+            transaction: TransactionOwner::open_with(
                 &opener,
                 timeout,
-                true,
-                "cluster-session-transaction",
+                TransactionOpen::Writable,
                 commit_protocol,
             )?,
             pessimistic: false,
@@ -1325,7 +1031,7 @@ impl SessionTransaction {
 
     /// Opens the pessimistic transaction `BEGIN` holds under Go's default
     /// `tidb_txn_mode = 'pessimistic'`: the same one-timestamp transaction,
-    /// whose worker additionally serves the statement-lock protocol
+    /// which additionally serves the statement-lock protocol
     /// ([`Self::lock_keys`]) and commits with pessimistic constraints.
     pub fn begin_pessimistic<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
         opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
@@ -1333,11 +1039,10 @@ impl SessionTransaction {
         commit_protocol: CommitProtocol,
     ) -> Result<Self, OptimisticCoordinatorError> {
         Ok(Self {
-            thread: TransactionThread::open_with(
+            transaction: TransactionOwner::open_with(
                 &opener,
                 timeout,
                 TransactionOpen::WritablePessimistic,
-                "cluster-session-pessimistic",
                 commit_protocol,
             )?,
             pessimistic: true,
@@ -1380,20 +1085,22 @@ impl SessionTransaction {
         duplicate_hints: BTreeMap<Vec<u8>, DuplicateKeyHint>,
         return_values: bool,
     ) -> Result<LockKeysOutcome, StorageError> {
-        let requests = self.thread.sender()?;
-        let (reply, answer) = cc::bounded(0);
-        requests
-            .send(TransactionRequest::LockKeys {
-                keys,
-                presume_not_exists,
-                duplicate_hints,
-                return_values,
-                reply,
-            })
-            .map_err(|_| StorageError::Backend("the transaction thread is gone".to_owned()))?;
-        answer.recv().map_err(|_| {
-            StorageError::Backend("the transaction thread stopped mid-lock".to_owned())
-        })
+        let mut state =
+            self.transaction.handle.lock().map_err(|_| {
+                StorageError::Backend("the transaction operation panicked".to_owned())
+            })?;
+        let outcome = state
+            .as_deref_mut()
+            .ok_or_else(ended_transaction)?
+            .lock_keys(&keys, &presume_not_exists, &duplicate_hints, return_values);
+        if self.pessimistic && matches!(outcome, LockKeysOutcome::TransactionError(_)) {
+            let failed = state.take();
+            drop(state);
+            if let Some(transaction) = failed {
+                let _ = transaction.finish();
+            }
+        }
+        Ok(outcome)
     }
 
     /// Releases the locks a FAILED statement accumulated across its retry
@@ -1405,14 +1112,9 @@ impl SessionTransaction {
         if keys.is_empty() {
             return Ok(());
         }
-        let requests = self.thread.sender()?;
-        let (reply, answer) = cc::bounded(0);
-        requests
-            .send(TransactionRequest::ReleaseKeys { keys, reply })
-            .map_err(|_| StorageError::Backend("the transaction thread is gone".to_owned()))?;
-        answer.recv().map_err(|_| {
-            StorageError::Backend("the transaction thread stopped mid-release".to_owned())
-        })?
+        with_transaction(&self.transaction.handle, |transaction| {
+            transaction.release_keys(&keys)
+        })
     }
 
     /// Opens a reusable read-only transaction at `u64::MAX`, the latest
@@ -1430,11 +1132,10 @@ impl SessionTransaction {
         timeout: Duration,
     ) -> Result<Self, OptimisticCoordinatorError> {
         Ok(Self {
-            thread: TransactionThread::open_with(
+            transaction: TransactionOwner::open_with(
                 &opener,
                 timeout,
                 TransactionOpen::ReadOnlyAt(u64::MAX),
-                "cluster-point-get-max-ts",
                 CommitProtocol::two_phase_only(),
             )?,
             pessimistic: false,
@@ -1444,7 +1145,7 @@ impl SessionTransaction {
     /// The one timestamp every statement of this transaction reads at.
     #[must_use]
     pub const fn start_ts(&self) -> u64 {
-        self.thread.start_ts
+        self.transaction.start_ts
     }
 
     /// A read handle onto this transaction, for one statement to bind.
@@ -1460,8 +1161,8 @@ impl SessionTransaction {
     /// (`pkg/executor/point_get.go:677`).
     pub fn snapshot_for(&self, locking: bool) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
         Ok(Box::new(SessionSnapshot {
-            requests: self.thread.sender()?,
-            start_ts: self.thread.start_ts,
+            transaction: self.transaction.handle()?,
+            start_ts: self.transaction.start_ts,
             read_ts: None,
             locking,
         }))
@@ -1490,8 +1191,8 @@ impl SessionTransaction {
             ));
         }
         Ok(Box::new(SessionSnapshot {
-            requests: self.thread.sender()?,
-            start_ts: self.thread.start_ts,
+            transaction: self.transaction.handle()?,
+            start_ts: self.transaction.start_ts,
             read_ts: Some(read_ts),
             locking,
         }))
@@ -1536,10 +1237,13 @@ impl SessionTransaction {
         let (mut mutations, _) = staged_mutations(buffer).map_err(coordinator_sql_error)?;
         mutations.extend(extra);
         if mutations.is_empty() {
-            self.thread.finish().map_err(storage_sql_error)?;
+            self.transaction.finish().map_err(storage_sql_error)?;
             return Ok(None);
         }
-        let outcome = self.thread.commit(mutations).map_err(engine_sql_error)?;
+        let outcome = self
+            .transaction
+            .commit(mutations)
+            .map_err(engine_sql_error)?;
         let duplicate_hint = deferred_duplicate_hint(&outcome, buffer);
         commit_outcome_to_sql_error_with_hint(&outcome, duplicate_hint.as_ref())?;
         buffer.reset();
@@ -1552,7 +1256,7 @@ impl SessionTransaction {
     ///
     /// Returns the failure of ending the transaction's own read side.
     pub fn rollback(mut self) -> Result<(), String> {
-        self.thread.finish().map_err(|error| error.to_string())
+        self.transaction.finish().map_err(|error| error.to_string())
     }
 }
 
@@ -1561,15 +1265,15 @@ impl SessionTransaction {
 /// It carries no ownership of the transaction: dropping it is the end of the
 /// statement, and the transaction stays open for the next one.
 struct SessionSnapshot {
-    requests: cc::Sender<TransactionRequest>,
-    /// The timestamp the transaction opened at, which every statement of it
-    /// reads at; a remote scan has to name it.
+    transaction: TransactionHandle,
+    /// The timestamp the transaction opened at. Ordinary reads use this;
+    /// retried pessimistic statements use `read_ts` on every read path.
     start_ts: u64,
     /// `Some` overrides the read timestamp for this statement -- the
     /// pessimistic retry's advanced `for_update_ts`. `None` reads at
     /// `start_ts`.
     read_ts: Option<u64>,
-    /// Whether this statement locks; see [`TransactionRequest::Get::locking`].
+    /// Whether this statement takes locks and may consult the lock-value cache.
     locking: bool,
 }
 
@@ -1584,26 +1288,18 @@ impl fmt::Debug for SessionSnapshot {
 
 impl ClusterSnapshot for SessionSnapshot {
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
-        let bytes = key.as_bytes().to_vec();
-        let read_ts = self.read_ts;
-        let locking = self.locking;
-        ask(&self.requests, |reply| TransactionRequest::Get {
-            key: bytes,
-            locking,
-            read_ts,
-            reply,
+        with_transaction(&self.transaction, |transaction| {
+            transaction.get(key.as_bytes(), self.read_ts, self.locking)
         })
     }
 
     fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
-        let keys = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
-        let read_ts = self.read_ts;
-        let locking = self.locking;
-        ask(&self.requests, |reply| TransactionRequest::BatchGet {
-            keys,
-            locking,
-            read_ts,
-            reply,
+        let keys = keys
+            .iter()
+            .map(|key| key.as_bytes().to_vec())
+            .collect::<Vec<_>>();
+        with_transaction(&self.transaction, |transaction| {
+            transaction.batch_get(&keys, self.read_ts, self.locking)
         })
     }
 
@@ -1613,20 +1309,13 @@ impl ClusterSnapshot for SessionSnapshot {
         end: &Key,
         limit: Option<usize>,
     ) -> Result<SnapshotPairs, StorageError> {
-        let start = start.as_bytes().to_vec();
-        let end = end.as_bytes().to_vec();
-        let read_ts = self.read_ts;
-        ask(&self.requests, |reply| TransactionRequest::Scan {
-            start,
-            end,
-            limit,
-            read_ts,
-            reply,
+        with_transaction(&self.transaction, |transaction| {
+            transaction.scan(start.as_bytes(), end.as_bytes(), limit, self.read_ts)
         })
     }
 
     fn start_ts(&self) -> u64 {
-        self.start_ts
+        self.read_ts.unwrap_or(self.start_ts)
     }
 }
 
@@ -1809,64 +1498,21 @@ fn engine_sql_error(detail: impl fmt::Display) -> LockSqlError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossbeam_channel::RecvTimeoutError;
-    use std::sync::mpsc::RecvTimeoutError as StdRecvTimeoutError;
-    use std::thread;
-
-    /// The handle crosses threads even though the transaction it drives never
-    /// does; that is the whole reason for the thread-owned shape.
-    ///
-    /// It is what says the split is between the transaction and its handle --
-    /// not between "a fresh thread" and "a reused one". Borrowing the thread
-    /// from the pinned pool keeps the transaction on one thread for its whole
-    /// life, so this assertion holds for exactly the reason it always did.
-    fn assert_send<T: Send>() {}
 
     #[test]
-    fn the_snapshot_handle_is_sendable() {
-        assert_send::<StatementSnapshot>();
-        assert_send::<ClusterTableStorage>();
-    }
-
-    #[test]
-    fn dropping_a_statement_snapshot_does_not_wait_for_worker_cleanup() {
-        let (requests, incoming) = cc::unbounded();
-        let (dropped, drop_finished) = mpsc::channel();
-        let dropper = thread::spawn(move || {
-            drop(StatementSnapshot {
-                thread: TransactionThread {
-                    requests: Some(requests),
-                    start_ts: 42,
-                },
-            });
-            dropped.send(()).expect("report snapshot drop");
-        });
-
-        let synchronous_reply = match incoming
-            .recv_timeout(Duration::from_secs(1))
-            .expect("snapshot drop must ask the worker to finish")
-        {
-            TransactionRequest::Finish { reply } => Some(reply),
-            TransactionRequest::FinishDetached => None,
-            _ => panic!("snapshot drop sent a non-finish request"),
+    fn coprocessor_snapshot_timestamp_follows_the_statement_retry() {
+        let mut snapshot = SessionSnapshot {
+            transaction: Arc::new(Mutex::new(None)),
+            start_ts: 10,
+            read_ts: None,
+            locking: false,
         };
-        let returned_without_cleanup = match drop_finished.recv_timeout(Duration::from_millis(50)) {
-            Ok(()) => true,
-            Err(StdRecvTimeoutError::Timeout) => false,
-            Err(StdRecvTimeoutError::Disconnected) => {
-                panic!("snapshot dropper stopped unexpectedly")
-            }
-        };
-
-        if let Some(reply) = synchronous_reply {
-            reply
-                .send(Ok(()))
-                .expect("release synchronous snapshot drop");
-        }
-        dropper.join().expect("snapshot dropper");
-        assert!(
-            returned_without_cleanup,
-            "read-only statement cleanup blocked the foreground thread"
+        assert_eq!(ClusterSnapshot::start_ts(&snapshot), 10);
+        snapshot.read_ts = Some(20);
+        assert_eq!(ClusterSnapshot::start_ts(&snapshot), 20);
+        assert_eq!(
+            snapshot.start_ts, 10,
+            "transaction identity remains unchanged"
         );
     }
 

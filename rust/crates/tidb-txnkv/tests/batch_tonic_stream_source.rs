@@ -39,6 +39,14 @@ const FORWARD_METADATA_KEY: &str = "tikv-forwarded-host";
 
 type BatchPull = CompletionPull<OpaqueBatchCommand, BatchInflightError>;
 
+// These lifecycle controls deliberately exercise reuse of one physical channel.
+fn single_connection_client() -> tidb_txnkv::rpc::TonicCoprocessorClient {
+    tidb_txnkv::rpc::TonicCoprocessorClient::with_connection_count(
+        std::num::NonZeroUsize::new(1).unwrap(),
+    )
+    .unwrap()
+}
+
 #[derive(Clone)]
 struct StreamingTikv {
     streams: Arc<AtomicUsize>,
@@ -103,6 +111,10 @@ impl Tikv for StreamingTikv {
         let mut first_request_seen = Some(first_request_seen);
         tokio::spawn(async move {
             while let Ok(Some(packet)) = inbound.message().await {
+                assert!(
+                    packet.requests.len() <= 128,
+                    "wire batch exceeds the source maximum"
+                );
                 if let Some(first_request_seen) = first_request_seen.take() {
                     let _ = first_request_seen.send(());
                 }
@@ -223,11 +235,11 @@ impl Drop for TestServer {
     }
 }
 
-fn entry(body: &'static [u8], forwarded_host: Option<&str>) -> (BatchCommandEntry, BatchPull) {
+fn entry(body: &[u8], forwarded_host: Option<&str>) -> (BatchCommandEntry, BatchPull) {
     let (completion, pull) = completion_pair(CompletionRunLoop::new(), || {});
     let entry = BatchCommandEntry::new(
         OpaqueBatchCommand::new(BatchCommandTag::Empty, body),
-        completion,
+        completion.into(),
     );
     let entry = match forwarded_host {
         Some(host) => entry.with_forwarded_host(host),
@@ -280,6 +292,93 @@ fn wait_for_generation(
 }
 
 #[test]
+fn callers_share_connection_rotation_and_retire_only_the_failed_channel() {
+    let server = TestServer::start(StreamingTikv {
+        streams: Arc::new(AtomicUsize::new(0)),
+        metadata: Arc::new(Mutex::new(Vec::new())),
+        received_bodies: Arc::new(Mutex::new(Vec::new())),
+        hold_seen: Arc::new(Mutex::new(None)),
+        withhold_headers: false,
+        serve_after_headers_released: false,
+        headers_after_first_request: false,
+        close_before_request: false,
+        headers_started: Arc::new(Mutex::new(None)),
+        release_headers: Arc::new(AtomicBool::new(false)),
+    });
+    let mut owner = tidb_txnkv::rpc::TonicCoprocessorClient::with_connection_count(
+        std::num::NonZeroUsize::new(4).unwrap(),
+    )
+    .unwrap();
+    let mut held = Vec::new();
+    let mut versions = Vec::new();
+    for _ in 0..4 {
+        let (request, pull) = entry(b"hold", None);
+        let receipts = owner
+            .submit_batch_commands(&server.address, vec![request])
+            .unwrap();
+        versions.push(receipts[0].route().physical_channel_version());
+        held.push(pull);
+    }
+    assert_eq!(
+        versions
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        4
+    );
+
+    // A clone shares admission and connection rotation, not a pinned shard.
+    let mut caller = owner.clone();
+    owner
+        .close_address_version(&server.address, versions[0])
+        .unwrap();
+    assert!(matches!(
+        wait_for_completion(&mut held[0]),
+        Err(BatchInflightError::Transport(_))
+    ));
+    for sibling in &mut held[1..] {
+        assert!(sibling.try_complete().unwrap().is_none());
+    }
+    let (replacement, mut replacement_pull) = entry(b"replacement", None);
+    let receipts = caller
+        .submit_batch_commands(&server.address, vec![replacement])
+        .unwrap();
+    let replacement_version = receipts[0].route().physical_channel_version();
+    assert!(replacement_version > *versions.iter().max().unwrap());
+    owner
+        .close_address_version(&server.address, versions[0])
+        .unwrap();
+    assert_eq!(
+        wait_for_completion(&mut replacement_pull).unwrap().body(),
+        b"replacement"
+    );
+    assert_eq!(owner.batch_request_id_watermark(), 5);
+    // A remote stream failure must retire its own connection's stream, not
+    // another stream that happens to have the same local generation number.
+    let (failure, mut failure_pull) = entry(b"fail", None);
+    let receipt = caller
+        .submit_batch_commands(&server.address, vec![failure])
+        .unwrap();
+    assert_eq!(receipt[0].route().physical_channel_version(), versions[1]);
+    assert!(wait_for_completion(&mut failure_pull).is_err());
+    assert!(wait_for_completion(&mut held[1]).is_err());
+    for sibling in &mut held[2..] {
+        assert!(sibling.try_complete().unwrap().is_none());
+    }
+    wait_for_generation(&owner, &server.address, Some(2));
+    assert_eq!(owner.batch_request_id_watermark(), 6);
+    caller.close().unwrap();
+    owner.close().unwrap();
+    for sibling in &mut held[2..] {
+        assert!(matches!(
+            wait_for_completion(sibling),
+            Err(BatchInflightError::Transport(_))
+        ));
+    }
+}
+
+#[test]
 fn duplex_stream_reuses_pool_isolates_forwarding_reconnects_and_drains_close() {
     let streams = Arc::new(AtomicUsize::new(0));
     let metadata = Arc::new(Mutex::new(Vec::new()));
@@ -297,7 +396,7 @@ fn duplex_stream_reuses_pool_isolates_forwarding_reconnects_and_drains_close() {
         headers_started: Arc::new(Mutex::new(None)),
         release_headers: Arc::new(AtomicBool::new(false)),
     });
-    let mut client = tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap();
+    let mut client = single_connection_client();
 
     let (first, mut first_pull) = entry(b"first", None);
     let (second, mut second_pull) = entry(b"second", None);
@@ -316,6 +415,31 @@ fn duplex_stream_reuses_pool_isolates_forwarding_reconnects_and_drains_close() {
         wait_for_completion(&mut second_pull).unwrap().body(),
         b"second"
     );
+
+    // The public vector API is subject to the same packet bound as commands
+    // gathered across callers, including high-priority scheduler entries.
+    let (entries, mut pulls): (Vec<_>, Vec<_>) = (0..300_u32)
+        .map(|index| {
+            let (entry, pull) = entry(&index.to_le_bytes(), None);
+            (entry.with_priority(10), pull)
+        })
+        .unzip();
+    let receipts = client
+        .submit_batch_commands(&server.address, entries)
+        .unwrap();
+    assert_eq!(
+        receipts
+            .iter()
+            .map(|receipt| receipt.request_ids().len())
+            .collect::<Vec<_>>(),
+        [128, 128, 44]
+    );
+    for (index, pull) in pulls.iter_mut().enumerate() {
+        assert_eq!(
+            wait_for_completion(pull).unwrap().body(),
+            &(index as u32).to_le_bytes()
+        );
+    }
 
     assert_eq!(
         client.batch_stream_generation(&server.address, None),
@@ -423,7 +547,7 @@ fn exact_channel_retirement_is_retryable_and_cannot_touch_a_replacement() {
         headers_started: Arc::new(Mutex::new(None)),
         release_headers: Arc::new(AtomicBool::new(false)),
     });
-    let mut client = tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap();
+    let mut client = single_connection_client();
 
     let (direct, mut direct_pull) = entry(b"hold", None);
     let direct_receipt = client
@@ -481,7 +605,7 @@ fn first_batch_is_published_before_response_headers() {
         headers_started: Arc::new(Mutex::new(None)),
         release_headers: Arc::new(AtomicBool::new(false)),
     });
-    let mut client = tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap();
+    let mut client = single_connection_client();
     let (request, mut pull) = entry(b"first-before-headers", None);
 
     let receipts = client
@@ -516,7 +640,7 @@ fn opening_generation_bounds_packets_and_isolates_sibling_cancellation() {
         headers_started: Arc::new(Mutex::new(Some(headers_started))),
         release_headers: Arc::clone(&release_headers),
     });
-    let mut client = tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap();
+    let mut client = single_connection_client();
     let (cancelled, mut cancelled_pull) = entry(b"cancelled-sibling", None);
     let (surviving, mut surviving_pull) = entry(b"surviving-sibling", None);
     let first_receipts = client
@@ -578,7 +702,7 @@ fn pending_exposes_publication_before_withheld_response_headers_complete() {
         headers_started: Arc::new(Mutex::new(Some(headers_started))),
         release_headers: Arc::clone(&release_headers),
     });
-    let mut client = tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap();
+    let mut client = single_connection_client();
     let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
 
     let mut pending = client
@@ -591,7 +715,7 @@ fn pending_exposes_publication_before_withheld_response_headers_complete() {
         .unwrap();
     let publication = pending
         .publication()
-        .expect("begin must bind the BatchCommands receipt before returning");
+        .expect("explicit publication observation waits for admission, not response headers");
     assert_eq!(publication.physical_address(), server.address);
     assert_eq!(publication.physical_channel_version(), 1);
     assert_eq!(publication.batch_stream_generation(), 1);
@@ -620,7 +744,7 @@ fn shutdown_cancellation_interrupts_withheld_stream_headers_and_joins_promptly()
         headers_started: Arc::new(Mutex::new(Some(headers_started))),
         release_headers: Arc::clone(&release_headers),
     });
-    let mut client = tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap();
+    let mut client = single_connection_client();
     let cancellation = client.shutdown_cancellation();
     let (request, mut pull) = entry(b"withheld-headers", None);
     let address = server.address.clone();
@@ -673,7 +797,7 @@ fn immediate_close_before_request_fails_once_without_on_demand_open_spin() {
         headers_started: Arc::new(Mutex::new(None)),
         release_headers: Arc::new(AtomicBool::new(false)),
     });
-    let mut client = tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap();
+    let mut client = single_connection_client();
     let cancellation = client.shutdown_cancellation();
     let (request, mut pull) = entry(b"must-not-spin", None);
     let address = server.address.clone();

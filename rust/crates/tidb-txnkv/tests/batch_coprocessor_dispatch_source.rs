@@ -288,6 +288,10 @@ fn concrete_dispatch_attaches_context_forwards_and_maps_coprocessor_response() {
         .unwrap();
 
     let raw = pending.complete(&call).unwrap().unwrap();
+    let publication = pending.try_publication().expect("completion retains its route without a receipt barrier");
+    assert_eq!(raw.physical_address(), publication.physical_address());
+    assert_eq!(raw.physical_channel_version(), publication.physical_channel_version());
+    assert_eq!(publication.forwarded_host(), Some("logical-tikv:20160"));
     let response = CoprocessorResponse::decode(raw.encoded_response.as_slice()).unwrap();
     assert_eq!(response.data, b"dag");
     let received = received.lock().unwrap();
@@ -391,6 +395,9 @@ fn elapsed_deadline_rejects_before_stream_or_wire_admission() {
     let mut pending = client
         .begin(&server.address, None, &request(b"must-not-publish"), &call)
         .expect("worker publishes elapsed deadline through the original completion");
+    // Explicitly observe the worker's admission decision: begin now only
+    // enqueues, so a non-blocking poll need not see that decision yet.
+    assert!(pending.publication().is_none());
     let error = pending
         .try_complete()
         .unwrap()
@@ -422,6 +429,7 @@ fn positive_deadline_expiring_before_worker_admission_never_reaches_the_wire() {
             &call,
         )
         .expect("worker publishes its final admission decision through the completion");
+    assert!(pending.publication().is_none());
     let error = pending
         .try_complete()
         .unwrap()

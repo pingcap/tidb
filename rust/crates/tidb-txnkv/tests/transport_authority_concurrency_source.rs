@@ -224,7 +224,10 @@ fn cloned_handles_overlap_and_one_logical_close_does_not_retire_the_other() {
 
     let (first_server, first_seen, _) = TestServer::start();
     let (second_server, second_seen, _) = TestServer::start();
-    let mut authority = TonicCoprocessorClient::new().unwrap();
+    let mut authority = TonicCoprocessorClient::with_connection_count(
+        std::num::NonZeroUsize::new(4).unwrap(),
+    )
+    .unwrap();
     let mut first = authority.clone();
     let mut second = authority.clone();
     assert!(authority.is_transport_owner());
@@ -282,7 +285,7 @@ fn cloned_handles_overlap_and_one_logical_close_does_not_retire_the_other() {
         .unwrap();
     let follow_up = follow_up.complete(&follow_up_call).unwrap().unwrap();
     assert_eq!(follow_up.physical_address(), second_server.address);
-    assert_eq!(follow_up.physical_channel_version(), 1);
+    assert_eq!(follow_up.physical_channel_version(), 2);
     assert_eq!(
         CoprocessorResponse::decode(follow_up.encoded_response.as_slice())
             .unwrap()
@@ -299,7 +302,10 @@ fn stalled_unary_does_not_block_batch_commands_admission_or_completion() {
     let (server, batch_seen, unary_seen) = TestServer::start();
     server.release();
 
-    let mut authority = TonicCoprocessorClient::new().unwrap();
+    let mut authority = TonicCoprocessorClient::with_connection_count(
+        std::num::NonZeroUsize::new(4).unwrap(),
+    )
+    .unwrap();
     let mut unary_client = authority.clone();
     let unary_address = server.address.clone();
     let unary = std::thread::spawn(move || {
@@ -347,7 +353,7 @@ fn stalled_unary_does_not_block_batch_commands_admission_or_completion() {
     assert_eq!(unary_response.physical_address(), server.address);
     assert_eq!(unary_response.physical_channel_version(), 1);
     assert_eq!(batch_response.physical_address(), server.address);
-    assert_eq!(batch_response.physical_channel_version(), 1);
+    assert_eq!(batch_response.physical_channel_version(), 2);
     assert_eq!(
         CoprocessorResponse::decode(unary_response.encoded_response.as_slice())
             .unwrap()

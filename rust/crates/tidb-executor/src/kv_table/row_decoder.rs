@@ -82,7 +82,7 @@ pub struct RowDecoder {
     pk_handle_offset: Option<usize>,
     common_handle_offsets: Vec<usize>,
     use_new_collation: bool,
-    keep: Option<Vec<usize>>,
+    keep: Option<Vec<ProjectedColumn>>,
     context: RowDecodeContext,
     /// Row V2 metadata built once per cursor rather than once per row.
     v2_columns: Vec<tidb_codec::ColumnInfo>,
@@ -91,6 +91,23 @@ pub struct RowDecoder {
     /// The common table-read shape can decode directly into a datum vector.
     /// Generated/default/DDL shapes retain the map-based compatibility path.
     v2_fast_path: bool,
+}
+
+/// The last use moves a decoded datum; earlier duplicate uses must clone it.
+#[derive(Clone)]
+struct ProjectedColumn {
+    offset: usize,
+    consume: bool,
+}
+
+fn projection_columns(keep: &[usize]) -> Vec<ProjectedColumn> {
+    let mut seen = BTreeSet::new();
+    let mut columns: Vec<_> = keep.iter().rev().map(|offset| ProjectedColumn {
+        offset: *offset,
+        consume: seen.insert(*offset),
+    }).collect();
+    columns.reverse();
+    columns
 }
 
 #[derive(Clone, Debug)]
@@ -534,7 +551,7 @@ impl RowDecoder {
             pk_handle_offset,
             common_handle_offsets,
             use_new_collation,
-            keep: keep.map(<[usize]>::to_vec),
+            keep: keep.map(projection_columns),
             context,
             v2_columns,
             v2_handle_column_ids,
@@ -570,6 +587,39 @@ impl RowDecoder {
 
     pub(crate) fn decoded_column_ids(&self) -> impl Iterator<Item = i64> + '_ {
         self.column_types.keys().copied()
+    }
+
+    /// Physical inputs needed before evaluating this decoder's projection.
+    /// Dependency expansion is shared with byte-level row decoding.
+    pub(crate) fn physical_offsets(&self) -> Vec<usize> {
+        self.decoded_offsets
+            .iter()
+            .copied()
+            .filter(|offset| !self.generated_offsets.contains(offset))
+            .collect()
+    }
+
+    /// Completes an already decoded coprocessor row, including virtual
+    /// expressions and the caller's projection, just like a local record.
+    pub(crate) fn project_remote_row(
+        &self,
+        offsets: &[usize],
+        values: Vec<Datum>,
+    ) -> Result<Vec<Datum>, KvTableError> {
+        if offsets.len() != values.len() {
+            return Err(KvTableError::Decode(
+                "remote row does not match its physical projection".to_owned(),
+            ));
+        }
+        let mut decoded = DecodedRow {
+            values: vec![Datum::Null; self.columns.len()],
+            by_id: BTreeMap::new(),
+        };
+        for (offset, value) in offsets.iter().zip(values) {
+            self.set_column_value(&mut decoded, *offset, value)?;
+        }
+        self.eval_remaining(&mut decoded)?;
+        Ok(self.project_values(decoded.values))
     }
 
     pub(crate) fn record_handle(&self, key: &[u8]) -> Result<TableHandle, KvTableError> {
@@ -768,7 +818,7 @@ impl RowDecoder {
                     )
                 }
             };
-            let mut values = tidb_codec::decode_row_to_datums(
+            let values = tidb_codec::decode_row_to_datums(
                 value,
                 &self.v2_columns,
                 &tidb_codec::DecodeRowOptions {
@@ -780,24 +830,22 @@ impl RowDecoder {
             )
             .map_err(|error| KvTableError::Decode(format!("{error:?}")))?
             .values;
-            if let Some(keep) = &self.keep {
-                values = keep
-                    .iter()
-                    .map(|offset| std::mem::replace(&mut values[*offset], Datum::Null))
-                    .collect();
-            }
-            return Ok((handle, values));
+            return Ok((handle, self.project_values(values)));
         }
         let decoded = self.decode_and_eval(&handle, value)?;
-        let (mut values, _) = decoded.into_parts();
-        if let Some(keep) = &self.keep {
-            let projected = keep
-                .iter()
-                .map(|offset| std::mem::replace(&mut values[*offset], Datum::Null))
-                .collect();
-            return Ok((handle, projected));
-        }
-        Ok((handle, values))
+        let (values, _) = decoded.into_parts();
+        Ok((handle, self.project_values(values)))
+    }
+
+    fn project_values(&self, mut values: Vec<Datum>) -> Vec<Datum> {
+        let Some(keep) = &self.keep else { return values; };
+        keep.iter().map(|column| {
+            if column.consume {
+                std::mem::replace(&mut values[column.offset], Datum::Null)
+            } else {
+                values[column.offset].clone()
+            }
+        }).collect()
     }
 }
 

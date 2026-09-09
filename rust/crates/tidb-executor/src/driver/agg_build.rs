@@ -569,6 +569,10 @@ pub(crate) struct AggOutputResolver {
 }
 
 impl ColumnResolver for AggOutputResolver {
+    fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
+        tidb_expr::Columns::param_value(&self.constant_context, order)
+    }
+
     fn time_zone(&self) -> tidb_expr::SessionTimeZone {
         self.zone.clone()
     }
@@ -603,6 +607,10 @@ impl ColumnResolver for AggOutputResolver {
 
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
         tidb_expr::fold_constant_in_mode(expression, &self.constant_context, mode);
+    }
+
+    fn eval_constant(&self, expression: &Expression) -> Result<Datum, tidb_expr::EvalError> {
+        tidb_expr::eval_expression_once(expression, &self.constant_context)
     }
 
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {

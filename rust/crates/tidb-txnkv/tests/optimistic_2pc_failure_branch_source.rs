@@ -47,7 +47,7 @@ use tidb_txnkv::region::{
 };
 use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext};
 use tidb_txnkv::transaction::{
-    detached_flush_failures, OptimisticCommitOutcome, OptimisticMutation,
+    OptimisticCommitOutcome, OptimisticMutation,
     OptimisticTransactionState, RealOptimisticTransaction, TransactionAttemptPhase,
     TransactionAttemptResult, TransactionCause,
 };
@@ -182,6 +182,7 @@ impl RegionRecoveryLoader for SplitTopology {
         &mut self,
         _metadata: &RegionMetadata,
         _leader_store_id: u64,
+        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
     ) -> Result<RegionLocation, RegionLoadError> {
         Err(RegionLoadError::new(
             "unexpected-hydration",
@@ -553,7 +554,6 @@ fn secondary_commit_regroup_failure_keeps_a_determinate_committed_outcome() {
     let server = TestServer::start(service);
     let topology = SplitTopology::new(server.store_address());
     let transaction = transaction(&server, topology.clone());
-    let failures_before = detached_flush_failures();
 
     let outcome = transaction
         .commit(
@@ -567,14 +567,15 @@ fn secondary_commit_regroup_failure_keeps_a_determinate_committed_outcome() {
         panic!("a confirmed primary commit must stay Committed");
     };
 
-    // The secondary Commit ran on the detached flush thread, so its failure is
-    // invisible to the outcome and counted at the transport instead.
+    // The detached secondary failure is invisible to the committed outcome.
+    // Wait for this fixture's request, not the process-global failure metric:
+    // another concurrent transaction can increment that metric first.
     assert!(committed.secondary_failures.is_empty());
     let deadline = Instant::now() + CALL_TIMEOUT;
-    while detached_flush_failures() == failures_before {
+    while recorded.lock().unwrap().commits.len() < 2 {
         assert!(
             Instant::now() < deadline,
-            "the detached secondary flush never recorded its failure"
+            "the detached secondary flush never reached this fixture"
         );
         std::thread::sleep(Duration::from_millis(5));
     }

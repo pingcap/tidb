@@ -1,0 +1,79 @@
+{
+  "scope": "Two-client TPC-C improvement only; sysbench declined and the eight-client comparison is incomplete",
+  "base_commit": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "changes": [
+    "Shared primary-key batch binding for planning and pre-locking with returned values, including missing keys under repeatable read",
+    "Retain transaction isolation and bind prelock keys after catalog refresh and implicit transaction activation",
+    "Normal pessimistic prewrite recovery without an environment switch",
+    "TTL-capped TxnLock backoff with a time budget instead of full-TTL sleep and four-attempt refusal",
+    "Cancellable wait helper owns absolute-deadline clamping"
+  ],
+  "before_port": 53009,
+  "after_port": 53010,
+  "go_port": 45000,
+  "before_binary_sha256": "d23d15774a6f70690d233ee5881cde36768672c67c0b25cadafcb07b7be2313c",
+  "after_binary_sha256": "6d46115d6502712cb626775f2e9315d57d7197ede611f8408f22130526b326e2",
+  "build": "cd rust && cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+  "sysbench": {
+    "database": "perf_sysbench_locking_v2",
+    "table_size": 100000,
+    "workload": "oltp_read_write",
+    "threads": 2,
+    "protocol": "prepared",
+    "seed": 1,
+    "rounds": 3,
+    "seconds_per_sample": 20,
+    "warmup_seconds_per_endpoint": 5,
+    "order": [["before", "after", "go"], ["after", "go", "before"], ["go", "before", "after"]],
+    "before_transactions": [8873, 8888, 8743],
+    "before_seconds": [20.0019, 20.0049, 20.0021],
+    "after_transactions": [8841, 8698, 8609],
+    "after_seconds": [20.0025, 20.0016, 20.0036],
+    "go_transactions": [9776, 9939, 9515],
+    "go_seconds": [20.0030, 20.0037, 20.0013],
+    "median_tps_before_after_go": [443.60785725356095, 434.86521078313734, 488.72669099635056],
+    "errors": 0,
+    "reconnects": 0,
+    "conclusion": "After is slower in every paired round, with a roughly 1.97 percent lower median. No speedup; investigate a possible regression. No builds, profiling, or other workloads overlapped the measurement.",
+    "command": "python3 rust/scripts/compare-sysbench.py --server before:53009 --server after:53010 --server go:45000 --database perf_sysbench_locking_v2 --workload oltp_read_write --threads 2 --seconds 20 --rounds 3 --table-size 100000 --output /private/tmp/tidb-batch-sysbench-comparison",
+    "artifacts": "/private/tmp/tidb-batch-sysbench-comparison/results.json"
+  },
+  "correctness": {
+    "coordinator_unit_tests_passed": 6,
+    "executor_binding_tests_passed": 2,
+    "existing_batch_point_tests_passed": 13,
+    "session_isolation_test_passed": 1,
+    "server_locking_tests_passed": 7,
+    "real_tikv_recovery_tests_passed": 3,
+    "live_sql_cases_per_endpoint": 7,
+    "live_sql_reference": "Go TiDB 45000 and Rust 53010 agree on selected and final rows, RR absent-key exclusion, RC absent-key admission, transaction-retained isolation and first autocommit=0 statement",
+    "scope_limits": "Not full read-committed snapshot, partition or wait-policy coverage; Ready/lint not run"
+  },
+  "tpcc": {
+    "status": "Two-client comparison complete; eight-client round 3 stopped on an old-build deadlock",
+    "database": "perf_tpcc_locking_v1",
+    "warehouses": 1,
+    "transactions_per_sample": 10000,
+    "warmup_transactions_per_endpoint_and_concurrency": 1000,
+    "two_clients": {
+      "before_seconds": [20.212179708003532, 21.31535133300349, 21.990649832994677],
+      "after_seconds": [18.336399167019408, 19.396003791014664, 19.567342875001486],
+      "go_seconds": [15.559467000013683, 15.590319584007375, 16.514972125005443],
+      "median_tps_before_after_go": [469.14544563553886, 515.5701198941078, 641.4236697404233],
+      "conclusion": "All three paired rounds improve; the median gain is approximately 9.90 percent. This is a scoped two-client result, not the full performance objective."
+    },
+    "eight_clients": {
+      "before_seconds_valid": [13.53563945798669, 15.066165749973152],
+      "after_seconds_valid": [14.399947625002824, 15.165582124958746],
+      "go_seconds_valid": [11.839460916991811, 12.56754058302613, 13.933081707975361],
+      "failure": "Old-build round 3 returned Error 1213 during UPDATE stock; its sample was rejected and after round 3 was not run",
+      "failed_sample": "/private/tmp/tidb-batch-tpcc-comparison/t8-r2-before.log",
+      "conclusion": "No gain established: after is slower in both complete pairs, and the full three-round comparison is incomplete."
+    },
+    "validation": "160000 transactions in valid measured samples and 6000 warmups; failed old-build sample retained separately. All 11 Go post-run checks pass and all 30000 customers have zero balance or delivery-counter mismatches.",
+    "measurement_limits": "Shared evolving dataset and time-seeded tool RNG; no builds, profiling or other workloads overlapped the comparison",
+    "postcheck_log": "/private/tmp/tidb-batch-tpcc-check.log",
+    "balance_log": "/private/tmp/tidb-batch-tpcc-balances.tsv",
+    "artifacts": "/private/tmp/tidb-batch-tpcc-comparison/results.json"
+  }
+}

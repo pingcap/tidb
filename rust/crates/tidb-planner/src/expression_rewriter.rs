@@ -136,6 +136,8 @@ use tidb_expr::column::{Column, CorrelatedColumn};
 use tidb_expr::constant::Constant;
 use tidb_expr::expr_util::builder::{FunctionBuilder, RealFunctionBuilder};
 use tidb_expr::expr_util::extract::set_expr_column_in_operand;
+use tidb_expr::expr_util::normal_form::into_cnf_items;
+#[cfg(test)]
 use tidb_expr::expr_util::normal_form::split_cnf_items;
 use tidb_expr::expr_util::predicates::{get_func_arg, get_row_len};
 use tidb_expr::expr_util::substitute::SubstituteOptions;
@@ -419,7 +421,7 @@ pub fn extract_cor_columns_by_schema(
             let mut column = schema.columns[idx].clone();
             // Go's `resolveIndex` pass: `corCol.Index = schema.ColumnIndex(...)`.
             column.index = i64::try_from(idx).expect("schema length fits in i64");
-            slots[idx] = Some(CorrelatedColumn { column, data: None });
+            slots[idx] = Some(CorrelatedColumn { column, data: Default::default() });
         }
     }
     slots.into_iter().flatten().collect()
@@ -1609,7 +1611,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             let mut plan = self.build_semi_apply(
                 outer,
                 np,
-                &split_cnf_items(&check_condition),
+                &into_cnf_items(check_condition),
                 as_scalar,
                 not,
                 semi_rewrite,
@@ -1694,7 +1696,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             let builder = self.env.builder();
             let opts = SubstituteOptions::new(&builder);
             join.attach_on_conds(
-                &split_cnf_items(&join_condition),
+                &into_cnf_items(join_condition),
                 &outer_schema,
                 &agg_schema,
                 &opts,
@@ -1818,7 +1820,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
                 let column = self.plan_ctx.outer_schemas[i].columns[idx].clone();
                 let name = outer_names[idx].clone();
                 self.ctx_stack_append(
-                    Expression::CorrelatedColumn(CorrelatedColumn { column, data: None }),
+                    Expression::CorrelatedColumn(CorrelatedColumn { column, data: Default::default() }),
                     name,
                 );
                 return Ok(());

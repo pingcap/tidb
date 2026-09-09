@@ -445,6 +445,7 @@ pub struct Session {
     connection_id: Option<u64>,
     /// This connection's lock references over the domain/server lock service.
     advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession,
+    selected_lock_keys: Option<tidb_executor::select_lock::SelectedLockKeys>,
     /// Go `SessionVars.PrevLastInsertID`: the id `LAST_INSERT_ID()` reports,
     /// which only a statement that ALLOCATED an auto value updates.
     last_insert_id: u64,
@@ -496,7 +497,7 @@ pub struct Session {
     scanner_sql_mode_cache: std::cell::Cell<Option<(u64, tidb_parser::SqlMode)>>,
     statement_var_cache:
         std::cell::RefCell<Option<std::rc::Rc<crate::stmt_ctx::StatementVarSnapshot>>>,
-    cost_env_cache: std::cell::RefCell<Option<(u64, tidb_planner::candidate_cost::CostEnv, f64)>>,
+    cost_env_cache: std::cell::RefCell<Option<(u64, Arc<tidb_planner::candidate_cost::CostEnv>, f64)>>,
     /// Go `SessionVars.LastTxnInfo` (`pkg/sessionctx/variable/session.go:1467`):
     /// client-go's `TxnInfo` JSON for the last transaction that ACTIVATED --
     /// full (with `commit_ts`) after a commit, start-only otherwise, and
@@ -599,10 +600,12 @@ pub struct Session {
     prepared_statements: prepared_statements::PreparedStore,
     /// Go's `sessionBindingHandle` (`pkg/bindinfo/session_handle.go`): the
     /// SQL bindings created with `CREATE [SESSION] BINDING`. Session-scoped
-    /// and unshared, exactly as Go's is; GLOBAL bindings would need
-    /// `mysql.bind_info`, which this tier has no catalog entry for. See
-    /// [`binding`].
+    /// and unshared. Cluster GLOBAL bindings use the node cache below.
     session_bindings: binding::SessionBindings,
+    /// Node-owned committed bindings, independent of this session's transaction.
+    global_binding_cache: Option<binding_cache::SharedBindingCache>,
+    /// Independent transaction owner for cluster global-binding commands.
+    global_binding_writer: Option<Arc<dyn binding::GlobalBindingWriter>>,
     /// Go's `DefaultExprPushDownBlacklist` and
     /// `DefaultDisabledLogicalRulesList`, published by `ADMIN RELOAD` and
     /// empty until then -- so an `INSERT` into `mysql.expr_pushdown_blacklist`
@@ -666,6 +669,7 @@ impl Default for Session {
             active_roles: Vec::new(),
             connection_id: None,
             advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession::default(),
+            selected_lock_keys: None,
             last_insert_id: 0,
             statement_insert_id: 0,
             set_var_hint_restore: Vec::new(),
@@ -699,6 +703,8 @@ impl Default for Session {
             rand: new_time_seeded_rand(),
             prepared_statements: prepared_statements::PreparedStore::default(),
             session_bindings: binding::SessionBindings::default(),
+            global_binding_cache: None,
+            global_binding_writer: None,
             pushdown_blacklists: blacklist::PushdownBlacklists::default(),
             planned_apply: Arc::default(),
             prepared_plan_pins: std::cell::RefCell::default(),
@@ -1220,6 +1226,17 @@ impl Session {
         self.run_bound_prepared_internal(bound, true)
     }
 
+    /// Resolves PREPARE result metadata with NULL markers without publishing
+    /// an execution cache entry or access-path pins.
+    pub fn probe_prepared(&mut self, prepared: &PreparedAst) -> Result<StmtOutput, DriverError> {
+        let values = vec![Datum::Null; prepared.parameter_count()];
+        let statement = tidb_executor::bind_prepared_statement(prepared.statement(), &values)?;
+        self.run_with_columns_using(prepared.sql(), false, |session| {
+            session.execute_prepared_ast(prepared.sql(), statement)
+        })
+        .map(|(output, _)| output)
+    }
+
     /// Runs an owned bound statement while reusing the prepared SQL text.
     /// Binary-protocol callers already have both values, so restoring the AST
     /// merely to obtain text would add work to every execute.
@@ -1231,7 +1248,7 @@ impl Session {
         // Prepared plan cache, the reusable half (Go `GetPlanFromPlanCache`
         // narrowed to access-path shapes): open pins for a cacheable query,
         // run, then store what a successful miss captured. The PREPARE-time
-        // probe never enters here -- it calls `run_bound_prepared`, which
+        // probe never enters here -- it calls `probe_prepared`, which
         // has no pin state -- so NULL-marker probing cannot poison pins.
         let pin_state = self.begin_prepared_path_pins(&mut bound, sql);
         *self.active_prepared_pin.borrow_mut() = pin_state;
@@ -1247,25 +1264,24 @@ impl Session {
         bound: BoundPreparedAst,
         capture_result_authority: bool,
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
-        let (execution_sql, statement, cached_point_get, cache_candidate, cache_ready) =
+        let (execution_sql, input, cached_point_get, cache_candidate, cache_ready) =
             bound.into_parts();
         let sql = execution_sql.as_str();
-        let result = match statement {
-            Some(statement) => {
-                self.run_with_columns_using(sql, capture_result_authority, move |session| {
-                    session.execute_prepared_ast(sql, statement, cached_point_get)
-                })
+        let result = self.run_with_columns_using(sql, capture_result_authority, move |session| {
+            if let Some(cached) = cached_point_get {
+                if let Some(output) = session.try_execute_cached_prepared_point_get(cached)? {
+                    return Ok(output);
+                }
             }
-            None => self.run_with_columns_using(sql, capture_result_authority, move |session| {
-                session.execute_cached_prepared_point_get(
-                    cached_point_get.expect("the cached path carries its PointGet execution"),
-                )
-            }),
-        };
-        if capture_result_authority
-            && result
-                .as_ref()
-                .is_ok_and(|(output, _)| matches!(output, StmtOutput::Rows { .. }))
+            let mut statement = input.into_statement()?;
+            let pin_state = session.begin_prepared_path_pins(&mut statement, sql);
+            *session.active_prepared_pin.borrow_mut() = pin_state;
+            session.execute_prepared_ast(sql, statement)
+        });
+        self.finish_prepared_path_pins(sql, result.is_ok());
+        if result
+            .as_ref()
+            .is_ok_and(|(output, _)| matches!(output, StmtOutput::Rows { .. }))
             && cache_candidate
                 .as_ref()
                 .is_some_and(|execution| self.can_reuse_prepared_point_get(execution.plan()))

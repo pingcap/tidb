@@ -134,7 +134,7 @@ impl From<RealTiKvMultiReadError> for ConfiguredInnerJoinError {
 impl<T, S> RealTiKvMultiReadSession<T, S>
 where
     T: QueryTransport,
-    T::Response: 'static,
+    T::Response: Send + 'static,
     S: TimestampSource,
 {
     /// Executes one planner-bound configured join with a fresh cancellation owner.

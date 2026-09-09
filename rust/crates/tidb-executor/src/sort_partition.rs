@@ -231,27 +231,29 @@ impl SortPartition {
         ctx: &C,
     ) -> Result<(), ExecError> {
         let rows = i64::try_from(chunk.num_rows()).unwrap_or(i64::MAX);
-        self.mem_tracker
-            .consume(chunk.memory_usage() + tidb_chunk::row::ROW_SIZE * rows);
-
-        let chunk_index = self.chunks.len();
+        let mut consumed = chunk.memory_usage() + tidb_chunk::row::ROW_SIZE * rows;
+        let mut keys = Vec::with_capacity(chunk.num_rows());
         for row_index in 0..chunk.num_rows() {
             let key = eval_sort_key(by_items, ctx, chunk.get_row(row_index))?;
-            // OVER-COUNT vs Go, deliberately (and unchanged from this port's
-            // pre-spill behavior): Go re-reads the chunk cell on every
-            // comparison and keeps no materialized key, so `keys` is memory
-            // THIS port holds and Go does not. Counting it is what makes the
-            // tracker describe the process rather than the source.
-            let mut key_bytes = i64::try_from(size_of::<Vec<Datum>>()).unwrap_or(i64::MAX);
+            // Unlike Go's chunk-row comparisons, this executor retains
+            // materialized keys. Include their bytes in the chunk's charge.
+            consumed += i64::try_from(size_of::<Vec<Datum>>()).unwrap_or(i64::MAX);
             for datum in &key {
-                key_bytes += i64::try_from(datum.estimated_mem_usage()).unwrap_or(i64::MAX);
+                consumed += i64::try_from(datum.estimated_mem_usage()).unwrap_or(i64::MAX);
             }
-            self.mem_tracker.consume(key_bytes);
-            self.keys.push(key);
-            self.rows.push((chunk_index, row_index));
+            keys.push(key);
         }
+
+        // Commit a complete input chunk before invoking its quota action,
+        // as Go's sort partition does. A key-evaluation error leaves neither
+        // row handles into a dropped chunk nor a partial memory charge.
+        let chunk_index = self.chunks.len();
+        self.keys.extend(keys);
+        self.rows
+            .extend((0..chunk.num_rows()).map(|row_index| (chunk_index, row_index)));
         self.chunks.push(chunk);
         self.sorted = false;
+        self.mem_tracker.consume(consumed);
         Ok(())
     }
 

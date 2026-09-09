@@ -69,62 +69,6 @@ fn pinned_transaction_commands_preserve_exact_fields() {
 }
 
 #[test]
-fn command_adapters_share_one_transport_authority_and_exact_paths() {
-    let adapter = include_str!("../src/rpc/tonic_coprocessor.rs");
-    assert!(adapter.contains("/tikvpb.Tikv/Coprocessor"));
-    assert!(adapter.contains("/tikvpb.Tikv/KvCheckTxnStatus"));
-    assert!(adapter.contains("/tikvpb.Tikv/KvResolveLock"));
-    assert_eq!(adapter.matches("transport: RawTransportClient").count(), 2);
-    assert!(!adapter.contains("ChannelPool::new()"));
-    assert!(adapter.contains("submit_batch_commands"));
-
-    let core = include_str!("../src/rpc/unary.rs");
-    assert!(core.contains("tokio::select!"));
-    assert!(!core.contains("ChannelPool::new()"));
-
-    let runtime = include_str!("../src/rpc/transport_runtime.rs");
-    // The worker builds the pool through the security-aware constructor so
-    // every TiKV channel routes through the shared `secure_endpoint` helper.
-    assert_eq!(runtime.matches("ChannelPool::with_security(").count(), 1);
-    assert_eq!(runtime.matches("Builder::new_multi_thread()").count(), 1);
-    assert!(runtime.contains("WorkerCommand::UnarySend"));
-    assert!(runtime.contains("WorkerCommand::BatchSubmit"));
-    let shutdown = runtime
-        .split("pub(super) fn shutdown(&mut self)")
-        .nth(1)
-        .unwrap();
-    assert!(
-        shutdown.find("self.cancellation.cancel()").unwrap()
-            < shutdown.find("commands.take()").unwrap()
-    );
-
-    let batch = include_str!("../src/rpc/batch/transport.rs");
-    assert!(batch.contains(".batch_commands(request)"));
-    assert!(batch.contains("Arc<Mutex<BatchInflightTable>>"));
-    assert!(batch.contains("BatchStreamEvent::Retired"));
-    assert!(!batch.contains("BatchStreamEvent::Response"));
-    assert!(!batch.contains("ChannelPool::new()"));
-    assert!(!batch.contains("Runtime::new()"));
-    assert!(!batch.contains("Builder::new_"));
-    assert!(batch.contains("STREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(5)"));
-    assert!(batch.contains("shutdown.changed()"));
-    assert!(batch.contains("reconnect_budget"));
-
-    let send_group = batch
-        .split("async fn send_group")
-        .nth(1)
-        .unwrap()
-        .split("fn route_for_submission")
-        .next()
-        .unwrap();
-    let stamp = send_group.find("client_send_time_ns()").unwrap();
-    let publish = send_group.find("::publish_shared").unwrap();
-    let send = send_group.find(".send(request.into_proto())").unwrap();
-    assert!(stamp < publish && publish < send);
-    assert!(!send_group.contains("continue;"));
-}
-
-#[test]
 fn cancellation_carrier_is_monotonic_and_bound_to_call_context() {
     let cancellation = UnaryCancellation::new();
     let call = UnaryCallContext::new(std::time::Duration::from_millis(250), cancellation.clone());

@@ -31,7 +31,9 @@ impl FieldTypeBuilder {
     /// Creates a builder around the source zero-value field type.
     pub fn new() -> Self {
         Self {
-            field_type: FieldType::parser(FieldTypeCode::Unspecified),
+            field_type: FieldType::parser(FieldTypeCode::Unspecified)
+                .with_flen(0)
+                .with_decimal(0),
         }
     }
 
@@ -108,13 +110,13 @@ impl FieldTypeBuilder {
     }
 
     /// Replaces the character-set spelling.
-    pub fn charset_set(mut self, charset: impl Into<String>) -> Self {
+    pub fn charset_set(mut self, charset: impl AsRef<str>) -> Self {
         self.field_type = self.field_type.with_charset_name(charset);
         self
     }
 
     /// Replaces the collation spelling.
-    pub fn collation_set(mut self, collation: impl Into<String>) -> Self {
+    pub fn collation_set(mut self, collation: impl AsRef<str>) -> Self {
         self.field_type = self.field_type.with_collation_name(collation);
         self
     }
@@ -141,6 +143,19 @@ impl FieldTypeBuilder {
 mod tests {
     use super::*;
     use crate::FieldTypeFlags;
+
+    #[test]
+    fn source_builder_starts_with_zero_length_and_scale() {
+        // Go NewFieldTypeBuilder returns &FieldTypeBuilder{}, not the
+        // NewFieldType constructor that initializes unspecified lengths.
+        let builder = FieldTypeBuilder::new();
+        assert_eq!((builder.flen(), builder.decimal()), (0, 0));
+        assert_eq!((builder.charset(), builder.collation()), ("", ""));
+        assert_eq!(builder.flags(), 0);
+        assert_eq!(builder.code().mysql_type(), 0);
+        let integer = builder.with_code(FieldTypeCode::LongLong).build();
+        assert_eq!((integer.flen(), integer.decimal()), (0, 0));
+    }
 
     #[test]
     fn source_builder_operations_preserve_order_and_bit_semantics() {

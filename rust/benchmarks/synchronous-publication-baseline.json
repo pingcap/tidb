@@ -1,0 +1,56 @@
+{
+  "date": "2026-09-09",
+  "status": "WIP measured increment; six positive paired throughput observations, not general workload acceptance",
+  "source_change": {
+    "files": ["rust/crates/tidb-txnkv/src/rpc/batch/transport.rs", "rust/crates/tidb-txnkv/src/rpc/transport_runtime.rs"],
+    "go_source": "client-go internal/client/conn_batch.go getClientAndSend publishes from the batch send loop; stream receive work remains separate",
+    "rust_root": "submit -> flush -> send_group -> recreate_stream had async wrappers but no asynchronous leaf. Publication and retirement entered Runtime::block_on unnecessarily. ChannelPool::get_or_create already owns the runtime context required for connect_lazy.",
+    "change": "Make the full publication/recreation chain synchronous; pass the runtime explicitly to open_stream and use runtime.spawn for I/O. Remove production block_on calls at publication and retirement. Keep per-caller validation, receipts, cancellation, forwarding, generation ownership and source batching policy unchanged.",
+    "recovery": "/private/tmp/tidb-collector-timing.7OPyE8/transport-before.rs and runtime-before.rs"
+  },
+  "collector_diagnosis": {
+    "artifacts": "/private/tmp/tidb-collector-timing.7OPyE8",
+    "probe_sha256": "ee23792ac26bb321f259fc8dbc57398e3587fa6278f0c840601edc8affa6f220",
+    "command": "ruby /private/tmp/tidb-collector-timing.7OPyE8/probe.rb",
+    "analysis": "ruby /private/tmp/tidb-collector-timing.7OPyE8/analyze.rb",
+    "eight_clients": {"target_mean_us": 33.14496, "deadline_mean_us": 118.67247, "deadline_mean_lateness_us": 18.67247, "target_fraction": 0.77726, "go_extra_collection_mean_us": 31.22109},
+    "interpretation": "No millisecond-scale average deadline overshoot. Rust probe covers only waiting batches, with first/last partial reporting windows omitted. Go mean covers all batches and subtracts wait-head from wait-more; counts match. Do not equate these populations or infer per-request latency directly. An armed batch flushed by a lifecycle barrier is also in the probe's deadline category.",
+    "cleanup": "Temporary timing fields and probe removed with apply_patch; cmp against batching-before.rs confirms byte-identical restoration. Probe binary, source diff and raw logs retained."
+  },
+  "measurement": {
+    "artifacts": "/private/tmp/tidb-sync-publish.h3O1nL",
+    "raw": "/private/tmp/tidb-sync-publish.h3O1nL/measure.json",
+    "command": "ruby /private/tmp/tidb-sync-publish.h3O1nL/measure.rb",
+    "before_sha256": "49b0caf18d32fef492c8927cb903470bd032893f307198c60aa097c9bdc89a35",
+    "after_sha256": "5720960a024c2d0d254d6355db53c2c1bb4e4b5844c06bdb51f3724155d1f7dc",
+    "sysbench_sha256": "f0822a96ba0de7354b9156c144f36353a5dbc705862e164e5b2bb041dc5cd046",
+    "method": "Corrected sysbench 1.0.20; same 100000-row owned TiKV fixture; prepared oltp_read_only; 6000/30000/30000 fixed transactions at 1/8/32 clients, 1000 warmup events per trial, before/after/after/before order; explicit percentile 95; process CPU and TiKV histogram counter deltas. No instrumented timing probe in either measured binary.",
+    "median_delta_percent": {
+      "1": {"tps": 1.93672, "mean_latency": -2.12314, "p95_latency": -6.15942, "sql_cpu": -1.89274, "tikv_cpu": -1.84414},
+      "8": {"tps": 0.50570, "mean_latency": -0.45506, "p95_latency": 0.0, "sql_cpu": 0.24572, "tikv_cpu": -1.36923},
+      "32": {"tps": 1.28273, "mean_latency": -1.19301, "p95_latency": -0.91603, "sql_cpu": -0.25766, "tikv_cpu": -3.05729}
+    },
+    "paired_tps_delta_percent": {"1": [0.77330, 3.12222], "8": [0.25965, 0.75441], "32": [1.92583, 0.63634]},
+    "latency_medians_ms": {
+      "1": {"before_mean": 2.355, "after_mean": 2.305, "before_p95": 2.76, "after_p95": 2.59},
+      "8": {"before_mean": 4.395, "after_mean": 4.375, "before_p95": 4.78, "after_p95": 4.78},
+      "32": {"before_mean": 11.735, "after_mean": 11.595, "before_p95": 13.10, "after_p95": 12.98}
+    },
+    "parity": "Six result sets match Go, the immediate control, the new candidate and the retained drain-only control before and after: 307 lines, SHA256 ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c. All timed trials report zero errors and reconnects.",
+    "limitations": "Two samples per binary per concurrency; modest effects, host variation remains possible. The eight-client p95 is unchanged and SQL CPU rises 0.25 percent. This does not erase the prior adaptive-collector regression against drain-only Rust. Go binary revision differs from checkout HEAD; no complete package, metadata or TPC-C parity claim."
+  },
+  "validation": {
+    "profile": "WIP",
+    "working_directory": "/Users/qiliu/projects/tidb/rust",
+    "commands": [
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --lib rpc::transport_runtime",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all batch_",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all transport_authority_concurrency_source",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all tikv_active_cancellation_source",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --test all tikv_unary_command_source",
+      "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server"
+    ],
+    "results": "10 unit, 75 batch, 2 concurrency, 1 cancellation, 2 unary checks passed, with one overlap: 89 distinct checks. Release server build passed. Logs are *-sync.log under the collector-timing artifact directory. No Ready lint run."
+  },
+  "remaining": "The generic throughput-and-latency goal remains open: adaptive collection still has an eight-client regression against the drain-only control, broader prepared-plan reuse remains incomplete, and TPC-C has not been validated in this increment."
+}

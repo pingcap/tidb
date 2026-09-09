@@ -1,0 +1,452 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-08",
+  "changed_files": [
+    "rust/crates/tidb-protocol/src/packet.rs",
+    "rust/crates/tidb-protocol/src/prepared_statement.rs",
+    "rust/crates/tidb-protocol/tests/packetio_source.rs",
+    "rust/crates/tidb-protocol/tests/prepared_statement_protocol_source.rs",
+    "rust/crates/tidb-server/src/connection_resultset.rs",
+    "rust/crates/tidb-server/src/connection_writers.rs",
+    "rust/crates/tidb-server/src/mysql_connection.rs",
+    "rust/crates/tidb-server/tests/resultset_writer_source.rs",
+    "rust/crates/tidb-server/tests/server_internal_packetio_source.rs",
+    "rust/docs/transport-batching-execplan.md",
+    "rust/benchmarks/result-buffer-baseline.json"
+  ],
+  "change": "Reuse binary row encoding storage and move result coalescing into PacketIoWriter; remove server packet queues and the unused batch-output adapter. Reject extra row cells. Reset compressed-envelope sequences at command boundaries as Go does.",
+  "conclusion": "Measured reduction in result-delivery CPU and small SQL CPU/transaction savings, not an accepted end-to-end throughput win. Short high-concurrency throughput results include regressions; longer 32-client range-read pairs are essentially flat with mixed directions.",
+  "source": {
+    "go_revision": "23bff313186b8ceb61fcbe9faac43ae700e7fb14",
+    "go_client_revision": "61ecd7c11416",
+    "go_result_path": "pkg/server/conn.go:writeChunks",
+    "go_command_boundary": "pkg/server/conn.go:Run",
+    "rpc_change": false
+  },
+  "servers": {
+    "go": {
+      "port": 45000,
+      "revision": "23bff313186b8ceb61fcbe9faac43ae700e7fb14"
+    },
+    "measured_before": {
+      "pid": 82651,
+      "port": 53064,
+      "sha256": "86f4dcb64137fd369f2b5e8403b6c6586bd3c186eba54444e485076672a613b8"
+    },
+    "measured_buffer_candidate": {
+      "pid": 15167,
+      "port": 53065,
+      "sha256": "e2a43e46c9d32b753eaca95d47faea238f864e71e90276f78a83096632fc0add"
+    },
+    "final_with_compressed_command_reset": {
+      "pid": 35273,
+      "port": 53066,
+      "command": [
+        "/private/tmp/tidb-batching-candidate-cgtiz4f0/tidb-server",
+        "--path",
+        "127.0.0.1:43379",
+        "--store",
+        "tikv",
+        "--host",
+        "127.0.0.1",
+        "--cluster-session",
+        "--lease-ms",
+        "2000",
+        "--max-connections",
+        "32",
+        "--load-privileges",
+        "--port",
+        "53066"
+      ],
+      "sha256": "848c7b2a8fba4483cee94584e26cdb9a260e628a68387b693838cadfbdb03c31",
+      "grpc_connection_count_env": "4"
+    },
+    "final_manifest": "/private/tmp/tidb-batching-candidate-cgtiz4f0/manifest.json",
+    "measurement_scope": "Timing and CPU profiles compare the buffer-only candidate against its immediate control. The subsequent compressed-command reset is validated separately; these are not final-binary throughput measurements.",
+    "final_workspace_binary_matches_candidate": true
+  },
+  "fixture": {
+    "database": "perf_sysbench_locking_v2",
+    "table": "sbtest1",
+    "count": 100013,
+    "sum_k": 5011271921,
+    "reset": false,
+    "persistent_benchmark_writes": false
+  },
+  "timing": {
+    "method": "Three alternating before/after pairs per concurrency; canonical sysbench oltp_read_only.lua, fixed seed, prepared protocol, no overlapping agent builds or profiles. Longer confirmation uses 30 seconds per run. Raw results retain exact commands and process CPU deltas.",
+    "host_limitations": "Non-quiescent desktop: mediaanalysisd, mds_stores and occasional UI/browser CPU activity appear in raw top_cpu records. No daemons were stopped. Profiled TPS is diagnostic only.",
+    "zero_writes_errors_reconnects": true,
+    "experiments": [
+      {
+        "workload": "range_reads",
+        "raw_results": "/private/tmp/tidb-result-buffer-range-pairs/results.json",
+        "command": "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-q81wf_lv/manifest.json --output /private/tmp/tidb-result-buffer-range-pairs --case range_reads --pair-only --pair-threads 1 8 32",
+        "results": [
+          {
+            "clients": 1,
+            "before": {
+              "median_tps": 899.66,
+              "sql_cpu_ms_per_transaction": 0.7066666666666682,
+              "tikv_cpu_ms_per_transaction": 0.5899999999995392
+            },
+            "after": {
+              "median_tps": 910.49,
+              "sql_cpu_ms_per_transaction": 0.6900000000000002,
+              "tikv_cpu_ms_per_transaction": 0.5966666666663514
+            },
+            "tps_delta_percent": 1.2037880977258109,
+            "sql_cpu_delta_percent": -2.3584905660379296,
+            "tikv_cpu_delta_percent": 1.1299435028504057,
+            "pairs": [
+              {
+                "before": "0-1-before",
+                "after": "0-1-after",
+                "tps_delta_percent": 0.10559544716892688
+              },
+              {
+                "before": "1-1-before",
+                "after": "1-1-after",
+                "tps_delta_percent": 2.304219911514349
+              },
+              {
+                "before": "2-1-before",
+                "after": "2-1-after",
+                "tps_delta_percent": 0.822758177751215
+              }
+            ]
+          },
+          {
+            "clients": 8,
+            "before": {
+              "median_tps": 4354.79,
+              "sql_cpu_ms_per_transaction": 1.1400000000000052,
+              "tikv_cpu_ms_per_transaction": 1.0208333333333333
+            },
+            "after": {
+              "median_tps": 4351.14,
+              "sql_cpu_ms_per_transaction": 1.1166666666666671,
+              "tikv_cpu_ms_per_transaction": 1.050833333333382
+            },
+            "tps_delta_percent": -0.08381575230951288,
+            "sql_cpu_delta_percent": -2.0467836257314076,
+            "tikv_cpu_delta_percent": 2.9387755102088464,
+            "pairs": [
+              {
+                "before": "3-8-before",
+                "after": "3-8-after",
+                "tps_delta_percent": -0.35416733831040714
+              },
+              {
+                "before": "4-8-before",
+                "after": "4-8-after",
+                "tps_delta_percent": -0.08381575230951288
+              },
+              {
+                "before": "5-8-before",
+                "after": "5-8-after",
+                "tps_delta_percent": 0.206159532582606
+              }
+            ]
+          },
+          {
+            "clients": 32,
+            "before": {
+              "median_tps": 6535.03,
+              "sql_cpu_ms_per_transaction": 1.1933333333333327,
+              "tikv_cpu_ms_per_transaction": 0.7683333333333545
+            },
+            "after": {
+              "median_tps": 6469.78,
+              "sql_cpu_ms_per_transaction": 1.179583333333333,
+              "tikv_cpu_ms_per_transaction": 0.7854166666666819
+            },
+            "tps_delta_percent": -0.998465194497955,
+            "sql_cpu_delta_percent": -1.1522346368714853,
+            "tikv_cpu_delta_percent": 2.223427331886363,
+            "pairs": [
+              {
+                "before": "6-32-before",
+                "after": "6-32-after",
+                "tps_delta_percent": -3.344284570996614
+              },
+              {
+                "before": "7-32-before",
+                "after": "7-32-after",
+                "tps_delta_percent": -0.8430922681036512
+              },
+              {
+                "before": "8-32-before",
+                "after": "8-32-after",
+                "tps_delta_percent": -0.6039267426501183
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "workload": "read_only",
+        "raw_results": "/private/tmp/tidb-result-buffer-readonly-pairs/results.json",
+        "command": "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-q81wf_lv/manifest.json --output /private/tmp/tidb-result-buffer-readonly-pairs --case read_only --pair-only --pair-threads 1 8 32",
+        "results": [
+          {
+            "clients": 1,
+            "before": {
+              "median_tps": 443.73,
+              "sql_cpu_ms_per_transaction": 1.2633333333333212,
+              "tikv_cpu_ms_per_transaction": 1.1233333333336002
+            },
+            "after": {
+              "median_tps": 446.23,
+              "sql_cpu_ms_per_transaction": 1.24333333333333,
+              "tikv_cpu_ms_per_transaction": 1.136666666666618
+            },
+            "tps_delta_percent": 0.563405674621964,
+            "sql_cpu_delta_percent": -1.5831134564636917,
+            "tikv_cpu_delta_percent": 1.186943620149683,
+            "pairs": [
+              {
+                "before": "0-1-before",
+                "after": "0-1-after",
+                "tps_delta_percent": 0.8411130654399468
+              },
+              {
+                "before": "1-1-before",
+                "after": "1-1-after",
+                "tps_delta_percent": -0.45973903049152387
+              },
+              {
+                "before": "2-1-before",
+                "after": "2-1-after",
+                "tps_delta_percent": -0.3016220563921479
+              }
+            ]
+          },
+          {
+            "clients": 8,
+            "before": {
+              "median_tps": 2024.88,
+              "sql_cpu_ms_per_transaction": 2.1350000000000002,
+              "tikv_cpu_ms_per_transaction": 2.0216666666666847
+            },
+            "after": {
+              "median_tps": 2004.86,
+              "sql_cpu_ms_per_transaction": 2.1025000000000014,
+              "tikv_cpu_ms_per_transaction": 2.096666666666806
+            },
+            "tps_delta_percent": -0.9887005649717562,
+            "sql_cpu_delta_percent": -1.5222482435596651,
+            "tikv_cpu_delta_percent": 3.7098103874750654,
+            "pairs": [
+              {
+                "before": "3-8-before",
+                "after": "3-8-after",
+                "tps_delta_percent": -0.9559284856808348
+              },
+              {
+                "before": "4-8-before",
+                "after": "4-8-after",
+                "tps_delta_percent": -0.7677713440926381
+              },
+              {
+                "before": "5-8-before",
+                "after": "5-8-after",
+                "tps_delta_percent": -1.6030579589901617
+              }
+            ]
+          },
+          {
+            "clients": 32,
+            "before": {
+              "median_tps": 3216.94,
+              "sql_cpu_ms_per_transaction": 2.128750000000001,
+              "tikv_cpu_ms_per_transaction": 1.7879166666667363
+            },
+            "after": {
+              "median_tps": 3204.7,
+              "sql_cpu_ms_per_transaction": 2.113333333333332,
+              "tikv_cpu_ms_per_transaction": 1.8287499999999757
+            },
+            "tps_delta_percent": -0.38048580327889603,
+            "sql_cpu_delta_percent": -0.7242121745939634,
+            "tikv_cpu_delta_percent": 2.283849918428582,
+            "pairs": [
+              {
+                "before": "6-32-before",
+                "after": "6-32-after",
+                "tps_delta_percent": 0.3997568876607849
+              },
+              {
+                "before": "7-32-before",
+                "after": "7-32-after",
+                "tps_delta_percent": -0.4590332969957811
+              },
+              {
+                "before": "8-32-before",
+                "after": "8-32-after",
+                "tps_delta_percent": -0.6580787953769707
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "workload": "range_reads",
+        "raw_results": "/private/tmp/tidb-result-buffer-range-long/results.json",
+        "command": "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-q81wf_lv/manifest.json --output /private/tmp/tidb-result-buffer-range-long --case range_reads --pair-only --pair-threads 32 --pair-seconds 30",
+        "results": [
+          {
+            "clients": 32,
+            "before": {
+              "median_tps": 6427.06,
+              "sql_cpu_ms_per_transaction": 1.2135500232907201,
+              "tikv_cpu_ms_per_transaction": 0.7990912478264462
+            },
+            "after": {
+              "median_tps": 6417.35,
+              "sql_cpu_ms_per_transaction": 1.1996209433952492,
+              "tikv_cpu_ms_per_transaction": 0.8188554769018812
+            },
+            "tps_delta_percent": -0.15107996502289334,
+            "sql_cpu_delta_percent": -1.1477961046632568,
+            "tikv_cpu_delta_percent": 2.473338198759434,
+            "pairs": [
+              {
+                "before": "0-32-before",
+                "after": "0-32-after",
+                "tps_delta_percent": -2.209150468553689
+              },
+              {
+                "before": "1-32-before",
+                "after": "1-32-after",
+                "tps_delta_percent": -0.07411894221679427
+              },
+              {
+                "before": "2-32-before",
+                "after": "2-32-after",
+                "tps_delta_percent": 0.5965402532417396
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "profiles": {
+    "command": "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-q81wf_lv/manifest.json --output /private/tmp/tidb-result-buffer-profile --case range_reads --profile 'Time Profiler' --profile-target sql --profile-threads 32 --profile-servers before after",
+    "before": {
+      "stacks": "/private/tmp/tidb-result-buffer-profile/before.stacks.json",
+      "samples": 99527,
+      "states": {
+        "Running": 99527
+      },
+      "total_weight_ns": 99527000000,
+      "binary_result_delivery_sql_cpu_percent": 5.317150120067922
+    },
+    "after": {
+      "stacks": "/private/tmp/tidb-result-buffer-profile/after.stacks.json",
+      "samples": 97352,
+      "states": {
+        "Running": 97352
+      },
+      "total_weight_ns": 97352000000,
+      "binary_result_delivery_sql_cpu_percent": 3.9649930150382118
+    }
+  },
+  "validation": {
+    "profile": "Ready, with explicitly reported unrelated suite failures",
+    "red_logs": [
+      "/private/tmp/tidb-result-buffer-red.log",
+      "/private/tmp/tidb-compressed-command-red.log"
+    ],
+    "protocol_command": "cargo test --offline --locked --release -j12 -p tidb-protocol --test all",
+    "protocol_result": "114 passed",
+    "initial_server_command": "cargo test --offline --locked --release -j12 -p tidb-server --test all",
+    "initial_server_result": "200 passed; two failures outside result delivery. The table-limit test expects rejection at three tables although unchanged production code allows 4096; the shared-state SEM test passes in isolation.",
+    "initial_server_log": "/private/tmp/tidb-result-buffer-server.log",
+    "isolated_sem_log": "/private/tmp/tidb-result-buffer-sem-isolated.log",
+    "isolated_table_limit_log": "/private/tmp/tidb-result-buffer-table-limit-isolated.log",
+    "build_command": "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+    "build_log": "/private/tmp/tidb-result-buffer-build-final.log",
+    "lint_command": "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+    "lint_log": "/private/tmp/tidb-result-buffer-lint-final.log",
+    "not_verified": [
+      "Mixed-write TPC-C remains outside current authority.",
+      "No package-complete transcreation claim.",
+      "No commit or push.",
+      "No final-binary throughput win claimed."
+    ],
+    "final_server_command": "cargo test --offline --locked --release -j12 -p tidb-server --test all -- --test-threads=1",
+    "final_server_result": "201 passed; one unchanged table-limit expectation failed. The SEM failure does not reproduce in the serial suite.",
+    "final_server_log": "/private/tmp/tidb-result-buffer-server-serial-final.log",
+    "final_scoped_checks": [
+      {
+        "command": "cargo test --offline --locked --release -j12 -p tidb-server --test all server_internal_packetio_source::",
+        "passed": 5,
+        "log": "/private/tmp/tidb-compressed-command-green.log"
+      },
+      {
+        "command": "cargo test --offline --locked --release -j12 -p tidb-server --test all resultset_writer_source::",
+        "passed": 14,
+        "log": "/private/tmp/tidb-result-buffer-writer-final.log"
+      },
+      {
+        "command": "cargo test --offline --locked --release -j12 -p tidb-server --lib connection_resultset::tests::",
+        "passed": 4,
+        "log": "/private/tmp/tidb-result-buffer-types-final.log"
+      },
+      {
+        "command": "cargo test --offline --locked --release -j12 -p tidb-server --lib connection_writers::tests::result_sink_",
+        "passed": 1,
+        "log": "/private/tmp/tidb-result-buffer-sink-final.log"
+      }
+    ],
+    "unique_passed_tests": 320,
+    "final_build_passed": true,
+    "final_lint_passed": true,
+    "live": [
+      {
+        "command": "python3 /private/tmp/tidb-prepared-path-results.py --control-port 53065 --candidate-port 53066 --output /private/tmp/tidb-result-buffer-prepared-final-results.json",
+        "matched_go": 30,
+        "raw_results": "/private/tmp/tidb-result-buffer-prepared-final-results.json"
+      },
+      {
+        "command": "python3 /private/tmp/tidb-shared-admission-results.py --control-port 53065 --candidate-port 53066 --output /private/tmp/tidb-result-buffer-standard-final-results.json",
+        "matched_go": 10,
+        "raw_results": "/private/tmp/tidb-result-buffer-standard-final-results.json"
+      },
+      {
+        "command": "python3 /private/tmp/tidb-result-buffer-results.py --control-port 53065 --candidate-port 53066 --output /private/tmp/tidb-result-buffer-wire-final-results.json",
+        "matched_go": 8,
+        "raw_results": "/private/tmp/tidb-result-buffer-wire-final-results.json"
+      },
+      {
+        "command": "python3 /private/tmp/tidb-window-edge-results.py --control-port 53065 --candidate-port 53066 --output /private/tmp/tidb-result-buffer-window-final-results.json",
+        "matched_go": 11,
+        "raw_results": "/private/tmp/tidb-result-buffer-window-final-results.json"
+      },
+      {
+        "command": "python3 /private/tmp/tidb-window-edge-results.py --control-port 53065 --candidate-port 53066 --projection-probes --output /private/tmp/tidb-result-buffer-projection-final-results.json",
+        "matched_go": 3,
+        "raw_results": "/private/tmp/tidb-result-buffer-projection-final-results.json"
+      },
+      {
+        "command": "python3 /private/tmp/tidb-agg-fingerprint-results.py --control-port 53065 --candidate-port 53066 --output /private/tmp/tidb-result-buffer-aggregate-final-results.json",
+        "matched_go": 4,
+        "raw_results": "/private/tmp/tidb-result-buffer-aggregate-final-results.json"
+      },
+      {
+        "command": "python3 /private/tmp/tidb-agg-fingerprint-results.py --control-port 53065 --candidate-port 53066 --consumers --output /private/tmp/tidb-result-buffer-consumer-final-results.json",
+        "matched_go": 2,
+        "raw_results": "/private/tmp/tidb-result-buffer-consumer-final-results.json"
+      }
+    ],
+    "live_compressed": {
+      "command": "python3 /private/tmp/tidb-result-buffer-compression.py --control-port 53065 --candidate-port 53066 --expect-control-command-reset-failure --output /private/tmp/tidb-result-buffer-compression-final-results.json",
+      "result": "Go and final candidate return identical 1,248,902-byte output in both zlib and zstd modes across large, empty and scalar SELECT responses. The pre-reset control fails with the expected connection loss.",
+      "raw_results": "/private/tmp/tidb-result-buffer-compression-final-results.json",
+      "negative_control_results": "/private/tmp/tidb-result-buffer-compression-mysql8-results.json",
+      "initial_cli_auth_failure": "/private/tmp/tidb-result-buffer-compression-results.json"
+    }
+  }
+}

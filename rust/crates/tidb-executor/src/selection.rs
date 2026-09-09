@@ -43,20 +43,19 @@ pub struct SelectionExec<C: Columns> {
     meta: ExecutorMeta,
     filters: Vec<Expression>,
     fast_filters: Vec<Option<FastSelectionFilter>>,
+    batched: bool,
     child: Box<dyn Executor>,
     ctx: C,
     child_chunk: Option<Chunk>,
     tracker: Arc<Tracker>,
     memory: StatementMemory,
     input_row: usize,
-    batched: bool,
     done: bool,
 }
 
-/// A row-local filter whose constant collation keys can be prepared once when
-/// the Selection is built. This is intentionally narrower than the expression
-/// evaluator: only a bare string-column `IN` with strict non-NULL literals is
-/// eligible, so casts, warnings, and three-valued cases keep the source path.
+/// Context-independent row predicates: null tests, string-column `IN` with
+/// strict non-NULL literals, and complete conjunctions of those predicates.
+/// Casts, diagnostics and execution-dependent values use the expression evaluator.
 #[derive(Clone, Debug)]
 enum FastSelectionFilter {
     NullTest {
@@ -68,10 +67,7 @@ enum FastSelectionFilter {
         collator: tidb_datatype::Collator,
         keys: Vec<Vec<u8>>,
     },
-    And {
-        filters: Vec<Self>,
-        complete: bool,
-    },
+    And(Vec<Self>),
 }
 
 impl<C: Columns> SelectionExec<C> {
@@ -85,23 +81,23 @@ impl<C: Columns> SelectionExec<C> {
         ctx: C,
         memory: StatementMemory,
     ) -> Self {
+        let tracker = memory.operator_tracker(meta.id());
         let batched = vectorizable(&filters);
         let fast_filters = filters
             .iter()
             .map(FastSelectionFilter::from_expression)
             .collect();
-        let tracker = memory.operator_tracker(meta.id());
         SelectionExec {
             meta,
             filters,
             fast_filters,
+            batched,
             child,
             ctx,
             child_chunk: None,
             tracker,
             memory,
             input_row: 0,
-            batched,
             done: false,
         }
     }
@@ -114,9 +110,7 @@ impl<C: Columns> SelectionExec<C> {
                 if !fast_filter.matches(row) {
                     return Ok(false);
                 }
-                if fast_filter.is_complete() {
-                    continue;
-                }
+                continue;
             }
             let value = filter.eval(&self.ctx, row)?;
             if truthy_of(&value)? != Some(true) {
@@ -137,18 +131,15 @@ impl FastSelectionFilter {
         let Expression::ScalarFunction(function) = expression else {
             return None;
         };
-        if function.func_name.lowercase() == "and" {
-            let mut filters = Vec::new();
-            let mut complete = true;
-            for argument in &function.args {
-                if let Some(filter) = Self::from_expression(argument) {
-                    complete &= filter.is_complete();
-                    filters.push(filter);
-                } else {
-                    complete = false;
-                }
-            }
-            return (!filters.is_empty()).then_some(Self::And { filters, complete });
+        if function.func_name.lowercase() == "and" && function.args.len() == 2 {
+            // A later fast predicate must not skip an earlier assignment,
+            // warning or error. Replace only a fully supported conjunction.
+            return function
+                .args
+                .iter()
+                .map(Self::from_expression)
+                .collect::<Option<Vec<_>>>()
+                .map(Self::And);
         }
         let function_name = function.func_name.lowercase();
         if function.args.len() == 1 && (function_name == "isnull" || function_name == "not") {
@@ -193,12 +184,12 @@ impl FastSelectionFilter {
             .iter()
             .skip(1)
             .map(|argument| match argument {
-                Expression::Constant(constant)
-                    if constant.deferred_expr.is_none()
-                        && matches!(constant.value, Datum::String(_) | Datum::Bytes(_)) =>
-                {
-                    Some(constant.value.as_raw_bytes()?.to_vec())
-                }
+                Expression::Constant(constant) => match constant.literal_value()? {
+                    value @ (Datum::String(_) | Datum::Bytes(_)) => {
+                        Some(value.as_raw_bytes()?.to_vec())
+                    }
+                    _ => None,
+                },
                 _ => None,
             })
             .collect::<Option<Vec<_>>>()?
@@ -231,14 +222,7 @@ impl FastSelectionFilter {
                 let key = collator.key(row.get_string(*column_offset).as_bytes());
                 keys.binary_search(&key).is_ok()
             }
-            Self::And { filters, .. } => filters.iter().all(|filter| filter.matches(row)),
-        }
-    }
-
-    fn is_complete(&self) -> bool {
-        match self {
-            Self::NullTest { .. } | Self::StringIn { .. } => true,
-            Self::And { complete, .. } => *complete,
+            Self::And(filters) => filters.iter().all(|filter| filter.matches(row)),
         }
     }
 }
@@ -324,13 +308,65 @@ impl<C: Columns> Executor for SelectionExec<C> {
         self.meta.new_chunk()
     }
 
-    /// A leaf Selection is still a negotiable wrapper around its base table.
-    /// Go's predicate pushdown walks through LogicalSelection before building
-    /// the physical reader; forwarding this capability lets reordered joins
-    /// do the same without removing the Selection that still owns any
-    /// residual or sibling-semijoin predicate.
+    /// Negotiate through this filter, not through its unfiltered child.
     fn table_access(&mut self) -> Option<&mut dyn crate::table_access::TableAccess> {
-        self.child.table_access()
+        Some(self)
+    }
+}
+
+// A Selection is not a transparent wrapper. Its bound expressions and schema
+// still describe the input row, and its cardinality is the filtered row count.
+// Schema-changing offers and row cuts therefore retain TableAccess's refusal:
+// aggregation/projection would invalidate the bindings, while Limit/TopN could
+// discard qualifying rows. Go's LogicalSelection.PruneColumns keeps predicate
+// columns and its base PushDownTopN retains the cut above the Selection.
+// Predicate/range negotiation remains available to reordered joins without
+// allowing them to bypass this operator's obligations.
+impl<C: Columns> crate::table_access::TableAccess for SelectionExec<C> {
+    fn accept_scan_filter(
+        &mut self,
+        filter: &crate::predicate_pushdown::PushedScanFilter,
+        ctx: &crate::StmtContext,
+    ) -> bool {
+        self.child
+            .table_access()
+            .is_some_and(|access| access.accept_scan_filter(filter, ctx))
+    }
+
+    fn accept_handle_ranges(&mut self, ranges: &[crate::kv_table::IndexRange]) -> bool {
+        self.child
+            .table_access()
+            .is_some_and(|access| access.accept_handle_ranges(ranges))
+    }
+
+    fn accept_partition_pruning(&mut self, ids: &[i64]) -> bool {
+        self.child
+            .table_access()
+            .is_some_and(|access| access.accept_partition_pruning(ids))
+    }
+
+    fn accept_keep_order(&mut self, descending: bool) -> bool {
+        self.child
+            .table_access()
+            .is_some_and(|access| access.accept_keep_order(descending))
+    }
+
+    fn accept_scan_estimate(&mut self, rows: f64) {
+        if let Some(access) = self.child.table_access() {
+            access.accept_scan_estimate(rows);
+        }
+    }
+
+    fn accept_lookup_batch_size(&mut self, size: u64) -> bool {
+        self.child
+            .table_access()
+            .is_some_and(|access| access.accept_lookup_batch_size(size))
+    }
+
+    fn accept_index_filter(&mut self) -> bool {
+        self.child
+            .table_access()
+            .is_some_and(|access| access.accept_index_filter())
     }
 }
 
@@ -423,6 +459,129 @@ mod tests {
         let mut c = Column::new(1, long());
         c.index = 0;
         Schema::new(vec![c])
+    }
+
+    #[test]
+    fn partial_fast_filter_preserves_assignment_order() {
+        for fast_first in [false, true] {
+            for is_null in [false, true] {
+                let column = Expression::Column(one_long_col_schema().columns[0].clone());
+                let assignment = Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new("setvar"),
+                    long(),
+                    vec![
+                        Expression::Constant(Constant::new(Datum::Bytes(b"v".to_vec()), string())),
+                        Expression::Constant(Constant::new(Datum::Int(1), long())),
+                    ],
+                ));
+                let null_test = Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new("isnull"),
+                    long(),
+                    vec![column],
+                ));
+                let args = if fast_first {
+                    vec![null_test, assignment]
+                } else {
+                    vec![assignment, null_test]
+                };
+                let filter = Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new("and"),
+                    long(),
+                    args,
+                ));
+                let mut data = Chunk::new_with_capacity(&[long()], 1);
+                if is_null {
+                    data.append_null(0);
+                } else {
+                    data.append_int64(0, 1);
+                }
+                let source = OneChunkSource {
+                    meta: ExecutorMeta::new(one_long_col_schema(), 0, 1, 8),
+                    data: Some(data),
+                };
+                let mut selection = SelectionExec::new(
+                    ExecutorMeta::new(one_long_col_schema(), 1, 1, 8),
+                    vec![filter],
+                    Box::new(source),
+                    UserVariables::default(),
+                    StatementMemory::default(),
+                );
+                selection.open().unwrap();
+                let mut result = selection.new_chunk();
+                selection.next(&mut result).unwrap();
+                assert_eq!(result.num_rows(), usize::from(is_null));
+                assert_eq!(
+                    selection.ctx.get_uservar("v"),
+                    (!fast_first || is_null).then_some(Datum::Int(1)),
+                    "fast_first={fast_first}, is_null={is_null}"
+                );
+                selection.close().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn partial_fast_filter_preserves_warning_and_error_order() {
+        let integer = |value| Expression::Constant(Constant::new(Datum::Int(value), long()));
+        for (name, left, right) in [("intdiv", 1, 0), ("plus", i64::MAX, 1)] {
+            for fast_first in [false, true] {
+                let diagnostic = Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new(name),
+                    long(),
+                    vec![integer(left), integer(right)],
+                ));
+                let null_test = Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new("isnull"),
+                    long(),
+                    vec![Expression::Column(one_long_col_schema().columns[0].clone())],
+                ));
+                let args = if fast_first {
+                    vec![null_test, diagnostic]
+                } else {
+                    vec![diagnostic, null_test]
+                };
+                let filter = Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new("and"),
+                    long(),
+                    args,
+                ));
+                let mut data = Chunk::new_with_capacity(&[long()], 1);
+                data.append_int64(0, 1);
+                let source = OneChunkSource {
+                    meta: ExecutorMeta::new(one_long_col_schema(), 0, 1, 8),
+                    data: Some(data),
+                };
+                let ctx = crate::StmtContext::for_query();
+                let mut selection = SelectionExec::new(
+                    ExecutorMeta::new(one_long_col_schema(), 1, 1, 8),
+                    vec![filter],
+                    Box::new(source),
+                    ctx.clone(),
+                    ctx.statement_memory(),
+                );
+                selection.open().unwrap();
+                let mut result = selection.new_chunk();
+                let outcome = selection.next(&mut result);
+                if name == "plus" && !fast_first {
+                    let error = crate::DriverError::from(outcome.unwrap_err()).to_mysql_error();
+                    assert_eq!(error.code, 1690);
+                } else {
+                    outcome.unwrap();
+                    assert_eq!(result.num_rows(), 0);
+                }
+                let warnings = ctx.take_warnings();
+                assert_eq!(
+                    warnings.len(),
+                    usize::from(name == "intdiv" && !fast_first),
+                    "{name}, fast_first={fast_first}"
+                );
+                if let Some(warning) = warnings.first() {
+                    assert_eq!(warning.1, 1365);
+                }
+                selection.close().unwrap();
+                assert_eq!(ctx.statement_memory().bytes_consumed(), 0);
+            }
+        }
     }
 
     #[test]

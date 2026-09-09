@@ -26,11 +26,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
 
-/// Go `ProjectionExec` (serial): projects `exprs` over its child's rows.
-///
-/// The evaluation context `C` stands in for Go's `EvalContext`; expression
-/// column references read from the row, so a context that resolves no
-/// session/variable state suffices for column and arithmetic projections.
+/// One execution of a physical projection, with its own evaluator and buffer.
 pub struct ProjectionExec<C: Columns> {
     meta: ExecutorMeta,
     evaluator_suite: EvaluatorSuite,
@@ -48,10 +44,23 @@ impl<C: Columns> ProjectionExec<C> {
         child: Box<dyn Executor>,
         ctx: C,
     ) -> Self {
+        Self::with_column_evaluator(meta, exprs, child, ctx, false)
+    }
+
+    /// Go `newProjectionExec`: the physical plan controls column swapping.
+    #[must_use]
+    pub fn with_column_evaluator(
+        meta: ExecutorMeta,
+        exprs: Vec<Expression>,
+        child: Box<dyn Executor>,
+        ctx: C,
+        avoid_column_evaluator: bool,
+    ) -> Self {
         let child_chunk = child.new_chunk();
+        let evaluator_suite = EvaluatorSuite::new(exprs, avoid_column_evaluator);
         ProjectionExec {
             meta,
-            evaluator_suite: EvaluatorSuite::new(exprs, false),
+            evaluator_suite,
             child,
             ctx,
             child_chunk,
@@ -124,10 +133,12 @@ impl<C: Columns> Executor for ProjectionExec<C> {
 mod tests {
     use super::*;
     use crate::table_dual::TableDualExec;
+    use std::sync::Arc;
     use tidb_ast::CiString;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
     use tidb_expr::constant::Constant;
+    use tidb_expr::evaluator::EvaluatorProgram;
     use tidb_expr::expression::ScalarFunction;
     use tidb_expr::NoColumns;
 
@@ -137,6 +148,192 @@ mod tests {
 
     fn int_const(v: i64) -> Expression {
         Expression::Constant(Constant::new(Datum::Int(v), long()))
+    }
+
+    fn parameter(order: i64) -> Expression {
+        let mut constant = Constant::new(Datum::Int(99), long());
+        constant.param_marker = Some(tidb_expr::constant::ParamMarker { order });
+        Expression::Constant(constant)
+    }
+
+    #[test]
+    fn prepared_filter_and_projection_use_fresh_execution_state() {
+        let predicate = parameter(0);
+        let projection = parameter(1);
+        for (condition, value, rows) in [
+            (Datum::Null, 2, 0),
+            (Datum::Int(1), 7, 1),
+            (Datum::Int(0), 3, 0),
+            (Datum::Int(-1), 9, 1),
+        ] {
+            let ctx = crate::StmtContext::for_query()
+                .with_prepared_params(vec![condition, Datum::Int(value)].into());
+            let dual = TableDualExec::new(ExecutorMeta::new(Schema::new(vec![]), 0, 1, 1024), 1);
+            let selection = crate::selection::SelectionExec::new(
+                ExecutorMeta::new(Schema::new(vec![]), 1, 1, 1024),
+                vec![predicate.clone()],
+                Box::new(dual),
+                ctx.clone(),
+                ctx.statement_memory(),
+            );
+            let mut executor = ProjectionExec::new(
+                ExecutorMeta::new(Schema::new(vec![Column::new(1, long())]), 2, 1, 1024),
+                vec![projection.clone()],
+                Box::new(selection),
+                ctx,
+            );
+            executor.open().unwrap();
+            let mut output = executor.new_chunk();
+            executor.next(&mut output).unwrap();
+            assert_eq!(output.num_rows(), rows);
+            if rows != 0 {
+                assert_eq!(output.get_row(0).get_int64(0), value);
+            }
+            executor.next(&mut output).unwrap();
+            assert_eq!(output.num_rows(), 0);
+            executor.close().unwrap();
+        }
+    }
+
+    #[test]
+    fn prepared_program_is_shared_but_parameter_contexts_are_isolated() {
+        let mut deferred = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("plus"),
+            long(),
+            vec![parameter(0), int_const(0)],
+        ));
+        let planning =
+            crate::StmtContext::for_query().with_prepared_params(vec![Datum::Int(1)].into());
+        tidb_expr::fold_constant_in_mode(
+            &mut deferred,
+            &planning,
+            tidb_expr::ConstantFoldMode::Normal,
+        );
+        assert!(matches!(&deferred, Expression::Constant(c) if c.deferred_expr.is_some()));
+        for expression in [parameter(0), deferred] {
+            let program = Arc::new(EvaluatorProgram::new(vec![expression], false));
+            let executions: Vec<_> = [Datum::Int(7), Datum::Null, Datum::Int(-3)]
+                .into_iter()
+                .map(|value| {
+                    let program = program.clone();
+                    std::thread::spawn(move || {
+                        let suite = EvaluatorSuite::from_program(program);
+                        let ctx = crate::StmtContext::for_query()
+                            .with_prepared_params(vec![value.clone()].into());
+                        let cloned = ctx.clone();
+                        for _ in 0..16 {
+                            let mut input = Chunk::new_empty(&[]);
+                            input.set_num_virtual_rows(3);
+                            let mut output = Chunk::new_with_capacity(&[long()], 3);
+                            suite.run(&cloned, &mut input, &mut output).unwrap();
+                            for row in 0..3 {
+                                assert_eq!(output.get_row(row).get_datum(0, &long()), value);
+                            }
+                        }
+                    })
+                })
+                .collect();
+            for execution in executions {
+                execution.join().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn prepared_deferred_conversion_uses_current_statement_diagnostics() {
+        let target = FieldType::new(FieldTypeCode::Tiny);
+        let mut constant = Constant::new(Datum::Int(99), target);
+        constant.deferred_expr = Some(Box::new(parameter(0)));
+        let expression = Expression::Constant(constant);
+        for (level, input, expected, warning_count) in [
+            (
+                tidb_expr::ErrorLevel::Warn,
+                "12tail",
+                Some(Datum::Int(12)),
+                1,
+            ),
+            (tidb_expr::ErrorLevel::Error, "12tail", None, 0),
+            (
+                tidb_expr::ErrorLevel::Ignore,
+                "12tail",
+                Some(Datum::Int(12)),
+                0,
+            ),
+            (tidb_expr::ErrorLevel::Warn, "128tail", None, 1),
+            (tidb_expr::ErrorLevel::Warn, "7", Some(Datum::Int(7)), 0),
+        ] {
+            let ctx = crate::StmtContext::for_query()
+                .with_truncate_level(level)
+                .with_prepared_params(vec![Datum::new_string(input)].into());
+            let result = tidb_expr::eval_expression_once(&expression, &ctx);
+            if let Some(expected) = expected {
+                assert_eq!(result.unwrap(), expected, "{level:?} / {input}");
+            } else {
+                let error =
+                    crate::DriverError::from(ExecError::Eval(result.unwrap_err())).to_mysql_error();
+                let (code, message) = if input == "128tail" {
+                    (1690, "constant 128 overflows tinyint")
+                } else {
+                    (1292, "Truncated incorrect DOUBLE value: '12tail'")
+                };
+                assert_eq!(error.code, code);
+                assert_eq!(error.message, message);
+                assert_eq!(
+                    error.state,
+                    if code == 1690 { *b"22003" } else { *b"22007" }
+                );
+            }
+            let warnings = ctx.take_warnings();
+            assert_eq!(warnings.len(), warning_count, "{level:?} / {input}");
+            if warning_count != 0 {
+                assert_eq!(warnings[0].1, 1292);
+                assert_eq!(
+                    warnings[0].2,
+                    format!("Truncated incorrect DOUBLE value: '{input}'")
+                );
+            }
+        }
+        assert!(matches!(expression, Expression::Constant(c) if c.value == Datum::Int(99)));
+    }
+
+    #[test]
+    fn prepared_lazy_folding_keeps_warnings_execution_local() {
+        let division = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("intdiv"),
+            long(),
+            vec![int_const(1), parameter(1)],
+        ));
+        let original = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("if"),
+            long(),
+            vec![parameter(0), int_const(7), division],
+        ));
+        let planning = crate::StmtContext::for_query()
+            .with_prepared_params(vec![Datum::Int(1), Datum::Int(0)].into());
+        let mut expression = original.clone();
+        tidb_expr::fold_constant_in_mode(
+            &mut expression,
+            &planning,
+            tidb_expr::ConstantFoldMode::Try,
+        );
+        assert!(planning.take_warnings().is_empty());
+        for (condition, divisor, expected, warnings) in [
+            (1, 0, Datum::Int(7), 0),
+            (0, 0, Datum::Null, 1),
+            (0, 1, Datum::Int(1), 0),
+        ] {
+            let ctx = crate::StmtContext::for_query()
+                .with_prepared_params(vec![Datum::Int(condition), Datum::Int(divisor)].into());
+            assert_eq!(
+                tidb_expr::eval_expression_once(&expression, &ctx).unwrap(),
+                expected
+            );
+            let actual = ctx.take_warnings();
+            assert_eq!(actual.len(), warnings);
+            if warnings != 0 {
+                assert_eq!((actual[0].1, actual[0].2.as_str()), (1365, "Division by 0"));
+            }
+        }
     }
 
     /// `SELECT 1 + 1` executes end-to-end: a table-dual source feeds one virtual

@@ -1,0 +1,66 @@
+{
+  "date": "2026-09-09",
+  "status": "WIP measurement repair and fresh comparison; no accepted Rust optimization",
+  "artifacts": "/private/tmp/tidb-latency-path.Z5pxYT",
+  "root_cause": {
+    "installed_binary": "/opt/homebrew/Cellar/sysbench/1.0.20_7/bin/sysbench",
+    "installed_sha256": "6afd5f0f8677e045b421723bcc99c863474f9faee35b9eff2fa3f57cf045b8f8",
+    "source": "sysbench tag 1.0.20, commit ebf1c90da05dea94648165e4f149abc20c979557; src/sb_histogram.c:115 calls ck_pr_inc_64",
+    "cause": "Bundled Concurrency Kit AArch64 inline assembly uses semicolons between instructions. The macOS ARM64 assembler treats the semicolon as a comment, dropping subsequent instructions. The installed sb_histogram_update computes the bucket address, executes mov x0,1 and returns without stadd. CK_PR_UNARY in ck_pr_lse.h constructs exactly that sequence.",
+    "isolated_probe": "clang -O2 separator.c -o separator && ./separator prints semicolon=0 newline=1",
+    "repair": "In the isolated pinned source only, replace semicolons at the ends of instruction string literals with newline escapes in gcc/aarch64/ck_pr.h, ck_pr_lse.h and ck_pr_llsc.h. Preserve the atomic instructions, constraints and barriers; do not disable atomic operations or histogram collection.",
+    "patch": "/private/tmp/tidb-latency-path.Z5pxYT/darwin-asm-separators.patch",
+    "patch_sha256": "c6e04f5352c1a80138e4bb3f571b101d16c1e25628147a9caae3552d09533b84",
+    "corrected_binary": "/private/tmp/tidb-latency-path.Z5pxYT/sysbench/src/sysbench",
+    "corrected_sha256": "f0822a96ba0de7354b9156c144f36353a5dbc705862e164e5b2bb041dc5cd046",
+    "installed_binary_replaced": false,
+    "validation": "The corrected assembly contains stadd x0,[x8]. A 200-event Lua usleep(5000) probe has mean 6.11 ms in both builds; installed histogram is empty with p95 0.00, corrected histogram contains 200 events with p95 6.32 ms.",
+    "historical_scope": "Old zero percentiles are invalid. Earlier throughput and process-CPU observations retain their original executable identity and are not pooled with the corrected tool; no claim that the histogram was the only affected bundled atomic primitive."
+  },
+  "build": {
+    "working_directory": "/private/tmp/tidb-latency-path.Z5pxYT/sysbench",
+    "autogen": "./autogen.sh",
+    "configure": "CFLAGS='-O2 -g -std=gnu99' PKG_CONFIG_PATH=/opt/homebrew/opt/luajit/lib/pkgconfig ./configure --with-system-luajit --with-mysql --without-pgsql --with-mysql-includes=/opt/homebrew/opt/mariadb-connector-c/include/mariadb --with-mysql-libs=/opt/homebrew/opt/mariadb-connector-c/lib/mariadb --prefix=/private/tmp/tidb-latency-path.Z5pxYT/install",
+    "make": "make -j12 CK_CONFIGURE_FLAGS='--platform=aarch64 --enable-lse'",
+    "install": "make -j12 install",
+    "notes": "GNU99 is required for this source's K&R crc32 declarations with current Clang. Configure CFLAGS rather than overriding make CFLAGS, which suppresses CK's include flags. Failed setup attempts remain in build.log and build-gnu99.log; successful build-final.log and install.log are retained. Installation is exclusively under the temporary prefix. The workload Lua files match the installed oltp_read_only.lua and oltp_common.lua by diff."
+  },
+  "comparison": {
+    "raw": "/private/tmp/tidb-latency-path.Z5pxYT/measure.json",
+    "command": "ruby /private/tmp/tidb-latency-path.Z5pxYT/measure.rb",
+    "control_sha256": "8969985b8dd5afaebc949db4ba4393f9ff0e555f06d4e6d25e3d4da1149679a7",
+    "candidate_sha256": "49b0caf18d32fef492c8927cb903470bd032893f307198c60aa097c9bdc89a35",
+    "rust_production_source_changed_in_this_increment": false,
+    "method": "Same owned 100000-row TiKV fixture, fixed 6000/30000/30000 read-only transactions at 1/8/32 clients; 1000-event warmup before each trial; before/after/after/before order; explicit percentile 95 and histogram enabled. Raw file includes exact commands, CPU deltas and TiKV counters.",
+    "median_delta_percent": {
+      "1": {"throughput": -0.2126, "mean_latency": 0.0, "p95_latency": 1.7857},
+      "8": {"throughput": -3.5113, "mean_latency": 3.6643, "p95_latency": 3.7199, "sql_cpu": -16.5294, "tikv_cpu": -18.1302},
+      "32": {"throughput": 1.8856, "mean_latency": -1.9068, "p95_latency": -6.2139, "sql_cpu": -3.1520, "tikv_cpu": -2.0008}
+    },
+    "eight_client_medians": {
+      "before": {"tps": 1890.6982, "mean_ms": 4.23, "p95_ms": 4.57},
+      "after": {"tps": 1824.3092, "mean_ms": 4.385, "p95_ms": 4.74}
+    },
+    "decision": "Do not accept the collector as a generic throughput-and-latency win: eight-client regression is confirmed with valid tail statistics, despite CPU savings. The 32-client direction is positive but does not override the lower-concurrency regression.",
+    "parity": "Six query result sets (307 lines) match Go/control/candidate before and after; SHA256 ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c. No errors or reconnects. Not exhaustive package or metadata parity."
+  },
+  "runner": {
+    "path": "rust/scripts/compare-sysbench.py",
+    "changes": "Records min/mean/p95/max latency and median mean/p95 alongside throughput; rejects unusable zero p95; records the resolved executable and SHA256; accepts --sysbench for an isolated validated tool. Histogram quantiles are approximate, so they are not required to equal exact extrema.",
+    "validation_profile": "WIP",
+    "checks": "Direct metrics() validation accepts corrected trial-1-0-before.log with p95 2.52 ms and rejects the prior trial-8-1-after.log with zero p95. git diff --check passes. No Rust production build/test or Ready lint is claimed for this measurement-only increment."
+  },
+  "live_runner_validation": {
+    "command": "python3 -B rust/scripts/compare-sysbench.py --sysbench /private/tmp/tidb-latency-path.Z5pxYT/sysbench/src/sysbench --server go:57110 --server before:57112 --server after:49437 --database perf_sysbench --workload /opt/homebrew/share/sysbench/oltp_read_only.lua --threads 8 --seconds 10 --rounds 3 --table-size 100000 --output /private/tmp/tidb-latency-path.Z5pxYT/go-comparison",
+    "result": "All nine runs completed without errors or reconnects. Rotating order; same corrected tool and fixture; ten seconds per trial. This is a separate window, not pooled with the fixed-work trials.",
+    "report": "/private/tmp/tidb-latency-path.Z5pxYT/go-comparison/results.json",
+    "medians": {
+      "go": {"tps": 1797.7674, "mean_ms": 4.45, "p95_ms": 4.91},
+      "before": {"tps": 1843.2890, "mean_ms": 4.34, "p95_ms": 4.74},
+      "after": {"tps": 1794.8052, "mean_ms": 4.45, "p95_ms": 4.82}
+    },
+    "limitation": "Go revision 23bff313186b8ceb61fcbe9faac43ae700e7fb14 differs from checkout HEAD. Relative results are not whole-Go-package parity or a general Rust-over-Go claim."
+  },
+  "cleanup": "Owned candidate, control, Go, TiKV and PD supervisors exited; all their ports were verified closed. Data, source, patch, binaries and logs retained. No commit or push.",
+  "remaining": "Trace collection/admission/response latency against Go, then make source-backed changes that improve throughput and latency together. General prepared-plan reuse and TPC-C validation remain open."
+}

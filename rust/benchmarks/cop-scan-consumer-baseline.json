@@ -1,0 +1,350 @@
+{
+  "date": "2026-09-09",
+  "status": "WIP: local fixed-work SQL CPU reduction; concurrent throughput gain not established. Not Ready or whole-Go-package completion.",
+  "git_head": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "branch": "hparser-integration",
+  "artifact_root": "/private/tmp/tidb-pull-cop.Orj6h6",
+  "change": {
+    "owner": "rust/crates/tidb-exec/src/cop_scan.rs",
+    "source_sha256": "4a85c10ee405812f2948d03ce13b763662c92518e52b7452347852f577df4814",
+    "removed": [
+      "Decoded-row producer, bounded reply channel and eager drain",
+      "PinnedThreadPool, its module and worker-design fixtures",
+      "Decoded read-ahead settings and all callers",
+      "Obsolete thread-handshake profile scaffolding"
+    ],
+    "implementation": "CopRowStream owns SelectResponseIter and decodes on demand in Next. Close drops the decoder and closes/cancels its response. The response-transfer boundary requires Send; synchronized shared policy/evidence and pending handles replace Rc/RefCell erasure. Region admission, retries, paging, lock recovery and result ordering remain in the lower response. No unsafe Send or SQL-shape shortcut.",
+    "go_source": [
+      "pkg/distsql/select_result.go: selectResult.Next and readFromChunk/readFromDefault",
+      "pkg/store/copr/coprocessor.go: copIterator.open, Next and liteSendReq",
+      "pkg/store/copr/copr_test/coprocessor_test.go: TestQueryWithConcurrentSmallCop and TestDMLWithLiteCopWorker"
+    ],
+    "gap": "Rust still advances paging continuations on the next pull; autonomous lower-layer progress and Go lite-to-concurrent fallback parity are not established.",
+    "post_build_edits": "Only the decoded-row counter documentation changed after the measured server build.",
+    "recovery": [
+      "before-source.tar.gz",
+      "consumers-before.tar.gz",
+      "timestamp-before.tar.gz",
+      "executor-before.tar.gz",
+      "after-source.tar.gz"
+    ]
+  },
+  "binaries": {
+    "before": "67fea53f95a37f036b8ddf514a12419bfa91019b254dadefdb16732f6be9e6c0",
+    "after": "84c39b216dcd53d3007615ba84f0f49423587625b114515f9d4fcd9e859567b8",
+    "go": "e734c80768b5cd44852b01b573bd36f30d19bb47510e0883e6017f18563cbde2",
+    "sysbench": "f0822a96ba0de7354b9156c144f36353a5dbc705862e164e5b2bb041dc5cd046"
+  },
+  "method": {
+    "fixture": "Retained perf_sysbench.sbtest1, 100000 rows, 26 regions on one local TiKV. No fixture writes or reset.",
+    "workload": "Prepared oltp_read_only.lua, --time=0 --events=6000 --rand-seed=1; 1000 warmup transactions before each trial.",
+    "order": "ABBA once at one client, three times each at eight and 32 clients; no active compilation or tests during timing.",
+    "trials": 28,
+    "measured_transactions": 168000,
+    "warmup_transactions": 28000,
+    "errors": 0,
+    "reconnects": 0,
+    "latency": "Corrected isolated sysbench 1.0.20 AArch64 histogram. Medians of per-trial p95 are not pooled percentiles.",
+    "cpu": "ps process CPU delta per equal 6000-transaction trial.",
+    "commands": [
+      "ruby /private/tmp/tidb-pull-cop.Orj6h6/candidate/read_parity.rb",
+      "ruby /private/tmp/tidb-pull-cop.Orj6h6/candidate/measure.rb"
+    ],
+    "raw": "candidate/measure.json, candidate/trial-*.log, candidate/trial-*-before.txt/-after.txt",
+    "parity_before": {
+      "before": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+      "after": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+      "go": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c"
+    },
+    "parity_after": {
+      "before": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+      "after": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+      "go": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c"
+    },
+    "raw_measurement_sha256": "1156dd088dbe8453032c46ebeb5a2390650c0d495650da7b841d074076d0b832"
+  },
+  "summary": [
+    {
+      "threads": 1,
+      "samples_per_binary": 2,
+      "before": {
+        "tps": 445.56009529455173,
+        "latency_mean_ms": 2.24,
+        "latency_p95_ms": 2.5,
+        "sql_cpu_seconds": 7.109999999999999,
+        "tikv_cpu_seconds": 8.319999999999997,
+        "batch_mean": 1.5057808166839923
+      },
+      "after": {
+        "tps": 449.5299392165331,
+        "latency_mean_ms": 2.2199999999999998,
+        "latency_p95_ms": 2.475,
+        "sql_cpu_seconds": 6.914999999999999,
+        "tikv_cpu_seconds": 8.370000000000001,
+        "batch_mean": 1.5138894210746883
+      },
+      "median_change_percent": {
+        "tps": 0.8909783357858636,
+        "latency_mean_ms": -0.8928571428571619,
+        "latency_p95_ms": -1.0000000000000009,
+        "sql_cpu_seconds": -2.742616033755274,
+        "tikv_cpu_seconds": 0.6009615384615863,
+        "batch_mean": 0.5384983193339243,
+        "singleton_fraction": -0.20085584081213081
+      },
+      "abba_tps_change_percent": [
+        0.8909783357858636
+      ],
+      "control_tps_full_range_percent": 0.0950527988593718,
+      "sql_cpu_ranges": {
+        "before": [
+          7.109999999999999,
+          7.11
+        ],
+        "after": [
+          6.87,
+          6.959999999999999
+        ]
+      }
+    },
+    {
+      "threads": 8,
+      "samples_per_binary": 6,
+      "before": {
+        "tps": 1902.981648546171,
+        "latency_mean_ms": 4.2,
+        "latency_p95_ms": 4.57,
+        "sql_cpu_seconds": 9.324999999999996,
+        "tikv_cpu_seconds": 12.22999999999999,
+        "batch_mean": 4.078060450791584
+      },
+      "after": {
+        "tps": 1935.1110264958584,
+        "latency_mean_ms": 4.125,
+        "latency_p95_ms": 4.49,
+        "sql_cpu_seconds": 8.730000000000008,
+        "tikv_cpu_seconds": 12.10499999999999,
+        "batch_mean": 4.156917737129373
+      },
+      "median_change_percent": {
+        "tps": 1.6883703515603088,
+        "latency_mean_ms": -1.7857142857142905,
+        "latency_p95_ms": -1.7505470459518668,
+        "sql_cpu_seconds": -6.3806970509382115,
+        "tikv_cpu_seconds": -1.022076860179888,
+        "batch_mean": 1.9336958657020675,
+        "singleton_fraction": 1.4010115619773833
+      },
+      "abba_tps_change_percent": [
+        2.9635415343325144,
+        0.6054048096882481,
+        1.7406168619186424
+      ],
+      "control_tps_full_range_percent": 2.9830762705631404,
+      "sql_cpu_ranges": {
+        "before": [
+          9.220000000000002,
+          9.439999999999998
+        ],
+        "after": [
+          8.64,
+          8.82
+        ]
+      }
+    },
+    {
+      "threads": 32,
+      "samples_per_binary": 6,
+      "before": {
+        "tps": 2855.3773391299833,
+        "latency_mean_ms": 10.92,
+        "latency_p95_ms": 12.3,
+        "sql_cpu_seconds": 10.725000000000001,
+        "tikv_cpu_seconds": 12.189999999999998,
+        "batch_mean": 7.770657383032518
+      },
+      "after": {
+        "tps": 2909.615443438797,
+        "latency_mean_ms": 10.690000000000001,
+        "latency_p95_ms": 11.87,
+        "sql_cpu_seconds": 9.895000000000003,
+        "tikv_cpu_seconds": 11.990000000000009,
+        "batch_mean": 8.016395445151334
+      },
+      "median_change_percent": {
+        "tps": 1.8995074159039005,
+        "latency_mean_ms": -2.1062271062270987,
+        "latency_p95_ms": -3.4959349593496003,
+        "sql_cpu_seconds": -7.738927738927726,
+        "tikv_cpu_seconds": -1.6406890894174575,
+        "batch_mean": 3.162384467695012,
+        "singleton_fraction": -16.061763745316647
+      },
+      "abba_tps_change_percent": [
+        4.558544681558674,
+        -2.0567876772645044,
+        2.5375701317471133
+      ],
+      "control_tps_full_range_percent": 3.7566502004620315,
+      "sql_cpu_ranges": {
+        "before": [
+          10.299999999999983,
+          10.830000000000013
+        ],
+        "after": [
+          9.469999999999999,
+          10.070000000000007
+        ]
+      }
+    }
+  ],
+  "interpretation": {
+    "accepted": "Local SQL CPU reduction: every candidate CPU sample is below every control sample at each client count. Median SQL CPU decreases 2.74%, 6.38% and 7.74% at 1/8/32 clients.",
+    "throughput": "Observed median TPS rises 0.89%, 1.69% and 1.90%. Concurrent control ranges span 2.98%/3.76%, larger than the median changes; the middle 32-client ABBA block regresses 2.06%. Do not accept a concurrent throughput improvement from this window.",
+    "latency": "Concurrent median p95 decreases, but one 32-client candidate is 12.98 ms versus control samples 12.08-12.30 ms. No universal tail-latency claim.",
+    "limits": [
+      "Short local read-only trials, not TPC-C or mixed-write performance",
+      "Desktop contention and clocks are uncontrolled",
+      "No fresh CPU call-chain profile in this increment; CPU deltas are not a profile",
+      "No fresh dynamic region-split/failure-injection or overlapping-reader timing proof",
+      "Go binary source revision differs from checkout; Go was a correctness oracle here, not a timed throughput control"
+    ]
+  },
+  "go_identity": {
+    "tidb_revision": "23bff313186b8ceb61fcbe9faac43ae700e7fb14",
+    "client_go": "v2.0.8-0.20260724023932-61ecd7c11416",
+    "checkout_client_go": "v2.0.8-0.20260708122311-01bd8f99f4da"
+  },
+  "expanded_parity": [
+    {
+      "case": "full_ordered",
+      "sql": "SELECT id,k,c,pad FROM sbtest1 ORDER BY id",
+      "matched": true,
+      "rows": 100000,
+      "sha256": "242145692476636bf580909602127c712cec0ffdb1e0526daaa7dc49bea8a5f3"
+    },
+    {
+      "case": "full_descending",
+      "sql": "SELECT id,k FROM sbtest1 ORDER BY id DESC",
+      "matched": true,
+      "rows": 100000,
+      "sha256": "8eac9f6e18b14cb4db84ec87884b304ad0c18d6dc77d6955fe3a72e0c4d5da9b"
+    },
+    {
+      "case": "secondary_range",
+      "sql": "SELECT id,k,c FROM sbtest1 WHERE k>=50000 AND k<50100 ORDER BY k,id",
+      "matched": true,
+      "rows": 10055,
+      "sha256": "c2617b3c1704aec936c4e5cc2a679aa6e054d4d33b0d74e9a32ab24564af9a59"
+    },
+    {
+      "case": "residual_limit",
+      "sql": "SELECT id,k FROM sbtest1 WHERE MOD(id,7)=0 ORDER BY id LIMIT 37",
+      "matched": true,
+      "rows": 37,
+      "sha256": "551b49a449707b32b795a2a2799ad6697d44247f8289dd3c1c109b1e280a79b9"
+    },
+    {
+      "case": "join",
+      "sql": "SELECT l.id,r.k FROM sbtest1 l JOIN sbtest1 r ON r.id=l.id WHERE l.id BETWEEN 50000 AND 50999 ORDER BY l.id",
+      "matched": true,
+      "rows": 1000,
+      "sha256": "ae7fbcf92000cf8223b419334807908e2d5e94daf44c7697794448f5d68a055f"
+    },
+    {
+      "case": "grouped",
+      "sql": "SELECT k,COUNT(*),SUM(id) FROM sbtest1 GROUP BY k ORDER BY k LIMIT 100",
+      "matched": true,
+      "rows": 100,
+      "sha256": "cdb2726c90972f42a91a124e853f05392ed782122c6b5d4dd7cff4fc0aa84c96"
+    },
+    {
+      "case": "prepared_ranges",
+      "sql": "PREPARE p FROM 'SELECT id,k FROM sbtest1 WHERE id BETWEEN ? AND ? ORDER BY id'; SET @a=10,@b=10; EXECUTE p USING @a,@b; SET @a=49900,@b=51100; EXECUTE p USING @a,@b; SET @a=100001,@b=100005; EXECUTE p USING @a,@b; DEALLOCATE PREPARE p",
+      "matched": true,
+      "rows": 1207,
+      "sha256": "6f1dcae58766345996ca0dd28c7025190d48a5852808d6699623ff88bc1853a5"
+    }
+  ],
+  "validation": {
+    "profile": "WIP",
+    "passed": 3149,
+    "failed": 7,
+    "ignored": 19,
+    "targets": {
+      "distsql": {
+        "unit": 27,
+        "integration": 228
+      },
+      "exec": {
+        "unit": 317,
+        "integration": 722,
+        "ignored": 1
+      },
+      "executor": {
+        "unit": 1240,
+        "integration": 43,
+        "failed": 7,
+        "ignored": 7
+      },
+      "txnkv": {
+        "unit": 155,
+        "integration": 417,
+        "ignored": 11
+      }
+    },
+    "failures": [
+      "driver::tests::aggregates::tpcc_condition_six_simplifies_and_pushes_through_derived_tables",
+      "driver::tests::point_get::residual_selection_uses_logical_rows_over_access_rows",
+      "driver::tests::predicate_pushdown::a_join_leaf_dnf_selection_uses_loaded_column_statistics",
+      "driver::tests::predicate_pushdown::a_common_dnf_equality_is_a_hash_join_key",
+      "driver::tests::subqueries::explaining_a_correlated_scalar_type_reads_no_storage",
+      "driver::tests::subqueries::tpcc_conditions_ten_and_twelve_decorrelate_scalar_sums",
+      "driver::tests::subqueries::tpch_q2_correlated_min_matches_recorded_hash_join_plan"
+    ],
+    "failure_evidence": "All seven normalized failure bodies match rust/target/release/deps/tidb_executor-7f0bcce870a57b8a, retained from before this increment. This is an older binary, not a rebuilt immediate-control snapshot. Expectations unchanged. executor-failure-comparison.json and older-executor-failures.log retain evidence.",
+    "commands": [
+      "cargo test --offline --locked --release -j12 --no-run -p tidb-distsql -p tidb-exec -p tidb-executor -p tidb-txnkv",
+      "cargo test --offline --locked --release -j12 -p tidb-distsql --lib --test all",
+      "cargo test --offline --locked --release -j12 -p tidb-exec --lib --test all",
+      "cargo test --offline --locked --release -j12 -p tidb-executor --lib --test all",
+      "cargo test --offline --locked --release -j12 -p tidb-txnkv --lib --test all",
+      "cargo test --offline --locked --release -j12 -p tidb-executor --test all",
+      "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server --bin select-one-profile",
+      "git diff --check"
+    ],
+    "not_verified": [
+      "Ready lint",
+      "Whole Go packages",
+      "TPC-C and mixed-write performance",
+      "Full Go scheduling parity"
+    ]
+  },
+  "cleanup": {
+    "status": "Verified stopped",
+    "owned_pids": [
+      92747,
+      92748,
+      92749,
+      92806,
+      92990,
+      93102
+    ],
+    "closed_ports": [
+      57106,
+      57107,
+      57108,
+      57109,
+      57110,
+      57111,
+      57112,
+      57113,
+      52423,
+      52424,
+      52448,
+      52449
+    ],
+    "fixture_data": "Preserved",
+    "git": "No commit, push, fetch, pull or branch mutation"
+  }
+}

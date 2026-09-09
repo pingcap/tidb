@@ -84,6 +84,561 @@ fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
         .collect()
 }
 
+struct LockDispatchRecorder {
+    inner: Box<dyn super::super::OpenClusterTransaction>,
+    prelocks: Arc<std::sync::Mutex<Vec<Vec<Vec<u8>>>>>,
+    postlocks: Arc<std::sync::Mutex<Vec<Vec<Vec<u8>>>>>,
+}
+
+impl super::super::OpenClusterTransaction for LockDispatchRecorder {
+    fn start_ts(&self) -> u64 {
+        self.inner.start_ts()
+    }
+    fn snapshot(&self) -> Result<Box<dyn tidb_executor::cluster_storage::ClusterSnapshot>, String> {
+        self.inner.snapshot()
+    }
+    fn snapshot_for(
+        &self,
+        locking: bool,
+    ) -> Result<Box<dyn tidb_executor::cluster_storage::ClusterSnapshot>, String> {
+        self.inner.snapshot_for(locking)
+    }
+    fn snapshot_at_for(
+        &self,
+        ts: u64,
+        locking: bool,
+    ) -> Result<Box<dyn tidb_executor::cluster_storage::ClusterSnapshot>, String> {
+        self.inner.snapshot_at_for(ts, locking)
+    }
+    fn is_pessimistic(&self) -> bool {
+        self.inner.is_pessimistic()
+    }
+    fn commit(
+        self: Box<Self>,
+        buffer: &tidb_executor::cluster_storage::MutationBuffer,
+    ) -> Result<(), crate::sql_node::SqlQueryError> {
+        self.inner.commit(buffer)
+    }
+    fn rollback(self: Box<Self>) -> Result<(), String> {
+        self.inner.rollback()
+    }
+    fn lock_staged_keys_with_values(
+        &self,
+        keys: Vec<Vec<u8>>,
+    ) -> Result<tidb_exec::cluster_table_storage::LockKeysOutcome, String> {
+        self.prelocks.lock().unwrap().push(keys.clone());
+        self.inner.lock_staged_keys_with_values(keys)
+    }
+    fn lock_staged_keys_with_assertions(
+        &self,
+        keys: Vec<Vec<u8>>,
+        assertions: std::collections::BTreeSet<Vec<u8>>,
+        hints: std::collections::BTreeMap<
+            Vec<u8>,
+            tidb_executor::cluster_storage::DuplicateKeyHint,
+        >,
+    ) -> Result<tidb_exec::cluster_table_storage::LockKeysOutcome, String> {
+        self.postlocks.lock().unwrap().push(keys.clone());
+        self.inner
+            .lock_staged_keys_with_assertions(keys, assertions, hints)
+    }
+    fn release_statement_locks(&self, keys: Vec<Vec<u8>>) -> Result<(), String> {
+        self.inner.release_statement_locks(keys)
+    }
+}
+
+#[test]
+fn statement_owned_locks_do_not_cross_the_worker_boundary_twice() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(120)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.lock_dispatch (id INT PRIMARY KEY, v INT, u INT UNIQUE)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.lock_dispatch VALUES (1,10,100),(2,20,200)",
+    );
+    for (sql, index_locks) in [
+        ("UPDATE test.lock_dispatch SET v=v+1 WHERE id=1", false),
+        ("UPDATE test.lock_dispatch SET v=v WHERE id=1", false),
+        ("UPDATE test.lock_dispatch SET u=101 WHERE id=1", true),
+    ] {
+        session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+        let prelocks = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let postlocks = Arc::new(std::sync::Mutex::new(Vec::new()));
+        session.explicit = Some(Box::new(LockDispatchRecorder {
+            inner: session.explicit.take().unwrap(),
+            prelocks: Arc::clone(&prelocks),
+            postlocks: Arc::clone(&postlocks),
+        }));
+        rows(&mut session, sql);
+        let actual = postlocks.lock().unwrap().clone();
+        session.control_transaction("ROLLBACK").unwrap();
+        assert_eq!(
+            prelocks.lock().unwrap().len(),
+            1,
+            "the row is locked before execution"
+        );
+        if index_locks {
+            assert_eq!(
+                actual.len(),
+                1,
+                "new unique-index keys still need a lock request"
+            );
+            assert!(!actual[0].is_empty());
+            assert!(
+                actual[0]
+                    .iter()
+                    .all(|key| tidb_tablecodec::is_index_key(key)),
+                "already-owned record lock was sent again: {actual:?}"
+            );
+        } else {
+            assert!(
+                actual.is_empty(),
+                "already-owned row incurred a second worker handoff: {actual:?}"
+            );
+        }
+    }
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT * FROM test.lock_dispatch ORDER BY id"
+        )),
+        [["1", "10", "100"], ["2", "20", "200"]]
+    );
+}
+
+#[test]
+fn a_held_record_lock_does_not_suppress_a_new_duplicate_assertion() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(125)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.held_assertion (id INT PRIMARY KEY, v INT)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.held_assertion VALUES (1,10),(2,20)",
+    );
+    for select in [
+        "SELECT * FROM test.held_assertion WHERE id=1 FOR UPDATE",
+        "SELECT * FROM test.held_assertion WHERE v=10 FOR UPDATE",
+    ] {
+        session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+        assert_eq!(displayed(rows(&mut session, select)), [["1", "10"]]);
+        let error = session
+            .execute_write("INSERT INTO test.held_assertion VALUES (1,99)")
+            .err();
+        session.control_transaction("ROLLBACK").unwrap();
+        assert!(matches!(error, Some(ref error) if error.code == 1062),
+            "an already-owned existing key must still reject the INSERT at statement end: {error:?}");
+    }
+    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    assert!(rows(
+        &mut session,
+        "SELECT * FROM test.held_assertion WHERE id=3 FOR UPDATE"
+    )
+    .is_empty());
+    rows(
+        &mut session,
+        "INSERT INTO test.held_assertion VALUES (3,30)",
+    );
+    rows(
+        &mut session,
+        "UPDATE test.held_assertion SET v=31 WHERE id=3",
+    );
+    session.control_transaction("COMMIT").unwrap();
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT * FROM test.held_assertion ORDER BY id"
+        )),
+        [["1", "10"], ["2", "20"], ["3", "31"]]
+    );
+}
+
+#[test]
+fn system_table_hidden_ids_use_the_full_counter_key() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(119))
+        .expect("session");
+    rows(&mut session, "INSERT INTO mysql.bind_info (original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest) VALUES ('system counter allocation', 'SELECT 1', 'test', 'disabled', '2026-09-07 00:00:00', '2026-09-07 00:00:00', 'utf8mb4', 'utf8mb4_bin', 'manual', 'system_counter_probe')");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT original_sql FROM mysql.bind_info WHERE sql_digest='system_counter_probe'"
+        )),
+        [["system counter allocation"]]
+    );
+}
+
+#[test]
+fn global_bindings_do_not_depend_on_unrelated_staged_writes() {
+    let (stack, _users) = cop_backed_stack();
+    let mut writer = stack
+        .factory
+        .open_session(session_context(117))
+        .expect("writer");
+    rows(
+        &mut writer,
+        "CREATE TABLE test.binding_visibility (id BIGINT PRIMARY KEY, v INT)",
+    );
+    rows(
+        &mut writer,
+        "INSERT INTO test.binding_visibility VALUES (1,20),(2,30),(3,40),(4,50),(5,60),(6,70)",
+    );
+    // A committed storage row, as if a peer had created the global binding.
+    // The matcher must not infer its existence from the reader's write buffer.
+    rows(&mut writer, "INSERT INTO mysql.bind_info (original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest) VALUES ('select v from test.binding_visibility where v = ?', 'SELECT v FROM test.binding_visibility USE INDEX () WHERE v = 20', 'test', 'enabled', '2026-09-07 00:00:00', '2026-09-07 00:00:00', 'utf8mb4', 'utf8mb4_bin', 'manual', 'binding_visibility_probe')");
+    let mut reader = stack
+        .factory
+        .open_session(session_context(118))
+        .expect("reader");
+    reader
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin reader");
+    for dirty in [true, false] {
+        if dirty {
+            rows(
+                &mut reader,
+                "UPDATE test.binding_visibility SET v=v+1 WHERE id>1",
+            );
+        } else {
+            reader
+                .control_transaction("ROLLBACK")
+                .expect("rollback reader");
+            reader
+                .control_transaction("BEGIN PESSIMISTIC")
+                .expect("begin reader");
+        }
+        assert_eq!(
+            displayed(rows(
+                &mut reader,
+                "SELECT v FROM test.binding_visibility WHERE v=20"
+            )),
+            [["20"]]
+        );
+        assert_eq!(
+            displayed(rows(&mut reader, "SELECT @@last_plan_from_binding")),
+            [["1"]],
+            "global binding must apply with dirty={dirty}"
+        );
+    }
+    reader
+        .control_transaction("ROLLBACK")
+        .expect("rollback reader");
+
+    let assert_binding = |reader: &mut crate::cluster_session_node::ClusterServerSession,
+                          expected: &str,
+                          phase: &str| {
+        let (result, ops) = tidb_executor::storage::capture_storage_ops(|| {
+            rows(reader, "SELECT v FROM test.binding_visibility WHERE v=20")
+        });
+        assert_eq!(displayed(result), [["20"]]);
+        assert_eq!(
+            ops.cop_scans, 1,
+            "only the user table may be scanned: {ops:?}"
+        );
+        assert_eq!(
+            displayed(rows(reader, "SELECT @@last_plan_from_binding")),
+            [[expected]],
+            "{phase}"
+        );
+    };
+    // Uncommitted binding writes must not enter any session's planner image.
+    writer
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin writer");
+    rows(
+        &mut writer,
+        "UPDATE mysql.bind_info SET status='disabled' WHERE sql_digest='binding_visibility_probe'",
+    );
+    assert_binding(&mut reader, "1", "reader during uncommitted disable");
+    assert_binding(&mut writer, "1", "writer during uncommitted disable");
+    writer
+        .control_transaction("ROLLBACK")
+        .expect("rollback writer");
+    assert_binding(&mut reader, "1", "after rollback");
+
+    for (status, expected) in [("disabled", "0"), ("enabled", "1"), ("deleted", "0")] {
+        writer
+            .control_transaction("BEGIN PESSIMISTIC")
+            .expect("begin writer");
+        rows(&mut writer, &format!("UPDATE mysql.bind_info SET status='{status}' WHERE sql_digest='binding_visibility_probe'"));
+        writer.control_transaction("COMMIT").expect("commit writer");
+        for _ in 0..3 {
+            assert_binding(&mut reader, expected, status);
+        }
+    }
+}
+
+#[test]
+fn unchanged_updates_lock_only_matched_rows() {
+    let (stack, _users) = cop_backed_stack();
+    let mut writer = stack
+        .factory
+        .open_session(session_context(122))
+        .expect("writer");
+    let mut reader = stack
+        .factory
+        .open_session(session_context(123))
+        .expect("reader");
+    rows(
+        &mut writer,
+        "CREATE TABLE test.unchanged_lock (id INT PRIMARY KEY, v INT)",
+    );
+    rows(
+        &mut writer,
+        "INSERT INTO test.unchanged_lock VALUES (1,20),(2,30)",
+    );
+    writer
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin writer");
+    let write = writer
+        .execute_write("UPDATE test.unchanged_lock SET v=v WHERE v=20")
+        .expect("unchanged update")
+        .expect("write result");
+    assert_eq!(write.affected_rows, 0);
+    reader
+        .execute_write("SET innodb_lock_wait_timeout=1")
+        .expect("bounded lock wait");
+    reader
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin reader");
+    let result = reader.execute_write("UPDATE test.unchanged_lock SET v=v+1 WHERE id=1");
+    assert!(
+        matches!(result, Err(ref error) if error.code == 1205),
+        "the unchanged matched row must remain locked; error={:?}",
+        result.as_ref().err()
+    );
+    let untouched = reader
+        .execute_write("UPDATE test.unchanged_lock SET v=v+1 WHERE id=2")
+        .expect("a rejected row is not locked")
+        .expect("write result");
+    assert_eq!(untouched.affected_rows, 1);
+    writer
+        .control_transaction("ROLLBACK")
+        .expect("release writer");
+    reader
+        .control_transaction("ROLLBACK")
+        .expect("release reader");
+}
+
+#[test]
+fn global_binding_writer_rolls_back_errors_without_replaying_commits() {
+    use crate::cluster_binding_seam::ClusterBindings;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tidb_session::binding::GlobalBindingWriter;
+
+    struct FailingRefresh {
+        inner: Arc<dyn ClusterBindings>,
+        attempts: AtomicUsize,
+    }
+    impl ClusterBindings for FailingRefresh {
+        fn cache(&self) -> tidb_session::binding_cache::SharedBindingCache {
+            self.inner.cache()
+        }
+        fn reload(&self) -> Result<(), String> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            Err("injected post-commit refresh failure".to_owned())
+        }
+        fn has_changes(&self, buffer: &tidb_executor::cluster_storage::MutationBuffer) -> bool {
+            self.inner.has_changes(buffer)
+        }
+    }
+
+    let (stack, _users) = cop_backed_stack();
+    let mut reader = stack
+        .factory
+        .open_session(session_context(124))
+        .expect("reader");
+    rows(
+        &mut reader,
+        "CREATE TABLE test.binding_writer_atomicity (id INT PRIMARY KEY)",
+    );
+    let bindings = Arc::new(FailingRefresh {
+        inner: Arc::clone(stack.factory.bindings.as_ref().expect("binding authority")),
+        attempts: AtomicUsize::new(0),
+    });
+    let mut storage_factory = stack.factory.clone();
+    storage_factory.bindings = None;
+    let writer = crate::cluster_session_node::InternalBindingWriter {
+        factory: storage_factory,
+        bindings: bindings.clone(),
+        connection_id: 125,
+    };
+    let error = writer
+        .execute(&mut |session| {
+            session.run("INSERT INTO test.binding_writer_atomicity VALUES (1)")?;
+            session.run("INSERT INTO test.binding_writer_atomicity VALUES (1)")?;
+            Ok(0)
+        })
+        .expect_err("a real duplicate-key failure aborts the storage operation")
+        .to_mysql_error();
+    assert_eq!(error.code, 1062);
+    assert_eq!(error.state, *b"23000");
+    assert_eq!(
+        displayed(rows(
+            &mut reader,
+            "SELECT COUNT(*) FROM test.binding_writer_atomicity"
+        )),
+        [["0"]]
+    );
+    assert_eq!(
+        bindings.attempts.load(Ordering::SeqCst),
+        0,
+        "no refresh before a successful commit"
+    );
+
+    let mut calls = 0;
+    assert_eq!(
+        writer
+            .execute(&mut |session| {
+                calls += 1;
+                session.run("INSERT INTO test.binding_writer_atomicity VALUES (2)")?;
+                Ok(1)
+            })
+            .expect("a committed operation succeeds despite refresh failure"),
+        1
+    );
+    assert_eq!(
+        calls, 1,
+        "refresh failure cannot replay the committed operation"
+    );
+    assert_eq!(bindings.attempts.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        displayed(rows(
+            &mut reader,
+            "SELECT id FROM test.binding_writer_atomicity"
+        )),
+        [["2"]]
+    );
+}
+
+#[test]
+fn global_binding_commands_commit_outside_the_user_transaction() {
+    let (stack, _users) = cop_backed_stack();
+    let mut writer = stack
+        .factory
+        .open_session(session_context(120))
+        .expect("writer");
+    let mut reader = stack
+        .factory
+        .open_session(session_context(121))
+        .expect("reader");
+    assert_eq!(
+        displayed(rows(
+            &mut reader,
+            "SELECT original_sql, source FROM mysql.bind_info WHERE status='builtin'"
+        )),
+        [["builtin_pseudo_sql_for_bind_lock", "builtin"]],
+        "bootstrap supplies the shared binding-writer lock row"
+    );
+    rows(
+        &mut writer,
+        "CREATE TABLE test.binding_command_visibility (id BIGINT PRIMARY KEY, v INT)",
+    );
+    rows(
+        &mut writer,
+        "INSERT INTO test.binding_command_visibility VALUES (1,20)",
+    );
+    writer
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin");
+    writer
+        .execute_write("UPDATE test.binding_command_visibility SET v=21 WHERE id=1")
+        .expect("staged write");
+    rows(&mut writer, "CREATE GLOBAL BINDING FOR SELECT v FROM test.binding_command_visibility WHERE v=20 USING SELECT v FROM test.binding_command_visibility USE INDEX() WHERE v=20");
+    assert_eq!(
+        displayed(rows(
+            &mut writer,
+            "SELECT v FROM test.binding_command_visibility WHERE id=1"
+        )),
+        [["21"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut reader,
+            "SELECT v FROM test.binding_command_visibility WHERE id=1"
+        )),
+        [["20"]]
+    );
+    let count = "SELECT COUNT(*) FROM mysql.bind_info WHERE status='enabled'";
+    assert_eq!(
+        displayed(rows(&mut reader, count)),
+        [["1"]],
+        "binding committed while caller transaction remains open"
+    );
+    writer
+        .control_transaction("ROLLBACK")
+        .expect("rollback user data");
+    assert_eq!(
+        displayed(rows(&mut reader, count)),
+        [["1"]],
+        "binding survives caller rollback"
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut writer,
+            "SELECT v FROM test.binding_command_visibility WHERE id=1"
+        )),
+        [["20"]]
+    );
+    for (command, expected) in [
+        (
+            "SET BINDING DISABLED FOR SELECT v FROM test.binding_command_visibility WHERE v=20",
+            "disabled",
+        ),
+        (
+            "SET BINDING ENABLED FOR SELECT v FROM test.binding_command_visibility WHERE v=20",
+            "enabled",
+        ),
+        (
+            "DROP GLOBAL BINDING FOR SELECT v FROM test.binding_command_visibility WHERE v=20",
+            "deleted",
+        ),
+    ] {
+        writer
+            .control_transaction("BEGIN PESSIMISTIC")
+            .expect("begin user transaction");
+        writer
+            .execute_write("UPDATE test.binding_command_visibility SET v=21 WHERE id=1")
+            .expect("staged user write");
+        rows(&mut writer, command);
+        let status = "SELECT status FROM mysql.bind_info WHERE status!='builtin'";
+        assert_eq!(
+            displayed(rows(&mut reader, status)),
+            [[expected]],
+            "binding command commits independently: {command}"
+        );
+        assert_eq!(
+            displayed(rows(
+                &mut writer,
+                "SELECT v FROM test.binding_command_visibility WHERE id=1"
+            )),
+            [["21"]]
+        );
+        assert_eq!(
+            displayed(rows(
+                &mut reader,
+                "SELECT v FROM test.binding_command_visibility WHERE id=1"
+            )),
+            [["20"]]
+        );
+        writer
+            .control_transaction("ROLLBACK")
+            .expect("rollback user transaction");
+        assert_eq!(
+            displayed(rows(&mut reader, status)),
+            [[expected]],
+            "binding command survives caller rollback: {command}"
+        );
+    }
+}
+
 /// The probe-33 regression: a derived table whose inner SELECT plans as a
 /// partial-aggregate push (root HashAgg over `TableReader(data:HashAgg)`)
 /// must still answer the aggregate, not the bare scan rows. Go returns
@@ -1686,6 +2241,214 @@ fn a_text_select_for_update_folds_its_read_into_its_lock() {
         [["115"]],
         "+5 from the folded reader, then +100 from the winner that re-read it"
     );
+}
+
+/// Go SelectLockExec locks the rows the range produces, including a LIMIT
+/// winner. A contender must replay the range after that winner is deleted.
+#[test]
+fn a_locking_range_reselects_after_the_first_row_is_deleted() {
+    locking_range_reselects("id", "ORDER BY id LIMIT 1", &["1"], &["2"]);
+}
+
+#[test]
+fn a_locking_range_without_order_or_limit_still_locks() {
+    locking_range_reselects("id", "", &["1", "2", "3"], &["2", "3"]);
+}
+
+#[test]
+fn a_locking_range_projection_retains_its_composite_handle() {
+    locking_range_reselects("id", "ORDER BY id", &["1", "2", "3"], &["2", "3"]);
+}
+
+#[test]
+fn a_locking_aggregate_reselects_its_input_rows() {
+    locking_range_reselects("SUM(id)", "", &["6"], &["5"]);
+}
+
+fn locking_range_reselects(projection: &str, window: &str, before: &[&str], after: &[&str]) {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut first = factory
+        .open_session(session_context(110))
+        .expect("session opens");
+    rows(&mut first, "CREATE TABLE test.lock_range (w int, d int, id int, PRIMARY KEY(w,d,id) CLUSTERED)");
+    rows(
+        &mut first,
+        "INSERT INTO test.lock_range VALUES (1,1,1),(1,1,2),(1,1,3)",
+    );
+    first
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin");
+    let query = format!("SELECT {projection} FROM test.lock_range WHERE w=1 AND d=1 {window} FOR UPDATE");
+    let flatten = |rows: Vec<Vec<Datum>>| {
+        let mut ids: Vec<String> = displayed(rows).into_iter().map(|row| row[0].clone()).collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(flatten(rows(&mut first, &query)), before);
+
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let result = std::thread::scope(|scope| {
+        let contender = scope.spawn(|| {
+            let mut second = factory
+                .open_session(session_context(111))
+                .expect("session opens");
+            second
+                .control_transaction("BEGIN PESSIMISTIC")
+                .expect("begin");
+            started_tx.send(()).expect("signal begin");
+            let result = flatten(rows(&mut second, &query));
+            second.control_transaction("ROLLBACK").expect("rollback");
+            result
+        });
+        started_rx.recv().expect("contender began");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        rows(
+            &mut first,
+            "DELETE FROM test.lock_range WHERE w=1 AND d=1 AND id=1",
+        );
+        first.control_transaction("COMMIT").expect("commit");
+        contender.join().expect("contender finishes")
+    });
+    assert_eq!(
+        result,
+        after,
+        "a locking range must not return the deleted winner"
+    );
+}
+
+#[test]
+fn locking_queries_retain_unprojected_record_handles() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(112)).expect("session opens");
+    for (name, definition) in [
+        ("lock_heap", "id int, v int"),
+        ("lock_integer", "id int primary key, v int"),
+        ("lock_common", "id int, v int, primary key(id,v) clustered"),
+    ] {
+        rows(&mut session, &format!("CREATE TABLE test.{name} ({definition})"));
+        rows(&mut session, &format!("INSERT INTO test.{name} VALUES (1,10)"));
+        session.control_transaction("BEGIN PESSIMISTIC").expect("begin");
+        assert_eq!(
+            displayed(rows(&mut session, &format!(
+                "SELECT v FROM test.{name} WHERE v>0 LIMIT 1 FOR UPDATE"
+            ))),
+            [["10"]],
+            "record handles must be available without appearing in the result"
+        );
+        assert_eq!(
+            displayed(rows(&mut session, &format!(
+                "SELECT * FROM test.{name} WHERE v>0 LIMIT 1 FOR UPDATE"
+            ))),
+            [["1", "10"]],
+            "hidden handles must not leak through wildcard projection"
+        );
+        session.control_transaction("ROLLBACK").expect("rollback");
+    }
+}
+
+#[test]
+fn a_locking_range_sees_rows_committed_after_begin() {
+    let (stack, _users) = cop_backed_stack();
+    let mut reader = stack.factory.open_session(session_context(113)).expect("reader");
+    let mut writer = stack.factory.open_session(session_context(114)).expect("writer");
+    rows(&mut reader, "CREATE TABLE test.fresh_lock (id int primary key, v int)");
+    reader.control_transaction("BEGIN PESSIMISTIC").expect("begin");
+    assert!(rows(&mut reader, "SELECT id FROM test.fresh_lock WHERE id>0").is_empty());
+    rows(&mut writer, "INSERT INTO test.fresh_lock VALUES (1,10)");
+    let locked = displayed(rows(
+        &mut reader,
+        "SELECT id FROM test.fresh_lock WHERE id>0 ORDER BY id LIMIT 1 FOR UPDATE",
+    ));
+    let plain = rows(&mut reader, "SELECT id FROM test.fresh_lock WHERE id>0");
+    reader.control_transaction("ROLLBACK").expect("rollback");
+    assert_eq!(locked, [["1"]], "locking reads use a fresh statement snapshot");
+    assert!(plain.is_empty(), "ordinary reads keep the BEGIN snapshot");
+}
+
+/// Go's repeatable-read BatchPointGet locks absent keys as well as rows.
+/// Returning just the existing row must not permit an INSERT into another
+/// key named by the same IN list while the locking transaction stays open.
+#[test]
+fn a_locking_batch_locks_missing_primary_keys() {
+    use tidb_protocol::PreparedValue;
+    use crate::resultset_source::ResultSetSource;
+
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    for (index, (isolation, change_default, implicit, prepared)) in [
+        ("REPEATABLE-READ", false, false, false),
+        ("READ-COMMITTED", false, false, false),
+        ("REPEATABLE-READ", true, false, false),
+        ("READ-COMMITTED", true, false, false),
+        ("REPEATABLE-READ", false, true, false),
+        ("REPEATABLE-READ", false, false, true),
+    ].into_iter().enumerate() {
+        let mut first = factory.open_session(session_context(115)).expect("reader");
+        let table = format!("test.batch_missing_{index}");
+        // The prepared case binds reordered, duplicated composite tuples.
+        let definition = if prepared { "id INT, k INT, PRIMARY KEY(id,k) CLUSTERED" }
+            else { "id INT PRIMARY KEY" };
+        rows(&mut first, &format!("CREATE TABLE {table} ({definition})"));
+        rows(&mut first, &format!("INSERT INTO {table} VALUES ({})", if prepared { "1,10" } else { "1" }));
+        rows(&mut first, &format!("SET SESSION transaction_isolation='{isolation}'"));
+        if implicit {
+            rows(&mut first, "SET tidb_txn_mode='pessimistic'");
+            rows(&mut first, "SET autocommit=0");
+        } else {
+            first.control_transaction("BEGIN PESSIMISTIC").expect("begin");
+        }
+        if change_default {
+            let changed = if isolation == "REPEATABLE-READ" { "READ-COMMITTED" } else { "REPEATABLE-READ" };
+            rows(&mut first, &format!("SET SESSION transaction_isolation='{changed}'"));
+        }
+        let selected = if prepared {
+            let statement = first.prepare_general(&format!(
+                "SELECT id FROM {table} WHERE (k,id) IN ((?,?),(?,?),(?,?)) FOR UPDATE"
+            )).expect("prepare batch");
+            let params = [10,1,20,2,20,2].map(PreparedValue::SignedLongLong);
+            let crate::sql_node::GeneralExecuteOutcome::Rows(mut result) =
+                first.execute_general(&statement, &params).expect("execute batch")
+            else { panic!("batch returns rows") };
+            let source = result.source();
+            let mut result = Vec::new();
+            loop {
+                let batch = source.next_batch(8).expect("batch");
+                if batch.is_empty() { break; }
+                result.extend(batch);
+            }
+            source.finish().expect("finish");
+            source.close().expect("close");
+            result
+        } else {
+            rows(&mut first, &format!("SELECT id FROM {table} WHERE id IN (1,2) FOR UPDATE"))
+        };
+        assert_eq!(displayed(selected), [["1"]], "case {index}");
+
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        let blocked = std::thread::scope(|scope| {
+            let contender = scope.spawn(|| {
+                let mut second = factory.open_session(session_context(116)).expect("writer");
+                started_tx.send(()).expect("writer started");
+                rows(&mut second, &format!("INSERT INTO {table} VALUES ({})", if prepared { "2,20" } else { "2" }));
+                finished_tx.send(()).expect("writer finished");
+            });
+            started_rx.recv().expect("writer starts");
+            let blocked = matches!(
+                finished_rx.recv_timeout(std::time::Duration::from_millis(200)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            );
+            // Release before asserting so failure cannot strand the writer.
+            first.control_transaction("ROLLBACK").expect("release reader");
+            contender.join().expect("writer finishes after release");
+            blocked
+        });
+        assert_eq!(blocked, isolation == "REPEATABLE-READ", "case {index}: absent-key lock follows the transaction's isolation");
+        assert_eq!(displayed(rows(&mut first, &format!("SELECT id FROM {table} ORDER BY id"))),
+            [["1"], ["2"]]);
+        first.control_transaction("ROLLBACK").expect("finish implicit read");
+    }
 }
 
 /// The prelock joins the failed-statement release list: an EXECUTE that fails

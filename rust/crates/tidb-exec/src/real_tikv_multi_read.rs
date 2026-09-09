@@ -97,7 +97,7 @@ impl std::error::Error for RealTiKvMultiReadError {
 impl<T, S> RealTiKvMultiReadSession<T, S>
 where
     T: QueryTransport,
-    T::Response: 'static,
+    T::Response: Send + 'static,
     S: TimestampSource,
 {
     /// Returns configured inputs in stable left-then-right order.

@@ -20,7 +20,8 @@ use std::time::Duration;
 
 use crate::region::{
     BackgroundRegionCache, BackgroundRegionCacheError, BackgroundRegionCacheOwner, KeyRange,
-    RegionCache, RegionLoader, RegionLocation, RegionQueryLoader, RegionRouteError, StoreLiveness,
+    LeaderRequest, RegionCache, RegionLoader, RegionLocation, RegionQueryLoader,
+    RegionRecoveryError, RegionRouteError, RequestSelection, RequestSelector, StoreLiveness,
     StoreLivenessProbe,
 };
 use crate::{DirectUnaryClient, DEFAULT_STORE_LIVENESS_TIMEOUT};
@@ -233,7 +234,7 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
         region_cache: BackgroundRegionCache<L>,
         authority_id: u64,
     ) -> Result<Self, BackgroundRegionCacheError> {
-        let cluster_id = region_cache.with_cache(|cache| cache.cluster_id())?;
+        let cluster_id = region_cache.with_cache_read(|cache| cache.cluster_id())?;
         Ok(Self {
             client: Arc::new(Mutex::new(client)),
             region_cache,
@@ -254,6 +255,26 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
         self.client.as_ref()
     }
 
+    /// Gives an independent policy worker its own client capability while
+    /// retaining the same transport, region cache and process authority.
+    #[must_use]
+    pub fn fork_client(&self) -> Self
+    where
+        C: Clone,
+    {
+        Self {
+            client: Arc::new(Mutex::new(
+                self.client
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .clone(),
+            )),
+            region_cache: self.region_cache.clone(),
+            cluster_id: self.cluster_id,
+            authority_id: self.authority_id,
+        }
+    }
+
     /// Returns a handle to the same region-cache authority.
     #[must_use]
     pub fn region_cache_handle(&self) -> BackgroundRegionCache<L> {
@@ -266,6 +287,31 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
         operation: impl FnOnce(&mut RegionCache<L>) -> R,
     ) -> Result<R, BackgroundRegionCacheError> {
         self.region_cache.with_cache(operation)
+    }
+
+    /// Reads shared canonical metadata without excluding independent requests.
+    pub fn inspect_region_cache<R>(
+        &self,
+        operation: impl FnOnce(&RegionCache<L>) -> R,
+    ) -> Result<R, BackgroundRegionCacheError> {
+        self.region_cache.with_cache_read(operation)
+    }
+
+    /// Keeps route selection and its observation under the same cache borrow.
+    pub fn with_request_selection<R>(
+        &self,
+        selector: &mut RequestSelector,
+        observe: impl FnOnce(&RegionCache<L>, Result<RequestSelection, RegionRouteError>) -> R,
+    ) -> Result<R, BackgroundRegionCacheError> {
+        self.region_cache.with_request_selection(selector, observe)
+    }
+
+    /// Publishes only the metadata changes required by successful routing.
+    pub fn on_request_success(
+        &self,
+        request: &LeaderRequest,
+    ) -> Result<Result<(), RegionRecoveryError>, BackgroundRegionCacheError> {
+        self.region_cache.on_request_success(request)
     }
 
     /// Finds one key without holding the canonical cache lock across loader I/O.

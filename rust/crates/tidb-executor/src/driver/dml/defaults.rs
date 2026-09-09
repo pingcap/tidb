@@ -345,6 +345,10 @@ impl<R: tidb_expr::rewriter::ColumnResolver> tidb_expr::rewriter::ColumnResolver
     fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
         self.base.fold_constant(expression, mode);
     }
+
+    fn eval_constant(&self, expression: &Expression) -> Result<Datum, tidb_expr::EvalError> {
+        self.base.eval_constant(expression)
+    }
 }
 
 /// Finds and materializes every named DEFAULT in one scalar expression using

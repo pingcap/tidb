@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::{Read, Write};
+use std::io::{self, IoSlice, Read, Write};
 
 use crate::compression::{CompressedReader, CompressedWriter, CompressionAlgorithm};
 use crate::error::PacketError;
@@ -74,6 +74,27 @@ pub struct PacketWriter<W> {
     sequence: u8,
 }
 
+/// Keeps a frame's header and body together without copying its payload.
+/// A scalar-only transport remains valid; short vectored writes advance the
+/// borrowed slices, and only a fully accepted frame advances its sequence.
+fn write_uncompressed_frame<W: Write>(
+    writer: &mut W,
+    header: &[u8; 4],
+    payload: &[u8],
+) -> Result<(), PacketError> {
+    let mut slices = [IoSlice::new(header), IoSlice::new(payload)];
+    let mut remaining = &mut slices[..];
+    while !remaining.is_empty() {
+        match writer.write_vectored(remaining) {
+            Ok(0) => return Err(io::Error::from(io::ErrorKind::WriteZero).into()),
+            Ok(written) => IoSlice::advance_slices(&mut remaining, written),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
 impl<W: Write> PacketWriter<W> {
     /// Creates a writer whose first packet has sequence number zero.
     pub fn new(inner: W) -> Self {
@@ -106,8 +127,7 @@ impl<W: Write> PacketWriter<W> {
         loop {
             let frame_len = remaining.len().min(MAX_PAYLOAD_LEN);
             let header = PacketHeader::new(frame_len, self.sequence)?.encode();
-            self.inner.write_all(&header)?;
-            self.inner.write_all(&remaining[..frame_len])?;
+            write_uncompressed_frame(&mut self.inner, &header, &remaining[..frame_len])?;
             self.sequence = self.sequence.wrapping_add(1);
             remaining = &remaining[frame_len..];
 
@@ -407,6 +427,28 @@ enum PacketOutput<W> {
     Compressed(CompressedWriter<W>),
 }
 
+impl<W: Write> PacketOutput<W> {
+    fn write_frame(&mut self, header: &[u8; 4], payload: &[u8]) -> Result<(), PacketError> {
+        match self {
+            Self::Uncompressed(inner) => write_uncompressed_frame(inner, header, payload),
+            Self::Compressed(writer) => {
+                // The compression owner already buffers these bytes into
+                // envelopes; retain its admission and error boundaries.
+                for bytes in [header.as_slice(), payload] {
+                    if writer.write_bytes(bytes)? != bytes.len() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::WriteZero,
+                            "compressed packet writer accepted a short write",
+                        )
+                        .into());
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
 /// Writes logical MySQL packets through the negotiated compression mode.
 pub struct PacketIoWriter<W> {
     output: PacketOutput<W>,
@@ -468,6 +510,45 @@ impl<W: Write> PacketIoWriter<W> {
         self.write_logical_payload(payload)
     }
 
+    /// Accepts a logical packet into the connection's reusable frame buffer.
+    /// The sequence advances on admission; callers bound buffering and call
+    /// `flush` at response boundaries. Compressed connections use their existing
+    /// envelope buffer instead of introducing another queue.
+    pub fn buffer_packet(&mut self, payload: &[u8]) -> Result<(), PacketError> {
+        if !matches!(self.output, PacketOutput::Uncompressed(_)) {
+            return self.write_logical_payload(payload);
+        }
+        let headers = (payload.len() / MAX_PAYLOAD_LEN + 1).saturating_mul(4);
+        self.framed.reserve(payload.len().saturating_add(headers));
+        let mut remaining = payload;
+        loop {
+            let frame_len = remaining.len().min(MAX_PAYLOAD_LEN);
+            self.framed.extend_from_slice(
+                &PacketHeader::new(frame_len, self.sequence)?.encode(),
+            );
+            self.framed.extend_from_slice(&remaining[..frame_len]);
+            self.sequence = self.sequence.wrapping_add(1);
+            remaining = &remaining[frame_len..];
+            if frame_len < MAX_PAYLOAD_LEN {
+                return Ok(());
+            }
+        }
+    }
+
+    fn flush_pending_frames(&mut self) -> Result<(), PacketError> {
+        if self.framed.is_empty() {
+            return Ok(());
+        }
+        let result = match &mut self.output {
+            PacketOutput::Uncompressed(inner) => inner.write_all(&self.framed),
+            PacketOutput::Compressed(_) => unreachable!("compression owns its envelope buffer"),
+        };
+        // A failed write may have accepted a prefix. Never replay it on a
+        // later flush; the caller must treat the connection as failed.
+        self.framed.clear();
+        result.map_err(PacketError::from)
+    }
+
     /// Writes several logical payloads as one uncompressed transport write.
     ///
     /// The server result path commonly has a metadata packet, one row packet,
@@ -484,40 +565,17 @@ impl<W: Write> PacketIoWriter<W> {
             return Ok(());
         }
 
-        // Go's PacketIO appends every frame to one reusable packet buffer. A
-        // result batch already owns all logical payloads, so reserve their
-        // headers and bodies up front and avoid the geometric reallocations
-        // (and copies) that otherwise occur while assembling the same wire
-        // stream.
-        let framed_capacity = payloads.iter().fold(0usize, |capacity, payload| {
-            capacity.saturating_add(payload.len().saturating_add(4))
-        });
-        self.framed.clear();
-        if self.framed.capacity() < framed_capacity {
-            self.framed
-                .reserve(framed_capacity - self.framed.capacity());
-        }
-        let mut sequence = self.sequence;
+        self.flush_pending_frames()?;
+        let sequence = self.sequence;
         for payload in payloads {
-            let mut remaining = *payload;
-            loop {
-                let frame_len = remaining.len().min(MAX_PAYLOAD_LEN);
-                self.framed
-                    .extend_from_slice(&PacketHeader::new(frame_len, sequence)?.encode());
-                self.framed.extend_from_slice(&remaining[..frame_len]);
-                sequence = sequence.wrapping_add(1);
-                remaining = &remaining[frame_len..];
-                if frame_len < MAX_PAYLOAD_LEN {
-                    break;
-                }
-            }
+            self.buffer_packet(payload)?;
         }
-
-        if let PacketOutput::Uncompressed(inner) = &mut self.output {
-            inner.write_all(&self.framed)?;
+        let result = self.flush_pending_frames();
+        if result.is_err() {
+            // Preserve write_packets' all-or-error sequence contract.
+            self.sequence = sequence;
         }
-        self.sequence = sequence;
-        Ok(())
+        result
     }
 
     /// Writes Go `PacketIO.WritePacket`'s source-shaped buffer.
@@ -533,12 +591,12 @@ impl<W: Write> PacketIoWriter<W> {
     }
 
     fn write_logical_payload(&mut self, payload: &[u8]) -> Result<(), PacketError> {
+        self.flush_pending_frames()?;
         let mut remaining = payload;
         loop {
             let frame_len = remaining.len().min(MAX_PAYLOAD_LEN);
             let header = PacketHeader::new(frame_len, self.sequence)?.encode();
-            self.write_bytes(&header)?;
-            self.write_bytes(&remaining[..frame_len])?;
+            self.output.write_frame(&header, &remaining[..frame_len])?;
             self.sequence = self.sequence.wrapping_add(1);
             remaining = &remaining[frame_len..];
             if frame_len < MAX_PAYLOAD_LEN {
@@ -552,6 +610,7 @@ impl<W: Write> PacketIoWriter<W> {
     /// Go resets the inner sequence to the next compressed sequence after a
     /// compressed flush; preserve that observable state transition exactly.
     pub fn flush(&mut self) -> Result<(), PacketError> {
+        self.flush_pending_frames()?;
         match &mut self.output {
             PacketOutput::Uncompressed(inner) => inner.flush().map_err(PacketError::from),
             PacketOutput::Compressed(writer) => {
@@ -577,23 +636,6 @@ impl<W: Write> PacketIoWriter<W> {
         match self.output {
             PacketOutput::Uncompressed(inner) => inner,
             PacketOutput::Compressed(writer) => writer.into_inner(),
-        }
-    }
-
-    fn write_bytes(&mut self, data: &[u8]) -> Result<(), PacketError> {
-        match &mut self.output {
-            PacketOutput::Uncompressed(inner) => inner.write_all(data).map_err(PacketError::from),
-            PacketOutput::Compressed(writer) => {
-                let written = writer.write_bytes(data)?;
-                if written == data.len() {
-                    Ok(())
-                } else {
-                    Err(PacketError::from(std::io::Error::new(
-                        std::io::ErrorKind::WriteZero,
-                        "compressed packet writer accepted a short write",
-                    )))
-                }
-            }
         }
     }
 }

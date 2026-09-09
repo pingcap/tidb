@@ -1,0 +1,351 @@
+{
+  "date": "2026-09-09",
+  "status": "WIP implementation; scoped local read-only performance gain recorded, not Ready or whole-package completion",
+  "git_head": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "branch": "hparser-integration",
+  "artifact_root": "/private/tmp/tidb-direct-transaction.Tz3RgL",
+  "change": {
+    "owner": "rust/crates/tidb-exec/src/cluster_table_storage.rs",
+    "source_sha256": "f1810135ae3e7f3d469e31f3a47b3675b451c524d50880536122d72e7f77d8db",
+    "removed": [
+      "TransactionRequest and per-operation reply channels",
+      "TransactionThread and PreparedTransactionThread",
+      "serve_transaction and serve_pessimistic_transaction",
+      "detached read-only Finish message",
+      "two obsolete worker-design tests"
+    ],
+    "implementation": "One synchronized transaction state, called directly by statement/session snapshots; one owner takes state before commit or rollback. Existing coordinator, timestamp selection, lock-cache eligibility, lock retry and commit protocol logic remain shared. Pessimistic heartbeat and opener survive terminal work. Coprocessor scan workers are unchanged.",
+    "go_source": "Pinned client-go txnkv/transaction/txn.go: KVTxn.Get, Commit and Rollback; txnkv/txnsnapshot/snapshot.go: KVSnapshot.Get. The union-store/snapshot call is direct, with no equivalent in-process transaction actor.",
+    "control_recovery": "before-source.tar.gz",
+    "candidate_recovery": "after-source.tar.gz"
+  },
+  "binaries": {
+    "before": "7e5982ec24ce6f8f0777e668a177cb2790df9284c03afa5a6c497b12150a2f21",
+    "after": "67fea53f95a37f036b8ddf514a12419bfa91019b254dadefdb16732f6be9e6c0",
+    "go": "e734c80768b5cd44852b01b573bd36f30d19bb47510e0883e6017f18563cbde2",
+    "sysbench": "f0822a96ba0de7354b9156c144f36353a5dbc705862e164e5b2bb041dc5cd046"
+  },
+  "method": {
+    "fixture": "Owned retained 100000-row perf_sysbench.sbtest1 on shared TiKV. No writes/reset to this fixture.",
+    "workload": "Prepared oltp_read_only.lua, --time=0 --events=6000 --rand-seed=1; 1000 warmup events before each measured trial",
+    "order": "before/after/after/before once at one client, repeated three times each at 8 and 32 clients",
+    "threads": [
+      1,
+      8,
+      32
+    ],
+    "trials": 28,
+    "measured_transactions": 168000,
+    "warmup_transactions": 28000,
+    "errors": 0,
+    "reconnects": 0,
+    "latency": "Corrected isolated sysbench 1.0.20 AArch64 histogram build; p95 must be positive. Median of per-trial p95 values is not a pooled percentile.",
+    "cpu": "ps process CPU delta per equal 6000-event trial; TiKV batch histogram deltas are aggregate, with small background request differences",
+    "command": "ruby /private/tmp/tidb-direct-transaction.Tz3RgL/candidate/measure.rb",
+    "raw": "candidate/measure.json; candidate/trial-*.log; candidate/trial-*-before.txt and -after.txt",
+    "server_configuration": "control/candidate-manifest.json and candidate/candidate-manifest.json; shared cluster at /private/tmp/tidb-live-workload.nIrZBe/manifest.json",
+    "parity_before": {
+      "before": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+      "after": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+      "go": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c"
+    },
+    "parity_after": {
+      "before": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+      "after": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+      "go": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c"
+    }
+  },
+  "interpretation": {
+    "acceptance": "Record a local fixed-work read-only gain: all candidate TPS samples exceed all immediate-control samples at each tier. The repeated eight-client median gain is 5.83%, versus a 1.64% full control range relative to its median. This is not a general throughput guarantee or a Go-vs-Rust performance comparison.",
+    "latency": "Median mean and p95 latency decrease at all three tiers. The final 32-client candidate p95 is 13.46 ms versus the 13.22 ms control median; the median improvement does not imply every tail sample improves.",
+    "cpu": "Eight-client SQL CPU decreases 18.35%; TiKV CPU decreases 2.79%. At 32 clients SQL CPU decreases 18.75%, while TiKV CPU increases 1.75%. Do not claim universal TiKV CPU reduction.",
+    "limitations": [
+      "Short equal-work trials on one local single-TiKV fixture",
+      "Only two measured samples per binary at one client; six each at 8 and 32",
+      "Read-only sysbench, not TPC-C or mixed-write performance",
+      "Desktop contention and CPU clocks are uncontrolled; the severe drift in the preceding window did not recur here",
+      "No new CPU profile was captured in this increment; ps deltas are not call-chain attribution",
+      "Go binary differs from checkout source revision"
+    ]
+  },
+  "go_identity": {
+    "tidb_revision": "23bff313186b8ceb61fcbe9faac43ae700e7fb14",
+    "client_go": "v2.0.8-0.20260724023932-61ecd7c11416",
+    "checkout_client_go": "v2.0.8-0.20260708122311-01bd8f99f4da"
+  },
+  "lifecycle": {
+    "command": "ruby /private/tmp/tidb-direct-transaction.Tz3RgL/candidate/lifecycle.rb",
+    "result": "candidate/lifecycle.json",
+    "matching_output_sha256": "83855f3809e32cd0425c6fca22d75d79f250940f3abff0ceb86aa90e61e9d6e0",
+    "cases": [
+      "Pessimistic read-your-writes and rollback",
+      "Pessimistic locking read, multi-key update and commit",
+      "Optimistic update and commit",
+      "Commit with async-commit and 1PC eligibility enabled; SQL outcome only, no assertion of chosen wire protocol",
+      "Repeatable read while another session commits",
+      "Contender blocks on held lock and completes after rollback",
+      "Disconnect releases held pessimistic locks"
+    ],
+    "databases_created_and_retained": [
+      "perf_direct_txn_go_tz3rgl",
+      "perf_direct_txn_rust_tz3rgl"
+    ],
+    "scope": "Selected live Go/Rust SQL behavior, not exhaustive transaction or whole-package parity"
+  },
+  "validation": {
+    "profile": "WIP",
+    "cwd": "/Users/qiliu/projects/tidb/rust",
+    "commands": [
+      "cargo test --offline --locked --release -j12 -p tidb-exec --lib",
+      "cargo test --offline --locked --release -j12 -p tidb-exec --test all",
+      "cargo test --offline --locked --release -j12 -p tidb-server --lib cluster_session_node::tests",
+      "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "git diff --check"
+    ],
+    "exec_unit": "330 passed, 0 failed; unit.log",
+    "exec_all": "722 passed, 0 failed, 1 ignored; exec-all.log",
+    "server": "156 passed, 5 failed in both candidate and saved pre-migration source; server-unit.log and server-before.log",
+    "preexisting_server_failures": [
+      "cluster_session_node::tests::autocommit_transactions::an_insert_reads_for_its_uniqueness_check_and_publishes_at_that_read",
+      "cluster_session_node::tests::unistore_cop::a_negative_bound_on_an_unsigned_column_follows_gos_rewrite",
+      "cluster_session_node::tests::unistore_cop::an_index_read_and_a_table_scan_agree_over_unsigned_keys",
+      "cluster_session_node::tests::unistore_cop::analyze_changes_the_plan_and_never_the_answer",
+      "cluster_session_node::tests::unistore_cop::every_shape_the_ddl_admits_the_loader_loads"
+    ],
+    "release_build": "Pass, 29.84 seconds, after restoring migrated source; build.log",
+    "not_verified": [
+      "Ready/root make lint",
+      "TPC-C",
+      "Failure-injected live cluster behavior",
+      "Whole Go package completion"
+    ]
+  },
+  "results": {
+    "1": {
+      "summaries": {
+        "before": {
+          "medians": {
+            "tps": 416.88532070087,
+            "latency_mean_ms": 2.395,
+            "latency_p95_ms": 2.735,
+            "sql_cpu_seconds": 8.005,
+            "tikv_cpu_seconds": 8.66,
+            "batch_mean": 1.5022294968009486,
+            "singleton_fraction": 0.787309390856566
+          },
+          "tps_samples": [
+            415.7716027995288,
+            417.9990386022112
+          ],
+          "p95_samples": [
+            2.76,
+            2.71
+          ],
+          "request_counts": [
+            130486,
+            130486
+          ]
+        },
+        "after": {
+          "medians": {
+            "tps": 432.51958068021077,
+            "latency_mean_ms": 2.3099999999999996,
+            "latency_p95_ms": 2.635,
+            "sql_cpu_seconds": 7.264999999999999,
+            "tikv_cpu_seconds": 8.670000000000002,
+            "batch_mean": 1.5025526494641883,
+            "singleton_fraction": 0.787468918519223
+          },
+          "tps_samples": [
+            430.89518474631046,
+            434.1439766141111
+          ],
+          "p95_samples": [
+            2.66,
+            2.61
+          ],
+          "request_counts": [
+            130474,
+            130486
+          ]
+        }
+      },
+      "change_percent": {
+        "tps": 3.750254375245543,
+        "latency_mean_ms": -3.549060542797511,
+        "latency_p95_ms": -3.656307129798908,
+        "sql_cpu_seconds": -9.244222361024379,
+        "tikv_cpu_seconds": 0.11547344110856006,
+        "batch_mean": 0.02151153761311697,
+        "singleton_fraction": 0.02026238534806879
+      }
+    },
+    "8": {
+      "summaries": {
+        "before": {
+          "medians": {
+            "tps": 1800.369079307753,
+            "latency_mean_ms": 4.44,
+            "latency_p95_ms": 4.82,
+            "sql_cpu_seconds": 11.415000000000003,
+            "tikv_cpu_seconds": 12.730000000000004,
+            "batch_mean": 3.830764817010909,
+            "singleton_fraction": 0.034764120218834085
+          },
+          "tps_samples": [
+            1810.8287559606447,
+            1801.8018018018017,
+            1797.8066758554562,
+            1800.288046087374,
+            1800.450112528132,
+            1781.3669022029571
+          ],
+          "p95_samples": [
+            4.82,
+            4.82,
+            4.82,
+            4.82,
+            4.82,
+            4.91
+          ],
+          "request_counts": [
+            130730,
+            130748,
+            130723,
+            130726,
+            130731,
+            130727
+          ]
+        },
+        "after": {
+          "medians": {
+            "tps": 1905.3070464986772,
+            "latency_mean_ms": 4.19,
+            "latency_p95_ms": 4.57,
+            "sql_cpu_seconds": 9.319999999999997,
+            "tikv_cpu_seconds": 12.375,
+            "batch_mean": 4.000999203720797,
+            "singleton_fraction": 0.033823794713442226
+          },
+          "tps_samples": [
+            1918.3425520350418,
+            1909.2471202189272,
+            1904.0969820062835,
+            1878.6986880420827,
+            1890.6570033086496,
+            1906.5171109910711
+          ],
+          "p95_samples": [
+            4.49,
+            4.57,
+            4.57,
+            4.65,
+            4.65,
+            4.57
+          ],
+          "request_counts": [
+            130707,
+            130708,
+            130728,
+            130766,
+            130733,
+            130727
+          ]
+        }
+      },
+      "change_percent": {
+        "tps": 5.828691927505947,
+        "latency_mean_ms": -5.630630630630629,
+        "latency_p95_ms": -5.186721991701249,
+        "sql_cpu_seconds": -18.35304424003509,
+        "tikv_cpu_seconds": -2.7886881382561235,
+        "batch_mean": 4.443874652757174,
+        "singleton_fraction": -2.7048735865388585
+      }
+    },
+    "32": {
+      "summaries": {
+        "before": {
+          "medians": {
+            "tps": 2692.64191038829,
+            "latency_mean_ms": 11.62,
+            "latency_p95_ms": 13.22,
+            "sql_cpu_seconds": 12.930000000000007,
+            "tikv_cpu_seconds": 11.990000000000009,
+            "batch_mean": 7.657847676720375,
+            "singleton_fraction": 0.009694346780295723
+          },
+          "tps_samples": [
+            2680.366316729953,
+            2685.525020141438,
+            2688.5334050275574,
+            2702.7027027027025,
+            2696.7504157490225,
+            2703.7988373665
+          ],
+          "p95_samples": [
+            13.22,
+            13.22,
+            13.22,
+            13.22,
+            13.46,
+            13.22
+          ],
+          "request_counts": [
+            130799,
+            130794,
+            130781,
+            130831,
+            130822,
+            130802
+          ]
+        },
+        "after": {
+          "medians": {
+            "tps": 2835.2389175618496,
+            "latency_mean_ms": 11.035,
+            "latency_p95_ms": 12.52,
+            "sql_cpu_seconds": 10.504999999999995,
+            "tikv_cpu_seconds": 12.199999999999989,
+            "batch_mean": 7.737458327333528,
+            "singleton_fraction": 0.00644661352885108
+          },
+          "tps_samples": [
+            2845.2200303490135,
+            2852.660105548424,
+            2853.4741047224998,
+            2796.420581655481,
+            2825.2578047746856,
+            2772.5151333117697
+          ],
+          "p95_samples": [
+            12.75,
+            12.52,
+            12.3,
+            12.52,
+            12.52,
+            13.46
+          ],
+          "request_counts": [
+            130775,
+            130914,
+            130786,
+            130604,
+            130767,
+            130776
+          ]
+        }
+      },
+      "change_percent": {
+        "tps": 5.295802855307885,
+        "latency_mean_ms": -5.034423407917377,
+        "latency_p95_ms": -5.295007564296528,
+        "sql_cpu_seconds": -18.754833720031016,
+        "tikv_cpu_seconds": 1.7514595496245233,
+        "batch_mean": 1.0395956406284546,
+        "singleton_fraction": -33.50131086754432
+      }
+    }
+  },
+  "cleanup": "All three owned supervisors exited successfully. PIDs 76638,76639,76640,76661,77216,77331 and all twelve ports (57106-57113,65327-65328,65350-65351) verified absent. Fixture data, new lifecycle databases, binaries and logs retained. No Git mutations."
+}

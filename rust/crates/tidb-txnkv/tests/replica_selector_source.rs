@@ -95,6 +95,44 @@ fn leader_policy_selects_pd_leader_first_with_leader_flags() {
 }
 
 #[test]
+fn evicted_region_rebuilds_whether_eviction_precedes_selector_creation_or_selection() {
+    // client-go internal/locate/region_request.go:974-987: a cached region
+    // removed since task construction yields an epoch-style range rebuild,
+    // not a terminal SQL error. No RPC may target the removed topology.
+    for mode in [
+        ReplicaReadMode::Leader,
+        ReplicaReadMode::Follower,
+        ReplicaReadMode::Mixed,
+        ReplicaReadMode::Learner,
+        ReplicaReadMode::PreferLeader,
+    ] {
+        for evict_before_creation in [false, true] {
+            let mut cache = cache();
+            let region = location().region;
+            if evict_before_creation {
+                assert!(cache.invalidate(region));
+            }
+            let mut selector = cache
+                .request_selector(
+                    region,
+                    ReadPolicy {
+                        mode,
+                        ..ReadPolicy::default()
+                    },
+                )
+                .expect("task topology may disappear before selector creation");
+            if !evict_before_creation {
+                assert!(cache.invalidate(region));
+            }
+            assert!(matches!(
+                cache.select_request(&mut selector).unwrap(),
+                RequestSelection::ReloadRegion { region: missing } if missing == region
+            ));
+        }
+    }
+}
+
+#[test]
 fn supported_replica_read_policies_create_request_scoped_selectors() {
     for policy in [
         ReadPolicy {

@@ -14,10 +14,9 @@
 
 #![allow(missing_docs)]
 
-use std::cell::Cell;
 use std::collections::VecDeque;
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use prost::Message;
 use tidb_codec::encode_value_in_timezone;
@@ -82,7 +81,7 @@ impl QueryTransport for ScriptedTransport {
 
 struct TrackingResponse {
     subsets: VecDeque<QueryResultSubset>,
-    closed: Rc<Cell<bool>>,
+    closed: Arc<AtomicBool>,
 }
 
 impl QueryResponse for TrackingResponse {
@@ -91,7 +90,7 @@ impl QueryResponse for TrackingResponse {
     }
 
     fn close(&mut self) {
-        self.closed.set(true);
+        self.closed.store(true, Ordering::SeqCst);
         self.subsets.clear();
     }
 }
@@ -312,22 +311,22 @@ fn checksum_preserves_general_result_metadata() {
 
 #[test]
 fn query_result_has_one_close_owner() {
-    let closed = Rc::new(Cell::new(false));
+    let closed = Arc::new(AtomicBool::new(false));
     let response = TrackingResponse {
         subsets: VecDeque::from([QueryResultSubset {
             data: vec![1, 2, 3],
             runtime: None,
         }]),
-        closed: Rc::clone(&closed),
+        closed: Arc::clone(&closed),
     };
     let mut runtime = InjectedQueryRuntime::new(TrackingTransport(Some(response)));
     let mut result = runtime
         .checksum(&request(StoreType::TiKv))
         .expect("raw checksum response");
     assert_eq!(result.next_raw().unwrap(), Some(vec![1, 2, 3]));
-    assert!(!closed.get());
+    assert!(!closed.load(Ordering::SeqCst));
     result.close();
-    assert!(closed.get());
+    assert!(closed.load(Ordering::SeqCst));
     assert!(result.is_closed());
     assert_eq!(result.next_raw().unwrap(), None);
 }
@@ -404,7 +403,7 @@ fn select_client_options_deliver_typed_transaction_events() {
 
 #[test]
 fn raw_then_select_conversion_consumes_each_subset_once() {
-    let closed = Rc::new(Cell::new(false));
+    let closed = Arc::new(AtomicBool::new(false));
     let response = TrackingResponse {
         subsets: VecDeque::from([
             QueryResultSubset {
@@ -416,7 +415,7 @@ fn raw_then_select_conversion_consumes_each_subset_once() {
                 runtime: None,
             },
         ]),
-        closed: Rc::clone(&closed),
+        closed: Arc::clone(&closed),
     };
     let mut runtime = InjectedQueryRuntime::new(TrackingTransport(Some(response)));
     let mut result = runtime
@@ -430,7 +429,7 @@ fn raw_then_select_conversion_consumes_each_subset_once() {
     assert_eq!(result.next_raw().unwrap(), Some(vec![0xff, 0x00]));
     let mut iter = result.into_select_iter(Vec::new());
     assert!(iter.next_row().unwrap().is_none());
-    assert!(closed.get());
+    assert!(closed.load(Ordering::SeqCst));
 }
 
 #[test]

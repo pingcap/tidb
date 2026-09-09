@@ -13,8 +13,7 @@
 
 //! Go's `types.ETString` ARGUMENT declaration, at the value boundary
 //! (`crate::arg_eval_type`) -- the third rung of the layer whose first two are
-//! `datetime.rs` and `etint_argument.rs`, kept in its own file so none of the
-//! three grows toward the size ratchet.
+//! `datetime.rs` and `etint_argument.rs`.
 //!
 //! # Recorded witnesses, and Go-derived values
 //!

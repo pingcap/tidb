@@ -1,0 +1,352 @@
+{
+  "date": "2026-09-09",
+  "status": "WIP; severe same-binary drift prevents performance acceptance. Goal remains active.",
+  "git_head": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "branch": "hparser-integration",
+  "artifact_root": "/private/tmp/tidb-foreground-live.TOidmN",
+  "binaries": {
+    "before": "b0e20b9273d3d202bddf2e65c645acffc91cc6e781b54799e2ef54a53fa61abd",
+    "after": "7e5982ec24ce6f8f0777e668a177cb2790df9284c03afa5a6c497b12150a2f21",
+    "drain": "8969985b8dd5afaebc949db4ba4393f9ff0e555f06d4e6d25e3d4da1149679a7",
+    "go": "e734c80768b5cd44852b01b573bd36f30d19bb47510e0883e6017f18563cbde2",
+    "sysbench": "f0822a96ba0de7354b9156c144f36353a5dbc705862e164e5b2bb041dc5cd046"
+  },
+  "method": {
+    "fixture": "Owned retained 100000-row perf_sysbench.sbtest1, shared TiKV; read-only prepared oltp_read_only.lua",
+    "threads": [
+      1,
+      8,
+      32
+    ],
+    "events_per_trial": [
+      6000,
+      30000,
+      30000
+    ],
+    "warmup_events_per_trial": 1000,
+    "order": [
+      "before",
+      "after",
+      "drain",
+      "go",
+      "go",
+      "drain",
+      "after",
+      "before"
+    ],
+    "measured_transactions": 528000,
+    "errors": 0,
+    "reconnects": 0,
+    "raw": "candidate/measure.json",
+    "command": "ruby /private/tmp/tidb-foreground-live.TOidmN/candidate/measure.rb",
+    "scope": "Six query outputs (307 lines), before and after, not whole-package parity or TPC-C."
+  },
+  "interpretation": "Do not accept aggregate medians as a speedup: controls drift sharply within the same window. At eight clients before falls from 1603.42 to 788.47 TPS and drain from 1795.98 to 970.76; after also falls from 1810.28 to 679.84. Rust request counts remain near 652k-653k per 30000 transactions. The underlying drift cause is unproven. pmset reports no recorded thermal/performance warning; that is not proof of constant clocks or absence of contention. Desktop processes were active and not modified.",
+  "go_identity": {
+    "tidb_revision": "23bff313186b8ceb61fcbe9faac43ae700e7fb14",
+    "client_go": "v2.0.8-0.20260724023932-61ecd7c11416",
+    "checkout_client_go": "v2.0.8-0.20260708122311-01bd8f99f4da",
+    "limitation": "Live Go is not checkout HEAD."
+  },
+  "profile_method": {
+    "command": "ruby /private/tmp/tidb-foreground-live.TOidmN/candidate/profile.rb",
+    "analysis": "python3 /private/tmp/tidb-foreground-live.TOidmN/candidate/analyze.py; go tool pprof -top and -top -cum on candidate/go-cpu.pprof",
+    "scope": "Separate 40-second eight-client read-only workloads with 15-second Rust Time Profiler / Go pprof captures. Exact PID and Running-state filter for Rust. Profiled TPS is diagnostic only; inclusive weights overlap and are not wall-clock waiting or causal effect sizes.",
+    "go_total_sample_seconds": 54.87,
+    "go_top": "candidate/go-top.txt",
+    "go_flow": "candidate/go-rpc-flow.txt"
+  },
+  "ownership_finding": {
+    "rust": "cluster_table_storage.rs SessionSnapshot::get -> ask -> zero-capacity reply channel -> serve_pessimistic_transaction -> snapshot_get_at. A transaction worker remains leased across the session transaction.",
+    "go": "KVTxn.Get -> union-store Get -> KVSnapshot.Get -> get in client-go txn.go/snapshot.go; source has no matching in-process transaction request actor.",
+    "obsolete_premise": "TransactionThread documents worker-local Rc<RefCell<_>> as the reason for pinning, but SharedReadRuntime now owns Arc<Mutex<C>> and synchronized region leases.",
+    "proof": "ProductionOptimisticTransaction and ProductionPessimisticTransaction satisfy Send, confirmed with rustc metadata-only compilation of transaction_send_probe.rs using the current compiled tidb-txnkv metadata. Initial .rlib stub and missing proc-macro lookup attempts were tool setup failures, not failed Send bounds.",
+    "probe_command": "cd rust && ruby /private/tmp/tidb-foreground-live.TOidmN/check_transaction_send.rb",
+    "metadata_sha256": "4f4b25ad1e38f165b8e575fb0ebffe856e484a02d87419c524944de5a56ac120",
+    "next": "Replace the obsolete transaction actor with direct synchronized transaction ownership, preserving all read/write, timestamp, lock-cache, retry, heartbeat, commit and shutdown behavior. Audit coprocessor worker ownership separately; do not substitute channel tuning."
+  },
+  "cleanup": "All three supervisors exited successfully. Owned PIDs 61795,61796,61797,61841,62088,62218 and all 12 ports verified absent. Data, logs, immutable binaries and CPU traces retained; prior console logs archived. No source implementation changes, Git mutations or shared-cluster writes in this turn.",
+  "validation_profile": "WIP performance investigation; no Ready lint or whole-package completion",
+  "results": {
+    "1": {
+      "before": {
+        "medians": {
+          "tps": 398.7955439259955,
+          "latency_mean_ms": 2.505,
+          "latency_p95_ms": 3.02,
+          "sql_cpu_seconds": 8.515,
+          "tikv_cpu_seconds": 8.925000000000006,
+          "batch_mean": 1.4863775953609273
+        },
+        "tps_samples": [
+          399.8054280250278,
+          397.78565982696324
+        ]
+      },
+      "after": {
+        "medians": {
+          "tps": 391.0387836284757,
+          "latency_mean_ms": 2.5549999999999997,
+          "latency_p95_ms": 3.0999999999999996,
+          "sql_cpu_seconds": 8.639999999999999,
+          "tikv_cpu_seconds": 9.14,
+          "batch_mean": 1.4918198349261071
+        },
+        "tps_samples": [
+          395.9324539233607,
+          386.14511333359076
+        ]
+      },
+      "drain": {
+        "medians": {
+          "tps": 402.7575359558142,
+          "latency_mean_ms": 2.49,
+          "latency_p95_ms": 2.95,
+          "sql_cpu_seconds": 8.4,
+          "tikv_cpu_seconds": 8.875000000000004,
+          "batch_mean": 1.4991914523049057
+        },
+        "tps_samples": [
+          420.4949225238105,
+          385.0201493878179
+        ]
+      },
+      "go": {
+        "medians": {
+          "tps": 401.93813341739434,
+          "latency_mean_ms": 2.4850000000000003,
+          "latency_p95_ms": 2.9400000000000004,
+          "sql_cpu_seconds": 14.920000000000002,
+          "tikv_cpu_seconds": 10.575,
+          "batch_mean": 1.0568004761121146
+        },
+        "tps_samples": [
+          402.5035722192034,
+          401.37269461558526
+        ]
+      }
+    },
+    "8": {
+      "before": {
+        "medians": {
+          "tps": 1195.943990779947,
+          "latency_mean_ms": 7.565,
+          "latency_p95_ms": 9.48,
+          "sql_cpu_seconds": 92.6,
+          "tikv_cpu_seconds": 103.465,
+          "batch_mean": 2.6393070552892075
+        },
+        "tps_samples": [
+          1603.4206306787814,
+          788.4673508811123
+        ]
+      },
+      "after": {
+        "medians": {
+          "tps": 1245.0629746968993,
+          "latency_mean_ms": 8.09,
+          "latency_p95_ms": 9.775,
+          "sql_cpu_seconds": 89.225,
+          "tikv_cpu_seconds": 97.01000000000002,
+          "batch_mean": 2.814577182791808
+        },
+        "tps_samples": [
+          1810.2824040550327,
+          679.843545338766
+        ]
+      },
+      "drain": {
+        "medians": {
+          "tps": 1383.3704204169858,
+          "latency_mean_ms": 6.345000000000001,
+          "latency_p95_ms": 9.275,
+          "sql_cpu_seconds": 90.07499999999999,
+          "tikv_cpu_seconds": 102.03999999999998,
+          "batch_mean": 1.7128396846443144
+        },
+        "tps_samples": [
+          1795.9770114942528,
+          970.7638293397188
+        ]
+      },
+      "go": {
+        "medians": {
+          "tps": 1458.5899106892898,
+          "latency_mean_ms": 5.49,
+          "latency_p95_ms": 6.555,
+          "sql_cpu_seconds": 90.95000000000002,
+          "tikv_cpu_seconds": 94.54499999999999,
+          "batch_mean": 2.0929352814758433
+        },
+        "tps_samples": [
+          1522.4407770537725,
+          1394.7390443248069
+        ]
+      }
+    },
+    "32": {
+      "before": {
+        "medians": {
+          "tps": 1596.8156247441516,
+          "latency_mean_ms": 21.625,
+          "latency_p95_ms": 29.69,
+          "sql_cpu_seconds": 98.11,
+          "tikv_cpu_seconds": 84.03500000000003,
+          "batch_mean": 5.469683425190261
+        },
+        "tps_samples": [
+          1150.7303301828895,
+          2042.9009193054137
+        ]
+      },
+      "after": {
+        "medians": {
+          "tps": 1800.5119896817473,
+          "latency_mean_ms": 17.935,
+          "latency_p95_ms": 21.72,
+          "sql_cpu_seconds": 99.04,
+          "tikv_cpu_seconds": 90.32499999999993,
+          "batch_mean": 5.435421427669099
+        },
+        "tps_samples": [
+          1587.2092100459763,
+          2013.814769317518
+        ]
+      },
+      "drain": {
+        "medians": {
+          "tps": 1818.709299825649,
+          "latency_mean_ms": 17.535,
+          "latency_p95_ms": 20.77,
+          "sql_cpu_seconds": 97.775,
+          "tikv_cpu_seconds": 91.95000000000005,
+          "batch_mean": 2.7226058146757506
+        },
+        "tps_samples": [
+          1730.4530903008103,
+          1906.9655093504875
+        ]
+      },
+      "go": {
+        "medians": {
+          "tps": 1854.2447692011924,
+          "latency_mean_ms": 17.195,
+          "latency_p95_ms": 21.305,
+          "sql_cpu_seconds": 97.61999999999999,
+          "tikv_cpu_seconds": 91.88499999999999,
+          "batch_mean": 4.723640159328221
+        },
+        "tps_samples": [
+          1824.17395322818,
+          1884.3155851742051
+        ]
+      }
+    }
+  },
+  "parity_before": {
+    "before": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "after": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "go": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "drain": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c"
+  },
+  "parity_after": {
+    "before": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "after": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "go": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c",
+    "drain": "ad1e46405a9ace48963d51a9608eb036609ada257d87fffd4943b3b79a144a4c"
+  },
+  "profiles": {
+    "drain": {
+      "pid": 61841,
+      "running_samples": 59162,
+      "running_weight_ns": 59162000000,
+      "transport_weight_ns": 4039000000,
+      "cores_weight_ns": {
+        "CPU 8 (P Core)": 4533000000,
+        "CPU 10 (P Core)": 4455000000,
+        "CPU 9 (P Core)": 4523000000,
+        "CPU 1 (E Core)": 1231000000,
+        "CPU 4 (P Core)": 4623000000,
+        "CPU 11 (P Core)": 4534000000,
+        "CPU 7 (P Core)": 4455000000,
+        "CPU 15 (P Core)": 4547000000,
+        "CPU 12 (P Core)": 4590000000,
+        "CPU 5 (P Core)": 4451000000,
+        "CPU 14 (P Core)": 4525000000,
+        "CPU 0 (E Core)": 1519000000,
+        "CPU 13 (P Core)": 4453000000,
+        "CPU 6 (P Core)": 4613000000,
+        "CPU 3 (E Core)": 1014000000,
+        "CPU 2 (E Core)": 1096000000
+      },
+      "selected_inclusive": [
+        {
+          "function": "_RNvMNtCsftR0iWavVJf_9tidb_exec18pinned_thread_poolNtB2_16PinnedThreadPool5serve",
+          "weight_ns": 17070000000,
+          "percent": 28.852979953348434
+        },
+        {
+          "function": "_RNvMs4_Cs86qUWZMTMg2_12tidb_sessionNtB5_7Session27run_bound_prepared_internal",
+          "weight_ns": 14762000000,
+          "percent": 24.95182718636963
+        },
+        {
+          "function": "_RINvNtCsftR0iWavVJf_9tidb_exec21cluster_table_storage29serve_pessimistic_transactionNtNtNtCsgHm9IycL60G_10tidb_txnkv3rpc17tonic_coprocessor22TonicCoprocessorClientNtNtB1q_9pd_loader14PdRegionLoaderNtNtCsctl5ePav7HJ_14tidb_pd_client6client8PdClientECs5shZUXI7gMO_11tidb_server",
+          "weight_ns": 9582000000,
+          "percent": 16.19620702477942
+        },
+        {
+          "function": "_RNvNtCsecE3ETOUyLz_13tidb_executor6driver15run_select_stmt",
+          "weight_ns": 9486000000,
+          "percent": 16.03394070518238
+        }
+      ]
+    },
+    "after": {
+      "pid": 62218,
+      "running_samples": 49941,
+      "running_weight_ns": 49941000000,
+      "transport_weight_ns": 2800000000,
+      "cores_weight_ns": {
+        "CPU 15 (P Core)": 4002000000,
+        "CPU 9 (P Core)": 4087000000,
+        "CPU 10 (P Core)": 4017000000,
+        "CPU 8 (P Core)": 4071000000,
+        "CPU 14 (P Core)": 4024000000,
+        "CPU 0 (E Core)": 498000000,
+        "CPU 3 (E Core)": 306000000,
+        "CPU 13 (P Core)": 4069000000,
+        "CPU 4 (P Core)": 4072000000,
+        "CPU 7 (P Core)": 3937000000,
+        "CPU 6 (P Core)": 4063000000,
+        "CPU 5 (P Core)": 4077000000,
+        "CPU 12 (P Core)": 3914000000,
+        "CPU 11 (P Core)": 4063000000,
+        "CPU 1 (E Core)": 390000000,
+        "CPU 2 (E Core)": 351000000
+      },
+      "selected_inclusive": [
+        {
+          "function": "_RNvMNtCsftR0iWavVJf_9tidb_exec18pinned_thread_poolNtB2_16PinnedThreadPool5serve",
+          "weight_ns": 14717000000,
+          "percent": 29.468773152319738
+        },
+        {
+          "function": "_RNvMs4_Cs86qUWZMTMg2_12tidb_sessionNtB5_7Session27run_bound_prepared_internal",
+          "weight_ns": 14093000000,
+          "percent": 28.21929877255161
+        },
+        {
+          "function": "_RNvNtCsecE3ETOUyLz_13tidb_executor6driver15run_select_stmt",
+          "weight_ns": 9154000000,
+          "percent": 18.329628962175367
+        },
+        {
+          "function": "_RINvNtCsftR0iWavVJf_9tidb_exec21cluster_table_storage29serve_pessimistic_transactionNtNtNtCsgHm9IycL60G_10tidb_txnkv3rpc17tonic_coprocessor22TonicCoprocessorClientNtNtB1q_9pd_loader14PdRegionLoaderNtNtCsctl5ePav7HJ_14tidb_pd_client6client8PdClientECs5shZUXI7gMO_11tidb_server",
+          "weight_ns": 7805000000,
+          "percent": 15.628441561042031
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "scope": "Local prepared mixed-sysbench improvement; not full sysbench/TPC-C goal acceptance",
+  "base_commit": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "change": "Bounded aggregate input lookahead: exhausted one-batch inputs use existing pipeline states and finalization inline; larger inputs retain worker execution",
+  "build": "cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+  "cluster": "Shared local PD/TiKV and Go TiDB v9.0.0-beta.2.pre-nightly",
+  "workload": "oltp_read_write",
+  "sysbench_version": "1.0.20",
+  "protocol": "prepared",
+  "threads": 2,
+  "sample_seconds": 20,
+  "rounds": 3,
+  "random_seed": 1,
+  "data": {
+    "database": "perf_sysbench_locking_v2",
+    "tables": 1,
+    "prepared_rows": 100000,
+    "analyzed": true,
+    "state": "Shared previously exercised dataset; original Go preparation has auto-increment gaps, which normal DELETE/INSERT transactions can fill"
+  },
+  "warmup_seconds_per_server": 5,
+  "order": [["before", "after", "go"], ["after", "go", "before"], ["go", "before", "after"]],
+  "before": {
+    "port": 53007,
+    "binary_sha256": "0cf5656920906e05c35985d48246e40a998cd5501d36d317674703bb18db306d",
+    "transactions": [8259, 8020, 7923],
+    "seconds": [20.0043, 20.0020, 20.0024],
+    "median_tps": 400.9599040095991
+  },
+  "after": {
+    "port": 53008,
+    "binary_sha256": "29ac2bc4c8c055a8d341e33212faa2b1fc5cdea6eb856c1d0a8c57b3023a8c26",
+    "transactions": [8359, 8331, 8260],
+    "seconds": [20.0021, 20.0054, 20.0025],
+    "median_tps": 416.43756185829824
+  },
+  "go": {
+    "port": 45000,
+    "transactions": [9329, 9198, 9230],
+    "seconds": [20.0049, 20.0014, 20.0019],
+    "median_tps": 461.45616166464185
+  },
+  "median_improvement_percent": 3.860151026055858,
+  "errors": 0,
+  "reconnects": 0,
+  "reproduce": "python3 rust/scripts/compare-sysbench.py --server before:53007 --server after:53008 --server go:45000 --database perf_sysbench_locking_v2 --workload oltp_read_write --threads 2 --seconds 20 --rounds 3 --table-size 100000",
+  "artifacts": "/private/tmp/tidb-agg-admission-comparison/results.json",
+  "large_input_guard": {
+    "sql": "SELECT SUM(lo),SUM(hi),COUNT(*) FROM (SELECT c,MIN(k) AS lo,MAX(k) AS hi FROM sbtest1 GROUP BY c) AS g",
+    "groups": 100001,
+    "go_result": ["5009502923", "5009502923", "100001"],
+    "rounds": 6,
+    "before_seconds": [0.07968320901272818, 0.08171174995368347, 0.08181245799642056, 0.08116662496468052, 0.08082095900317654, 0.08072220900794491],
+    "after_seconds": [0.08125937503064051, 0.08423350000521168, 0.08076583401998505, 0.08278712502215058, 0.0809974999865517, 0.07960191700840369],
+    "median_before_seconds": 0.08099379198392853,
+    "median_after_seconds": 0.08112843750859611,
+    "artifacts": "/private/tmp/tidb-agg-large-guard.json",
+    "notes": "Alternating before/after runs after warm-up; every answer equals Go. EXPLAIN confirms full-scan partial/final grouped HashAgg, retaining MIN/MAX so unused aggregate elimination cannot turn it into a cardinality shortcut. No meaningful change is established by the 0.17% median difference; this is one large-input guard, not all large aggregation shapes."
+  },
+  "tpcc_guard": {
+    "database": "perf_tpcc_locking_v1",
+    "warehouses": 1,
+    "transactions_per_sample": 10000,
+    "rounds": 3,
+    "two_clients": {
+      "before_tps": [485.0405864125244, 467.6794488643846, 470.0545887786136],
+      "after_tps": [490.7836595439708, 465.76231757322734, 471.7245596215602]
+    },
+    "eight_clients": {
+      "before_tps": [713.0697181759292, 689.9115161726696, 678.780039494805],
+      "after_tps": [704.7218915139728, 713.7441290636915, 659.0509937686888]
+    },
+    "artifacts": "/private/tmp/tidb-agg-tpcc-comparison/results.json",
+    "validation": "120000 transactions across 12 samples; no reported errors, all 11 post-run Go checks pass, all 30000 customers have correct balances and delivery counters",
+    "conclusion": "No TPC-C speedup established: small median increases have inconsistent paired directions and time-seeded transaction mixes on a shared evolving dataset."
+  },
+  "notes": "All nine sysbench samples retained; after beats before within every round. No builds, profiling, or other workloads overlapped the measured batch (01:50:55–01:53:55 local time). Latest dataset ANALYZE finished at 01:37:27. Both Rust endpoints include the verified SELECT-lock changes. TPC-C and large-input guards are recorded separately; neither establishes a performance win."
+}

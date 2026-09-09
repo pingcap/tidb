@@ -14,6 +14,8 @@
 
 //! Source-shaped RegionCache TTL and reload state.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 const RELOAD_ON_ACCESS: u8 = 1;
 const EXPIRE_AFTER_TTL: u8 = 1 << 1;
 const DELAYED_RELOAD_PENDING: u8 = 1 << 2;
@@ -35,26 +37,43 @@ pub enum CacheReloadState {
 }
 
 /// TTL and synchronization flags for one cached snapshot.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct CacheEntryState {
-    expires_at_seconds: u64,
+    expires_at_seconds: AtomicU64,
     flags: u8,
 }
+
+impl Clone for CacheEntryState {
+    fn clone(&self) -> Self {
+        Self {
+            expires_at_seconds: AtomicU64::new(self.expires_at_seconds()),
+            flags: self.flags,
+        }
+    }
+}
+
+impl PartialEq for CacheEntryState {
+    fn eq(&self, other: &Self) -> bool {
+        self.expires_at_seconds() == other.expires_at_seconds() && self.flags == other.flags
+    }
+}
+
+impl Eq for CacheEntryState {}
 
 impl CacheEntryState {
     /// Creates an accessed entry with an absolute expiry.
     #[must_use]
     pub const fn new(expires_at_seconds: u64) -> Self {
         Self {
-            expires_at_seconds,
+            expires_at_seconds: AtomicU64::new(expires_at_seconds),
             flags: 0,
         }
     }
 
     /// Exact absolute expiry used by deterministic source tests.
     #[must_use]
-    pub const fn expires_at_seconds(self) -> u64 {
-        self.expires_at_seconds
+    pub fn expires_at_seconds(&self) -> u64 {
+        self.expires_at_seconds.load(Ordering::Relaxed)
     }
 
     /// Adds the source synchronization flag without replacing sibling flags.
@@ -64,7 +83,7 @@ impl CacheEntryState {
 
     /// Whether one source synchronization flag is currently set.
     #[must_use]
-    pub const fn is_marked(self, state: CacheReloadState) -> bool {
+    pub const fn is_marked(&self, state: CacheReloadState) -> bool {
         let flag = state.flag();
         flag != 0 && self.flags & flag != 0
     }
@@ -81,26 +100,35 @@ impl CacheEntryState {
 
     /// Implements client-go's strict `now > ttl` expiry and near-boundary
     /// renewal. `next_expiry` is injected so jitter remains deterministic.
-    pub const fn check_and_renew(
-        &mut self,
+    pub fn check_and_renew(
+        &self,
         now_seconds: u64,
         base_ttl_seconds: u64,
         next_expiry: u64,
     ) -> bool {
-        if self.flags & (RELOAD_ON_ACCESS | DELAYED_RELOAD_READY) != 0
-            || now_seconds > self.expires_at_seconds
-        {
-            return false;
+        // Cache topology/reload flags stay protected by the cache's RwLock.
+        // Readers may renew the TTL concurrently, like Go checkRegionCacheTTL.
+        let mut expiry = self.expires_at_seconds();
+        loop {
+            if self.flags & (RELOAD_ON_ACCESS | DELAYED_RELOAD_READY) != 0 || now_seconds > expiry {
+                return false;
+            }
+            if self.flags & EXPIRE_AFTER_TTL != 0
+                || expiry > now_seconds.saturating_add(base_ttl_seconds)
+                || next_expiry <= expiry
+            {
+                return true;
+            }
+            match self.expires_at_seconds.compare_exchange_weak(
+                expiry,
+                next_expiry,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(current) => expiry = current,
+            }
         }
-        if self.flags & EXPIRE_AFTER_TTL != 0
-            || self.expires_at_seconds > now_seconds.saturating_add(base_ttl_seconds)
-        {
-            return true;
-        }
-        if next_expiry > self.expires_at_seconds {
-            self.expires_at_seconds = next_expiry;
-        }
-        true
     }
 }
 

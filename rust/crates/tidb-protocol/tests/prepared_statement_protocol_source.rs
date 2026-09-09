@@ -604,6 +604,40 @@ fn the_stream_rejects_a_cell_that_does_not_match_its_column_type() {
 }
 
 #[test]
+fn reused_binary_row_buffer_matches_borrowed_encoding_and_retains_errors() {
+    for charset in ["binary", "utf8mb4", "gbk"] {
+        let mut stream = BinaryResultSetStream::new(
+            vec![longlong_column("k"), varstring_column("c")],
+            ResultSetOptions {
+                result_encoder: tidb_protocol::ResultEncoder::new(charset).unwrap(),
+                ..ResultSetOptions::default()
+            },
+        ).unwrap();
+        stream.metadata_packets().unwrap();
+        let mut buffer = Vec::with_capacity(4096);
+        let allocation = buffer.as_ptr();
+        for cells in [
+            vec![BinaryResultCell::Null, BinaryResultCell::Null],
+            vec![BinaryResultCell::LongLong(-1), BinaryResultCell::String("中文".as_bytes().to_vec())],
+            vec![BinaryResultCell::LongLong(9), BinaryResultCell::String(Vec::new())],
+        ] {
+            let expected = stream.row_packet(&cells).unwrap();
+            stream.row_packet_owned_into(cells, &mut buffer).unwrap();
+            assert_eq!(buffer, expected);
+            assert_eq!(buffer.as_ptr(), allocation);
+        }
+        let previous = buffer.clone();
+        for invalid in [vec![], vec![BinaryResultCell::Null; 3], vec![BinaryResultCell::Null, BinaryResultCell::LongLong(1)]] {
+            assert!(stream.row_packet_owned_into(invalid, &mut buffer).is_err());
+            assert_eq!(buffer, previous);
+        }
+        stream.finish_packet().unwrap();
+        assert!(stream.row_packet_owned_into(vec![BinaryResultCell::Null; 2], &mut buffer).is_err());
+        assert_eq!(buffer, previous);
+    }
+}
+
+#[test]
 fn the_stream_rejects_an_unsupported_result_column_type() {
     let mut column = varstring_column("c");
     // TypeGeometry: Go's DumpBinaryRow has no arm for it and falls into

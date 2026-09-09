@@ -14,7 +14,7 @@
 //! Go's `types.ETInt` ARGUMENT declaration, at the value boundary
 //! (`crate::arg_eval_type`) -- the second rung of the same layer
 //! `datetime.rs`'s `an_etdatetime_argument_is_cast_before_the_signature_runs`
-//! covers, kept in its own file so neither grows toward the size ratchet.
+//! covers.
 //!
 //! Almost every expected value here is GO-DERIVED, captured statement by
 //! statement from real TiDB through `gorun` (`rust/difftests/gorun`) and

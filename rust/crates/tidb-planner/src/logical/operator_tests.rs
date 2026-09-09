@@ -20,6 +20,8 @@
 //! no session for. Each test therefore states the CONTRACT of one ported Go
 //! body directly: what it classifies, what it keeps, what it drops.
 
+use crate::physical_property::ColumnSortItem;
+
 use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode};
 use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode, BaseFuncDesc, ByItems};
 use tidb_expr::column::Column;
@@ -70,7 +72,7 @@ use super::topn::LogicalTopN;
 use super::union_all::{LogicalPartitionUnionAll, LogicalUnionAll};
 use super::union_scan::{contains_virtual_column, LogicalUnionScan, EXTRA_PHYS_TBL_ID};
 use super::window::{
-    BoundType, FrameBound, FrameType, LogicalWindow, RangeCmpDataType, WindowFrame, WindowSortItem,
+    BoundType, FrameBound, FrameType, LogicalWindow, RangeCmpDataType, WindowFrame,
 };
 use super::{BaseLogicalPlan, LogicalPlan};
 use crate::find_best_task::LogicalJoinType;
@@ -1325,7 +1327,7 @@ fn sort_prepare_possible_properties_replaces_the_child_order() {
 fn sort_extracts_correlated_cols_from_every_by_item() {
     let cor = Expression::CorrelatedColumn(tidb_expr::column::CorrelatedColumn {
         column: column(42),
-        data: None,
+        data: Default::default(),
     });
     let sort = LogicalSort::new(
         BaseLogicalPlan::with_id(1, LogicalSort::TYPE, 0),
@@ -1732,7 +1734,7 @@ fn apply(join_type: LogicalJoinType) -> LogicalApply {
 fn cor(unique_id: i64) -> tidb_expr::column::CorrelatedColumn {
     tidb_expr::column::CorrelatedColumn {
         column: column(unique_id),
-        data: None,
+        data: Default::default(),
     }
 }
 
@@ -2062,7 +2064,7 @@ fn window(descs: usize) -> LogicalWindow {
 #[test]
 fn window_pushes_down_only_partition_column_predicates() {
     let mut w = window(1);
-    w.partition_by = vec![WindowSortItem::new(column(1), false)];
+    w.partition_by = vec![ColumnSortItem::new(column(1), false)];
     let (pushed, kept) = w.predicate_push_down(&[
         eq(col_expr(1), one()),
         eq(col_expr(2), one()),
@@ -2099,8 +2101,8 @@ fn window_pruning_strips_its_own_outputs_and_adds_what_it_reads() {
         BaseLogicalPlan::with_id(1, LogicalWindow::TYPE, 0),
         vec![window_desc(vec![col_expr(5)])],
     );
-    w.partition_by = vec![WindowSortItem::new(column(6), false)];
-    w.order_by = vec![WindowSortItem::new(column(7), true)];
+    w.partition_by = vec![ColumnSortItem::new(column(6), false)];
+    w.order_by = vec![ColumnSortItem::new(column(7), true)];
     let output = schema(&[1, 2, 90]);
     // The parent asks for a child column and for the window's own output.
     let used = w.prune_columns_local(&[column(1), column(90)], &output);
@@ -2146,8 +2148,8 @@ fn window_derive_stats_gives_each_result_column_the_row_count() {
 #[test]
 fn window_offers_partition_by_then_order_by() {
     let mut w = window(1);
-    w.partition_by = vec![WindowSortItem::new(column(3), false)];
-    w.order_by = vec![WindowSortItem::new(column(4), true)];
+    w.partition_by = vec![ColumnSortItem::new(column(3), false)];
+    w.order_by = vec![ColumnSortItem::new(column(4), true)];
     let info = w.prepare_possible_properties(Some(&PossiblePropertiesInfo {
         orders: vec![vec![column(99)]],
         has_tiflash: true,
@@ -2175,7 +2177,7 @@ fn window_extracts_correlated_cols_from_args_and_frame_calc_funcs() {
     let cor = |id| {
         Expression::CorrelatedColumn(tidb_expr::column::CorrelatedColumn {
             column: column(id),
-            data: None,
+            data: Default::default(),
         })
     };
     let mut w = LogicalWindow::new(
@@ -2212,17 +2214,17 @@ fn window_extracts_correlated_cols_from_args_and_frame_calc_funcs() {
 fn window_partition_equality_ignores_order_but_order_equality_does_not() {
     let mut a = window(1);
     a.partition_by = vec![
-        WindowSortItem::new(column(1), false),
-        WindowSortItem::new(column(2), false),
+        ColumnSortItem::new(column(1), false),
+        ColumnSortItem::new(column(2), false),
     ];
     a.order_by = vec![
-        WindowSortItem::new(column(3), false),
-        WindowSortItem::new(column(4), true),
+        ColumnSortItem::new(column(3), false),
+        ColumnSortItem::new(column(4), true),
     ];
     let mut b = window(1);
     b.partition_by = vec![
-        WindowSortItem::new(column(2), true),
-        WindowSortItem::new(column(1), false),
+        ColumnSortItem::new(column(2), true),
+        ColumnSortItem::new(column(1), false),
     ];
     b.order_by = a.order_by.clone();
     assert!(a.equal_partition_by(&b));
@@ -2233,14 +2235,14 @@ fn window_partition_equality_ignores_order_but_order_equality_does_not() {
     assert!(!a.equal_order_by(&b));
     // A different direction breaks it too.
     b.order_by = vec![
-        WindowSortItem::new(column(3), true),
-        WindowSortItem::new(column(4), true),
+        ColumnSortItem::new(column(3), true),
+        ColumnSortItem::new(column(4), true),
     ];
     assert!(!a.equal_order_by(&b));
     // A different partition column set breaks partition equality.
     b.partition_by = vec![
-        WindowSortItem::new(column(1), false),
-        WindowSortItem::new(column(9), false),
+        ColumnSortItem::new(column(1), false),
+        ColumnSortItem::new(column(9), false),
     ];
     assert!(!a.equal_partition_by(&b));
 }
@@ -2405,13 +2407,13 @@ fn window_refuses_duration_against_datetime_on_tiflash() {
         ..FrameBound::default()
     };
     let mut w = window(1);
-    w.order_by = vec![WindowSortItem::new(typed(FieldTypeCode::Duration), false)];
+    w.order_by = vec![ColumnSortItem::new(typed(FieldTypeCode::Duration), false)];
     assert!(!w.check_comparison_for_tiflash(&bound(FieldTypeCode::Datetime)));
     assert!(!w.check_comparison_for_tiflash(&bound(FieldTypeCode::Timestamp)));
     assert!(w.check_comparison_for_tiflash(&bound(FieldTypeCode::LongLong)));
 
     let mut w = window(1);
-    w.order_by = vec![WindowSortItem::new(typed(FieldTypeCode::Datetime), false)];
+    w.order_by = vec![ColumnSortItem::new(typed(FieldTypeCode::Datetime), false)];
     assert!(!w.check_comparison_for_tiflash(&bound(FieldTypeCode::Duration)));
 
     // A bound with no CompareCols is not a range bound and is always fine.
@@ -2447,7 +2449,7 @@ fn cte(class: std::rc::Rc<std::cell::RefCell<CteClass>>) -> LogicalCTE {
 fn cor_expr(unique_id: i64) -> Expression {
     Expression::CorrelatedColumn(tidb_expr::column::CorrelatedColumn {
         column: column(unique_id),
-        data: None,
+        data: Default::default(),
     })
 }
 

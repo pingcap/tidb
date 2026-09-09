@@ -48,6 +48,12 @@ pub trait ColumnResolver {
     /// `(row index, result type, unique id)`, or `None` when unknown.
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)>;
 
+    /// The current typed value of a prepared marker. Its absolute order is
+    /// retained in the compiled expression, independently of this snapshot.
+    fn param_value(&self, _order: usize) -> Result<Datum, EvalError> {
+        Err(EvalError::Unsupported("unbound prepared parameter"))
+    }
+
     /// Resolves `path` to a COMPLETE output column rather than the three
     /// fields [`Self::resolve`] reports.
     ///
@@ -59,13 +65,14 @@ pub trait ColumnResolver {
     /// [`crate::simple_expr::build_simple_expr`] does) should override this so
     /// none of that identity is dropped on the way into the tree.
     ///
-    /// The default reproduces exactly what this rewriter did before the hook
-    /// existed, so a resolver that only knows `(index, type, unique id)` is
-    /// unaffected.
+    /// The default combines `(index, type, unique id)` with the optional
+    /// source name. Overrides return all metadata in one lookup; rewriting
+    /// does not resolve the name again after receiving a complete column.
     fn resolve_column(&self, path: &[String]) -> Option<Column> {
         let (index, ret_type, unique_id) = self.resolve(path)?;
         let mut col = Column::new(unique_id, ret_type);
         col.index = index as i64;
+        col.orig_name = self.orig_name(path).unwrap_or_default();
         Some(col)
     }
 
@@ -167,6 +174,74 @@ pub trait ColumnResolver {
         if mode != ConstantFoldMode::Disabled {
             crate::constant_fold::derive_constant_null_flag(expression);
         }
+    }
+
+    /// Evaluates a column-free expression in the same context used to build
+    /// it. Ranger endpoints must not lose parameters, warnings or session
+    /// settings by reconstructing a sessionless evaluation context.
+    /// Session-backed resolvers override this; the standalone default carries
+    /// only the explicitly supplied timezone.
+    fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError> {
+        crate::eval_expression_once(expression, &crate::ZonedNoColumns(self.time_zone()))
+    }
+}
+
+// Keep a borrowed resolver's complete context, including trait objects, when
+// passing it through the rewriter's statically dispatched recursive helpers.
+impl<T: ColumnResolver + ?Sized> ColumnResolver for &T {
+    fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+        (**self).resolve(path)
+    }
+    fn resolve_column(&self, path: &[String]) -> Option<Column> {
+        (**self).resolve_column(path)
+    }
+    fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
+        (**self).param_value(order)
+    }
+    fn orig_name(&self, path: &[String]) -> Option<String> {
+        (**self).orig_name(path)
+    }
+    fn resolve_constant(&self, path: &[String]) -> Option<Expression> {
+        (**self).resolve_constant(path)
+    }
+    fn has_resolved_constants(&self) -> bool {
+        (**self).has_resolved_constants()
+    }
+    fn resolve_default(&self, path: &[String]) -> Option<Expression> {
+        (**self).resolve_default(path)
+    }
+    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+        (**self).time_zone()
+    }
+    fn date_modes(&self) -> tidb_datatype::DateModes {
+        (**self).date_modes()
+    }
+    fn connection_charset_info(&self) -> (&str, &str) {
+        (**self).connection_charset_info()
+    }
+    fn tidb_info_len(&self) -> usize {
+        (**self).tidb_info_len()
+    }
+    fn like_default_escape(&self) -> u8 {
+        (**self).like_default_escape()
+    }
+    fn no_unsigned_subtraction(&self) -> bool {
+        (**self).no_unsigned_subtraction()
+    }
+    fn div_precision_increment(&self) -> u32 {
+        (**self).div_precision_increment()
+    }
+    fn current_database(&self) -> Option<String> {
+        (**self).current_database()
+    }
+    fn fold_mode(&self) -> ConstantFoldMode {
+        (**self).fold_mode()
+    }
+    fn fold_constant(&self, expression: &mut Expression, mode: ConstantFoldMode) {
+        (**self).fold_constant(expression, mode);
+    }
+    fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError> {
+        (**self).eval_constant(expression)
     }
 }
 
@@ -331,9 +406,13 @@ fn wrap_binary_literals(
 
 /// Applies the two `ETReal` argument declarations of Go's
 /// `powFunctionClass.getFunction` while building the expression tree.
-fn wrap_power_arguments(name: &str, args: Vec<Expression>) -> Vec<Expression> {
+fn wrap_power_arguments(
+    name: &str,
+    args: Vec<Expression>,
+    resolver: &impl ColumnResolver,
+) -> Result<Vec<Expression>, EvalError> {
     if !matches!(name, "pow" | "power") {
-        return args;
+        return Ok(args);
     }
     args.into_iter()
         .map(|arg| {
@@ -341,29 +420,38 @@ fn wrap_power_arguments(name: &str, args: Vec<Expression>) -> Vec<Expression> {
                 .static_type()
                 .is_some_and(|field_type| field_type.eval_type() == tidb_datatype::EvalType::Real)
             {
-                return arg;
+                return Ok(arg);
             }
+            let ret_type = arg.static_type().map_or_else(
+                || crate::builtin_arithmetic::new_return_field_type(tidb_datatype::EvalType::Real),
+                |source| crate::builtin_arithmetic::real_argument_type(source).into_owned(),
+            );
             if let Expression::Constant(constant) = &arg {
-                let real = match constant.value {
-                    Datum::Int(value) => Some(value as f64),
-                    Datum::UInt(value) => Some(value as f64),
+                // Immutable integer literals need no runtime conversion.
+                // Markers use the context-aware cast builder below.
+                let real = match constant.literal_value() {
+                    Some(Datum::Int(value)) => Some(*value as f64),
+                    Some(Datum::UInt(value)) => Some(*value as f64),
                     _ => None,
                 };
                 if let Some(value) = real {
-                    return Expression::Constant(Constant::new(
+                    return Ok(Expression::Constant(Constant::new(
                         Datum::Real(value),
-                        FieldType::new(FieldTypeCode::Double),
-                    ));
+                        ret_type,
+                    )));
                 }
             }
-            let mut ret_type = FieldType::new(FieldTypeCode::Double);
-            ret_type.set_flen(23);
-            ret_type.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
-            Expression::ScalarFunction(ScalarFunction::new(
+            let mut cast = Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new("cast_double"),
                 ret_type,
                 vec![arg],
-            ))
+            ));
+            // WrapWithCastAsReal calls BuildCastFunction, which folds its
+            // newly constructed cast even under a try/disabled-fold parent.
+            // Parameter results keep their deferred expression for rebinding.
+            derive_tree_collation_with_connection(&mut cast, resolver.connection_charset_info())?;
+            resolver.fold_constant(&mut cast, ConstantFoldMode::Normal);
+            Ok(cast)
         })
         .collect()
 }
@@ -545,17 +633,24 @@ fn rewrite_expr_resolved_inner(
         if let Some(constant) = resolver.resolve_constant(path) {
             return Ok(constant);
         }
-        let mut col = resolver
+        let col = resolver
             .resolve_column(path)
             .ok_or_else(|| EvalError::UnknownColumn(path.join(".")))?;
-        if let Some(orig_name) = resolver.orig_name(path) {
-            col.orig_name = orig_name;
-        }
         return Ok(Expression::Column(col));
     }
     let mut built = rewrite_leaf(expr, resolver)?;
     derive_tree_collation_with_connection(&mut built, resolver.connection_charset_info())?;
-    resolver.fold_constant(&mut built, resolver.fold_mode());
+    // Go FuncCastExpr calls BuildCastFunctionWithCheck directly, outside
+    // newFunctionWithInit's try/disabled-fold counters. JSON casts alone
+    // stay unfolded because their evaluation flags can still change.
+    let fold_mode = match expr {
+        Expr::Cast(cast) if matches!(cast.cast_type, tidb_ast::CastType::Json) => {
+            ConstantFoldMode::Disabled
+        }
+        Expr::Cast(_) => ConstantFoldMode::Normal,
+        _ => resolver.fold_mode(),
+    };
+    resolver.fold_constant(&mut built, fold_mode);
     prepare_in_string_hash_sets(&mut built);
     Ok(built)
 }
@@ -673,6 +768,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
         | Expr::Float(_)
         | Expr::Bool(_)
         | Expr::Null
+        | Expr::ParamMarker { .. }
         | Expr::String(_)
         | Expr::Decimal(_)
         | Expr::Hex(_)
@@ -704,6 +800,16 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
 #[inline(never)]
 fn rewrite_leaf_literal(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expression, EvalError> {
     match expr {
+        Expr::ParamMarker { order, .. } => {
+            let value = crate::expr_util::ParamMarkerValue {
+                datum: resolver.param_value(*order)?,
+                order: i64::try_from(*order)
+                    .map_err(|_| EvalError::Unsupported("prepared parameter index overflow"))?,
+            };
+            Ok(Expression::Constant(crate::expr_util::param_marker_expression(
+                &value, true, false, None,
+            )))
+        }
         // Go's `ast.NewValueExpr` hands the scanned literal to
         // `types.NewDatum`, whose int64/uint64 split puts a literal above
         // `math.MaxInt64` in `KindUint64` -- the signedness lives in the datum
@@ -1441,7 +1547,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 .iter()
                 .map(|arg| rewrite_expr_resolved(arg, &child_resolver))
                 .collect::<Result<_, _>>()?;
-            let rewritten = wrap_power_arguments(&lowered, rewritten);
+            let rewritten = wrap_power_arguments(&lowered, rewritten, resolver)?;
             let mut ret_type = builtin_return_type(&lowered, &rewritten).ok_or_else(|| {
                 crate::builtin_registry::unresolved_error(&lowered, resolver.current_database())
             })?;
@@ -1669,6 +1775,252 @@ mod tests {
     use crate::context::NoColumns;
     use tidb_ast::{BinaryOp, UnaryOp};
     use tidb_chunk::chunk::Chunk;
+
+    struct PreparedValues(Vec<Datum>);
+
+    impl crate::Columns for PreparedValues {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
+            self.0
+                .get(order)
+                .cloned()
+                .ok_or(EvalError::Unsupported("unbound prepared parameter"))
+        }
+    }
+
+    impl ColumnResolver for PreparedValues {
+        fn resolve(&self, _: &[String]) -> Option<(usize, FieldType, i64)> {
+            None
+        }
+
+        fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+            tidb_datatype::SessionTimeZone::utc()
+        }
+
+        fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
+            crate::Columns::param_value(self, order)
+        }
+
+        fn fold_constant(&self, expression: &mut Expression, mode: ConstantFoldMode) {
+            crate::fold_constant_in_mode(expression, self, mode);
+        }
+    }
+
+    #[test]
+    fn explicit_cast_owns_folding_independently_of_parent_mode() {
+        let context = PreparedValues(Vec::new());
+        for mode in [
+            ConstantFoldMode::Normal,
+            ConstantFoldMode::Try,
+            ConstantFoldMode::Disabled,
+        ] {
+            let resolver = FoldModeResolver::new(&context, mode);
+            let integer = crate::simple_expr::parse_simple_expr(
+                &resolver,
+                "CAST('2' AS SIGNED)",
+                &crate::simple_expr::BuildOptions::new(),
+            )
+            .unwrap();
+            assert!(
+                matches!(integer, Expression::Constant(ref constant) if constant.value == Datum::Int(2)),
+                "{mode:?}: {integer:?}"
+            );
+            let json = crate::simple_expr::parse_simple_expr(
+                &resolver,
+                "CAST('2' AS JSON)",
+                &crate::simple_expr::BuildOptions::new(),
+            )
+            .unwrap();
+            assert!(
+                matches!(json, Expression::ScalarFunction(ref function) if function.func_name.lowercase() == "cast_json"),
+                "{mode:?}: {json:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn prepared_rewriter_retains_distinct_markers_with_equal_initial_values() {
+        let ctx = PreparedValues(vec![Datum::Int(2), Datum::Int(2)]);
+        let mut compiled = crate::simple_expr::parse_simple_expr(
+            &ctx,
+            "? - ?",
+            &crate::simple_expr::BuildOptions::new(),
+        )
+        .unwrap();
+        let Expression::Constant(planned) = &compiled else {
+            panic!("missing parameter-dependent planning value");
+        };
+        assert_eq!(planned.value, Datum::Int(0));
+        assert!(planned.literal_value().is_none());
+        let Some(Expression::ScalarFunction(function)) = planned.deferred_expr.as_deref() else {
+            panic!("parameter-dependent expression was discarded");
+        };
+        for (order, arg) in function.args.iter().enumerate() {
+            let Expression::Constant(constant) = arg else {
+                panic!("expected a marker");
+            };
+            assert_eq!(constant.param_marker.unwrap().order, order as i64);
+            assert_eq!(constant.value, Datum::Int(2));
+        }
+        let hash = compiled.hash_code().to_vec();
+        for (values, expected) in [(vec![2, 2], 0), (vec![9, 2], 7), (vec![2, 9], -7)] {
+            let ctx = PreparedValues(values.into_iter().map(Datum::Int).collect());
+            assert_eq!(
+                crate::eval_expression_once(&compiled, &ctx).unwrap(),
+                Datum::Int(expected),
+            );
+        }
+        assert_eq!(compiled.hash_code(), hash);
+    }
+
+    #[test]
+    fn prepared_rewriter_preserves_markers_under_lazy_nested_scopes() {
+        let planning = PreparedValues(vec![
+            Datum::Int(1),
+            Datum::Int(10),
+            Datum::Int(3),
+            Datum::Int(40),
+            Datum::Int(2),
+        ]);
+        let compiled = crate::simple_expr::parse_simple_expr(
+            &planning,
+            "IF(?, ? - ?, ? + ?)",
+            &crate::simple_expr::BuildOptions::new(),
+        )
+        .unwrap();
+        for (condition, expected) in [(Datum::Int(1), 7), (Datum::Int(0), 42), (Datum::Null, 42)] {
+            let ctx = PreparedValues(vec![
+                condition,
+                Datum::Int(10),
+                Datum::Int(3),
+                Datum::Int(40),
+                Datum::Int(2),
+            ]);
+            assert_eq!(
+                crate::eval_expression_once(&compiled, &ctx).unwrap(),
+                Datum::Int(expected),
+            );
+        }
+        assert!(crate::simple_expr::parse_simple_expr(
+            &PreparedValues(vec![]),
+            "?",
+            &crate::simple_expr::BuildOptions::new(),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn prepared_rewriter_keeps_parameter_dependent_implicit_real_casts() {
+        let planning = PreparedValues(vec![Datum::Int(2), Datum::Int(3)]);
+        let compiled = crate::simple_expr::parse_simple_expr(
+            &planning,
+            "POW(?, ?)",
+            &crate::simple_expr::BuildOptions::new(),
+        )
+        .unwrap();
+        for (values, expected) in [([2, 3], 8.0), ([3, 2], 9.0), ([5, 0], 1.0)] {
+            let context = PreparedValues(values.into_iter().map(Datum::Int).collect());
+            assert_eq!(
+                crate::eval_expression_once(&compiled, &context).unwrap(),
+                Datum::Real(expected),
+            );
+        }
+    }
+
+    #[test]
+    fn prepared_rewriter_keeps_changing_string_in_members() {
+        let text = |value: &str| Datum::new_string(value.to_owned());
+        let planning = PreparedValues(vec![text("a"), text("a"), text("a")]);
+        let compiled = crate::simple_expr::parse_simple_expr(
+            &planning,
+            "? IN (?, ?, 'literal')",
+            &crate::simple_expr::BuildOptions::new(),
+        )
+        .unwrap();
+        for (values, expected) in [
+            (vec![text("a"), text("a"), text("a")], Datum::Int(1)),
+            (vec![text("b"), text("a"), text("b")], Datum::Int(1)),
+            (vec![text("a"), text("b"), text("c")], Datum::Int(0)),
+            (vec![text("a"), text("b"), Datum::Null], Datum::Null),
+        ] {
+            assert_eq!(
+                crate::eval_expression_once(&compiled, &PreparedValues(values)).unwrap(),
+                expected,
+            );
+        }
+    }
+
+    #[test]
+    fn prepared_nested_planning_values_determine_parent_result_types() {
+        let text = |value: &str| Datum::new_string(value.to_owned());
+        // Live Go PREPARE/EXECUTE, plus builtin_time.go's getExpressionFsp,
+        // strToDateFunctionClass.getRetTp and convertTzFunctionClass.getDecimal.
+        for (sql, values, replay, code, flen, decimal, expected, replay_expected) in [
+            (
+                "TIME(CONCAT(?, '.1'))",
+                vec![text("12:34:56")],
+                vec![text("01:02:03")],
+                FieldTypeCode::Duration,
+                12,
+                1,
+                "12:34:56.1",
+                "01:02:03.1",
+            ),
+            (
+                "STR_TO_DATE(?, CONCAT('%Y', ?))",
+                vec![text("2026-09-08"), text("-%m-%d")],
+                vec![text("2025/02/03"), text("/%m/%d")],
+                FieldTypeCode::Date,
+                10,
+                0,
+                "2026-09-08",
+                "2025-02-03",
+            ),
+            (
+                "CONVERT_TZ(CONCAT(?, '.123'), '+00:00', '+00:00')",
+                vec![text("2026-09-08 12:34:56")],
+                vec![text("2025-02-03 01:02:03")],
+                FieldTypeCode::Datetime,
+                23,
+                3,
+                "2026-09-08 12:34:56.123",
+                "2025-02-03 01:02:03.123",
+            ),
+        ] {
+            let context = PreparedValues(values);
+            let compiled = crate::simple_expr::parse_simple_expr(
+                &context,
+                sql,
+                &crate::simple_expr::BuildOptions::new(),
+            )
+            .unwrap();
+            let actual = compiled.static_type().unwrap();
+            assert_eq!(
+                (actual.code(), actual.flen(), actual.decimal()),
+                (code, flen, decimal),
+                "{sql}",
+            );
+            assert_eq!(
+                crate::eval_expression_once(&compiled, &context)
+                    .unwrap()
+                    .sql_string()
+                    .unwrap(),
+                expected,
+                "{sql}",
+            );
+            assert_eq!(
+                crate::eval_expression_once(&compiled, &PreparedValues(replay))
+                    .unwrap()
+                    .sql_string()
+                    .unwrap(),
+                replay_expected,
+                "replayed {sql}",
+            );
+        }
+    }
 
     // Evaluates a rewritten expression over an empty (column-less) row.
     fn eval_const(expr: &Expr) -> Datum {

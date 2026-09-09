@@ -479,13 +479,12 @@ impl KvTable {
         range_hints: Option<&[usize]>,
         descending: bool,
         keep_order: bool,
-        read_ahead_batches: usize,
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
     ) -> Result<Option<RemoteRowCursor>, KvTableError> {
         let common_handle = !self.common_handle_offsets.is_empty();
         let common_primary = crate::handle_range::clustered_primary_metadata(self);
-        if common_handle && (self.has_dirty_content() || common_primary.is_none()) {
+        if common_handle && common_primary.is_none() {
             return Ok(None);
         }
         // A pushdown request names ONE physical table id. A partitioned table
@@ -531,10 +530,41 @@ impl KvTable {
                 }
             })
             .collect();
-        // An integer-handle merge needs every remote row's handle. A projected
-        // primary key already carries it; otherwise `_tidb_rowid` is appended
-        // and dropped before emission. A clean common-handle scan has no
-        // client-side merge, so it appends no synthetic handle.
+        // Every merged row retains its record identity independently of the
+        // visible projection. Integer and composite handles use the same
+        // staged replacement/tombstone merge below.
+        let common_identity = common_primary.as_ref().map(|primary| {
+            let parts = primary
+                .column_offsets
+                .iter()
+                .enumerate()
+                .map(|(part, offset)| {
+                    let column = &self.columns[*offset];
+                    let position = columns
+                        .iter()
+                        .position(|kept| kept.id == column.id)
+                        .unwrap_or_else(|| {
+                            columns.push(PushdownScanColumn {
+                                id: column.id,
+                                field_type: column.field_type.clone(),
+                                is_handle: false,
+                                origin_default: column.origin_default.clone(),
+                            });
+                            columns.len() - 1
+                        });
+                    (
+                        position,
+                        primary.prefix_length(part),
+                        column.field_type.clone(),
+                    )
+                })
+                .collect();
+            RemoteCommonHandle {
+                parts,
+                zone: context.zone().clone(),
+                use_new_collation: self.use_new_collation,
+            }
+        });
         let handle_index = if common_handle {
             None
         } else {
@@ -612,8 +642,7 @@ impl KvTable {
             aggregate: None,
             desc: descending,
             keep_order,
-            allow_unordered_response: false,
-            read_ahead_batches,
+            allow_unordered_response: !keep_order && !descending,
             // The storage that owns the snapshot fills this in; the table has
             // no timestamp of its own.
             snapshot_ts: 0,
@@ -630,14 +659,7 @@ impl KvTable {
                 }
                 return Ok(None);
             };
-            let mut scan = scan.map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-            if common_handle && !scan.staged.is_empty() {
-                scan.stream.close();
-                for mut opened in scans.drain(..) {
-                    opened.stream.close();
-                }
-                return Ok(None);
-            }
+            let scan = scan.map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
             // One request reached a region. Counted here rather than at the
             // storage seam so a backend that REFUSED the shape (and returned
             // an `Unsupported` the caller turned into a byte-level cursor) is
@@ -661,6 +683,8 @@ impl KvTable {
             }
         }
         let merge_staged = !staged.is_empty();
+        let unordered_shadowed = (merge_staged && !keep_order && !descending)
+            .then(|| staged.iter().map(|(key, _)| key.clone()).collect());
         let predicates_applied = scans.iter().all(|scan| scan.stream.predicates_applied());
         let stream: Box<dyn crate::remote_scan::PushdownRowStream> = if scans.len() == 1 {
             scans.pop().expect("exactly one scan").stream
@@ -686,8 +710,11 @@ impl KvTable {
                 .collect(),
             width: output_offsets.map_or(keep.len(), <[usize]>::len),
             handle_index,
+            common_identity,
             table_id: self.table_id,
             merge_staged,
+            unordered_shadowed,
+            unsigned_handle_order: self.unsigned_pk_handle() && (keep_order || descending),
             noted_rows: 0,
             descending,
             predicates_applied,
@@ -715,7 +742,6 @@ impl KvTable {
             None,
             false,
             false,
-            crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
             &RowDecodeContext::legacy_default(zone),
             statement,
         )
@@ -844,9 +870,16 @@ impl KvTable {
             }
         }
         let context = RowDecodeContext::legacy_default(zone);
+        let materialization = if keep.iter().any(|offset| crate::generated_column::is_virtual(&self.columns[*offset])) {
+            Some(RemoteRowMaterialization::new(self, &keep, &context, self.pk_handle_offset.is_none())?)
+        } else {
+            None
+        };
+        let physical_predicates = materialization.as_ref()
+            .map(|projection| projection.remap_predicates(&keep, &predicates));
         let Some(cursor) = self.pushdown_row_cursor_with_context(
-            &keep,
-            &predicates,
+            materialization.as_ref().map_or(keep.as_slice(), |projection| projection.offsets.as_slice()),
+            physical_predicates.as_deref().unwrap_or(&predicates),
             None,
             None,
             None,
@@ -854,7 +887,6 @@ impl KvTable {
             Some(&range_hints),
             false,
             false,
-            crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
             &context,
             statement,
         )?
@@ -865,6 +897,7 @@ impl KvTable {
             cursor,
             handle_position,
             appended_handle,
+            materialization,
         }))
     }
 
@@ -880,7 +913,7 @@ impl KvTable {
         mut staged: StagedHandlesLookup,
     ) -> Result<Option<(Vec<(TableHandle, Vec<Datum>)>, bool, u64)>, KvTableError> {
         let wire_rows = staged.cursor.rows_returned();
-        let predicates_applied = staged.cursor.predicates_applied();
+        let predicates_applied = staged.materialization.is_none() && staged.cursor.predicates_applied();
         let mut rows = Vec::with_capacity(handles.len());
         // This helper asks the remote cursor to retain the synthetic
         // `_tidb_rowid` appended by `pushdown_row_cursor_with_context`.
@@ -888,12 +921,17 @@ impl KvTable {
         // column before returning a projected row, but the lookup caller
         // needs it to associate each fetched row with its index handle.
         let mut append_row = |mut row: Vec<Datum>| -> Result<(), KvTableError> {
-            let Some(Datum::Int(handle)) = row.get(staged.handle_position) else {
-                return Err(KvTableError::Decode(
+            if let Some(projection) = &staged.materialization {
+                row = projection.project_row(row)?;
+            }
+            let handle = match row.get(staged.handle_position) {
+                Some(Datum::Int(value)) => *value,
+                Some(Datum::UInt(value)) => *value as i64,
+                _ => return Err(KvTableError::Decode(
                     "a coprocessor row carried no integer handle".to_owned(),
-                ));
+                )),
             };
-            let handle = TableHandle::Int(*handle);
+            let handle = TableHandle::Int(handle);
             if staged.appended_handle {
                 // pushdown_row_cursor_with_context appends a synthetic
                 // handle after every requested column. Go's table worker
@@ -972,7 +1010,10 @@ impl KvTable {
         handles: &[TableHandle],
         staged: StagedHandlesLookup,
     ) -> Result<Option<FinishedLookup>, KvTableError> {
-        if !staged.cursor.supports_lookup_chunks() || !staged.cursor.predicates_applied() {
+        if staged.materialization.is_some()
+            || !staged.cursor.supports_lookup_chunks()
+            || !staged.cursor.predicates_applied()
+        {
             return Self::finish_rows_by_handles(handles, staged).map(|answer| {
                 answer.map(|(rows, applied, wire_rows)| {
                     FinishedLookup::Rows(rows, applied, wire_rows)
@@ -1064,6 +1105,7 @@ impl KvTable {
         predicates: &[ScanPredicate],
         handle_ranges: Option<&[IndexRange]>,
         aggregate: &PushdownPartialAggregate,
+        context: &crate::StmtContext,
         zone: &SessionTimeZone,
         statement: &PushdownStatementContext,
     ) -> Result<Option<Box<dyn PushdownRowStream>>, KvTableError> {
@@ -1118,6 +1160,10 @@ impl KvTable {
                     })
             })
             .collect();
+        let mut remote_aggregate = aggregate.clone();
+        if remote_aggregate.bind_in(context).is_err() {
+            return Ok(None);
+        }
         let request = PushdownScanRequest {
             table_id: self.table_id,
             index: None,
@@ -1130,12 +1176,11 @@ impl KvTable {
             topn: None,
             limit: None,
             paging_min_size: None,
-            aggregate: Some(aggregate.clone()),
+            aggregate: Some(remote_aggregate),
             desc: false,
             keep_order: false,
             // Order-free responses are opted into per call site below.
             allow_unordered_response: false,
-            read_ahead_batches: crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
             snapshot_ts: 0,
             ranges,
             range_hints: Vec::new(),
@@ -1154,8 +1199,8 @@ impl KvTable {
     }
 
     /// Index-scan counterpart of [`Self::pushdown_partial_aggregate_cursor`].
-    /// The bounded path is the covering `COUNT(k)` shape used by Sysbench:
-    /// the aggregate input must be the index's leading key column.
+    /// Aggregate arguments and group keys are remapped from the pruned scan
+    /// schema to the covering index's physical column order.
     pub fn pushdown_index_partial_aggregate_cursor(
         &mut self,
         index_id: i64,
@@ -1163,6 +1208,7 @@ impl KvTable {
         scan_keep: &[usize],
         predicates: &[ScanPredicate],
         aggregate: &PushdownPartialAggregate,
+        context: &crate::StmtContext,
         zone: &SessionTimeZone,
         statement: &PushdownStatementContext,
     ) -> Result<Option<Box<dyn PushdownRowStream>>, KvTableError> {
@@ -1178,9 +1224,6 @@ impl KvTable {
         // covering index the planner picks post-ANALYZE (`count(*) FROM
         // bmsql_customer`), refusing into the local partial-aggregate walk.
         // Build Go's schema instead.
-        if self.has_dirty_content() || self.partition.is_some() {
-            return Ok(None);
-        }
         if self.has_dirty_content() || self.partition.is_some() {
             return Ok(None);
         }
@@ -1262,6 +1305,9 @@ impl KvTable {
             return Ok(None);
         }
         let mut remote_aggregate = aggregate.clone();
+        if remote_aggregate.bind_in(context).is_err() {
+            return Ok(None);
+        }
         // The planner's aggregate offsets name the scan's pruned schema;
         // the covering index request exposes index columns in index order.
         // Keep the same remapping Go's `PhysicalIndexReader.ToPB` applies to
@@ -1299,7 +1345,7 @@ impl KvTable {
                     }
                 }
             }
-            PushdownPartialAggregate::Global { functions } => {
+            PushdownPartialAggregate::Global { functions, .. } => {
                 for function in functions {
                     if let Some(input) = function.input.as_mut() {
                         // An argument naming a column the index does not
@@ -1365,7 +1411,6 @@ impl KvTable {
             keep_order: false,
             // Order-free responses are opted into per call site below.
             allow_unordered_response: false,
-            read_ahead_batches: crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
             snapshot_ts: 0,
             ranges: key_ranges,
             range_hints: Vec::new(),
@@ -1684,7 +1729,6 @@ impl KvTable {
             desc,
             keep_order,
             allow_unordered_response: unordered,
-            read_ahead_batches: crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
             snapshot_ts: 0,
             ranges: key_ranges,
             range_hints: Vec::new(),
@@ -1736,9 +1780,10 @@ impl KvTable {
     /// Like [`KvTable::scan_rows`], but each row carries the record handle its
     /// key encodes, which `UPDATE`/`DELETE` need to address the row again.
     ///
-    /// This drains a [`RowCursor`]; a caller that does not need the whole
-    /// relation in memory should hold the cursor instead (see
-    /// [`KvTable::row_cursor`]).
+    /// Uses the backend's table reader, merging staged writes, or the local
+    /// [`RowCursor`] when the backend cannot serve the table's shape. A caller
+    /// that does not need the whole relation in memory should hold a cursor
+    /// instead (see [`KvTable::row_cursor`]).
     pub fn scan_rows_with_handles_with_context(
         &mut self,
         context: &RowDecodeContext,
@@ -1789,6 +1834,46 @@ impl KvTable {
         handle_ranges: Option<&[IndexRange]>,
         context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
+        // UPDATE/DELETE use the same table reader as SELECT in Go. Keep the
+        // record identity beside its values rather than opening a separate
+        // snapshot iterator (and RPC) for every range on the write path.
+        let keep: Vec<usize> = self
+            .columns
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, column)| {
+                (!crate::generated_column::is_virtual(column)).then_some(offset)
+            })
+            .collect();
+        if let Some(mut cursor) = self.pushdown_row_cursor_with_context(
+            &keep,
+            &[],
+            None,
+            None,
+            None,
+            handle_ranges,
+            None,
+            false,
+            false,
+            context,
+            &PushdownStatementContext::from_stmt(context.expression()),
+        )? {
+            let decoder = self.row_decoder_projected(None, context)?;
+            let mut rows = Vec::new();
+            loop {
+                let Some((key, projected)) = cursor.next_keyed_row()? else {
+                    break;
+                };
+                let handle = decoder.record_handle(&key)?;
+                let row = if keep.len() == self.columns.len() {
+                    projected
+                } else {
+                    decoder.project_remote_row(&keep, projected)?
+                };
+                rows.push((handle, row));
+            }
+            return Ok(rows);
+        }
         let mut cursor = self.row_cursor_projected_with_context(None, handle_ranges, context)?;
         let mut rows = Vec::new();
         while let Some(entry) = cursor.next_row()? {
@@ -2181,13 +2266,22 @@ pub struct RowCursor {
 /// which compares the ORDER BY expressions' decoded VALUES. Flipping one bit
 /// is that comparison without decoding a row to make it.
 fn record_merge_key(key: &[u8], unsigned_handle: bool) -> Vec<u8> {
-    let mut merge_key = cut_row_key_prefix(key).to_vec();
-    if unsigned_handle {
-        if let Some(high_byte) = merge_key.first_mut() {
-            *high_byte ^= 0x80;
-        }
-    }
-    merge_key
+    record_merge_bytes(key, unsigned_handle).collect()
+}
+
+/// The same ordering without allocating a key for a streaming comparison.
+fn record_merge_bytes(key: &[u8], unsigned_handle: bool) -> impl Iterator<Item = u8> + '_ {
+    cut_row_key_prefix(key)
+        .iter()
+        .copied()
+        .enumerate()
+        .map(move |(offset, byte)| {
+            if unsigned_handle && offset == 0 {
+                byte ^ 0x80
+            } else {
+                byte
+            }
+        })
 }
 
 impl RowCursor {
@@ -2267,26 +2361,6 @@ type KeyedRow = (Vec<u8>, Vec<Datum>);
 /// One staged write of the same range: `None` is a staged delete.
 type StagedRow = (Vec<u8>, Option<Vec<Datum>>);
 
-/// A forward cursor over a table's record range served by the backend's
-/// coprocessor.
-///
-/// Integer-handle scans merge the session's staged writes back in. A
-/// common-handle scan reaches this cursor only while the table is clean, so
-/// it consumes the remote stream directly.
-///
-/// # Why the merge is here and not at the backend
-///
-/// A coprocessor answers from the snapshot. Inside an explicit transaction
-/// the session's own uncommitted writes are client-side, so this cursor is
-/// Go's `UnionScan` over a distsql reader: the staged rows win over the
-/// snapshot rows they shadow, a staged delete hides the snapshot row, and the
-/// merged stream stays in record-key order -- which is the order the remote
-/// stream and the staged buffer already arrive in, so the merge is one linear
-/// pass with one row of each side alive at a time.
-///
-/// The caller applies its pushed predicate to *every* row this yields, staged
-/// or remote, so a staged row that no longer satisfies the `WHERE` is dropped
-/// by the same test the snapshot rows passed at TiKV.
 /// One OPEN remote handle lookup: [`KvTable::stage_rows_by_handles_filtered`]
 /// built the request and the region is already streaming; draining it is
 /// [`KvTable::finish_rows_by_handles`]. `Send` so a bounded-concurrency
@@ -2295,6 +2369,63 @@ pub struct StagedHandlesLookup {
     cursor: RemoteRowCursor,
     handle_position: usize,
     appended_handle: bool,
+    materialization: Option<RemoteRowMaterialization>,
+}
+
+/// The logical row above a physical table scan, shared by table readers and
+/// index-lookup table probes. Transport-only identity stays outside the schema.
+struct RemoteRowMaterialization {
+    decoder: RowDecoder,
+    offsets: Vec<usize>,
+    synthetic_handle: bool,
+}
+
+impl RemoteRowMaterialization {
+    fn new(
+        table: &KvTable,
+        keep: &[usize],
+        context: &RowDecodeContext,
+        synthetic_handle: bool,
+    ) -> Result<Self, KvTableError> {
+        let decoder = table.row_decoder_projected(Some(keep), context)?;
+        let offsets = decoder.physical_offsets();
+        Ok(Self {
+            decoder,
+            offsets,
+            synthetic_handle,
+        })
+    }
+
+    fn remap_predicates(&self, keep: &[usize], predicates: &[ScanPredicate]) -> Vec<ScanPredicate> {
+        let layout: Vec<_> = self
+            .offsets
+            .iter()
+            .map(|offset| {
+                keep.iter()
+                    .position(|kept| kept == offset)
+                    .unwrap_or(usize::MAX)
+            })
+            .collect();
+        predicates
+            .iter()
+            .filter_map(|predicate| predicate.remapped_columns(&layout))
+            .collect()
+    }
+
+    fn project_row(&self, mut row: Vec<Datum>) -> Result<Vec<Datum>, KvTableError> {
+        let handle = if self.synthetic_handle {
+            Some(row.pop().ok_or_else(|| {
+                KvTableError::Decode("remote row omitted its synthetic handle".to_owned())
+            })?)
+        } else {
+            None
+        };
+        let mut row = self.decoder.project_remote_row(&self.offsets, row)?;
+        if let Some(handle) = handle {
+            row.push(handle);
+        }
+        Ok(row)
+    }
 }
 
 /// A table-lookup response kept in its decoded columnar form.
@@ -2328,6 +2459,44 @@ pub(crate) enum FinishedLookup {
     Rows(Vec<(TableHandle, Vec<Datum>)>, bool, u64),
 }
 
+struct RemoteCommonHandle {
+    /// Wire position, declared prefix length and type of each key part.
+    parts: Vec<(usize, i64, FieldType)>,
+    zone: SessionTimeZone,
+    use_new_collation: bool,
+}
+
+impl RemoteCommonHandle {
+    fn record_handle(&self, row: &[Datum]) -> Result<RecordHandle, KvTableError> {
+        // Go CommonHandleCols.buildHandleByDatumsBuffer truncates key parts
+        // before EncodeKey, then NewCommonHandle pads short encodings.
+        let values = self
+            .parts
+            .iter()
+            .map(|(position, prefix, field_type)| {
+                let mut value = row.get(*position).cloned().ok_or_else(|| {
+                    KvTableError::Decode("remote row omitted a common handle column".to_owned())
+                })?;
+                crate::index_prefix_cut::cut_datum_by_prefix_len(&mut value, *prefix, field_type);
+                Ok(value)
+            })
+            .collect::<Result<Vec<_>, KvTableError>>()?;
+        let bytes = Encoder::new(self.use_new_collation)
+            .encode_key_in_timezone(&self.zone, &values)
+            .map_err(|error| KvTableError::Encode(format!("{error:?}")))?;
+        let handle = tidb_txnkv::CommonHandle::new(bytes)
+            .map_err(|error| KvTableError::Encode(format!("{error:?}")))?;
+        Ok(RecordHandle::Common(handle.encoded().to_vec()))
+    }
+}
+
+/// A remote table stream with its staged overlay, merged by record identity.
+///
+/// Like Go's UnionScan, staged replacements and tombstones win over the
+/// snapshot. Ordered reads merge by key; unordered reads suppress shadowed
+/// snapshot keys and append staged rows, without ordering region responses.
+/// The caller evaluates residual predicates after merging. Clean reads keep
+/// the direct row/chunk path without reconstructing a key for every row.
 pub struct RemoteRowCursor {
     stream: Box<dyn PushdownRowStream>,
     staged: std::vec::IntoIter<StagedRow>,
@@ -2340,16 +2509,24 @@ pub struct RemoteRowCursor {
     /// cursors and row-only backends, which retain the old row path.
     field_types: Vec<FieldType>,
     /// Number of projected columns, which the remote row may exceed by the
-    /// appended handle column.
+    /// appended identity columns.
     width: usize,
-    /// Where the integer handle sits in a row to be merged. `None` is a
-    /// clean common-handle stream consumed without a staged overlay.
+    /// Where the integer handle sits in a row to be merged. Composite-key
+    /// rows instead carry all key parts in `common_identity`.
     handle_index: Option<usize>,
+    common_identity: Option<RemoteCommonHandle>,
     table_id: i64,
     /// Whether the cursor must merge staged rows into the snapshot stream.
     /// Clean reads can consume projected remote rows directly without
     /// reconstructing an encoded record key for every row.
     merge_staged: bool,
+    /// All staged identities, including tombstones. Kept for the entire
+    /// unordered scan so a late snapshot row can never revive an old value.
+    unordered_shadowed: Option<HashSet<Vec<u8>>>,
+    /// Ordered unsigned range groups follow handle VALUE order, not the
+    /// signed order of their record-key bytes. Both merge inputs use this
+    /// domain; unordered reads retain physical key order.
+    unsigned_handle_order: bool,
     /// How much of [`PushdownRowStream::rows_returned`] has already been
     /// reported to the storage probe, so each row is counted once. See
     /// [`note_wire_rows`].
@@ -2463,9 +2640,13 @@ impl RemoteRowCursor {
 
     /// The next remote row, as its record key and its projected columns.
     fn next_remote(&mut self) -> Result<Option<KeyedRow>, KvTableError> {
-        if self.pending_remote.is_some() {
-            return Ok(self.pending_remote.clone());
+        if self.pending_remote.is_none() {
+            self.pending_remote = self.read_remote()?;
         }
+        Ok(self.pending_remote.clone())
+    }
+
+    fn read_remote(&mut self) -> Result<Option<KeyedRow>, KvTableError> {
         let next = self
             .stream
             .next_row()
@@ -2474,22 +2655,23 @@ impl RemoteRowCursor {
         let Some(mut row) = next else {
             return Ok(None);
         };
-        let handle_index = self
-            .handle_index
-            .expect("only an integer-handle merge asks for keyed remote rows");
-        let handle = match row.get(handle_index) {
-            Some(Datum::Int(value)) => *value,
-            Some(Datum::UInt(value)) => *value as i64,
-            other => {
-                return Err(KvTableError::Decode(format!(
+        let handle = if let Some(identity) = &self.common_identity {
+            identity.record_handle(&row)?
+        } else {
+            let handle_index = self.handle_index.ok_or_else(|| {
+                KvTableError::Decode("remote row has no record identity".to_owned())
+            })?;
+            match row.get(handle_index) {
+                Some(Datum::Int(value)) => RecordHandle::Int(*value),
+                Some(Datum::UInt(value)) => RecordHandle::Int(*value as i64),
+                other => return Err(KvTableError::Decode(format!(
                     "a coprocessor row carried no integer handle, got {other:?}"
-                )));
+                ))),
             }
         };
         row.truncate(self.width);
-        let key = encode_row_key_with_handle(self.table_id, &RecordHandle::Int(handle));
-        self.pending_remote = Some((key, row));
-        Ok(self.pending_remote.clone())
+        let key = encode_row_key_with_handle(self.table_id, &handle);
+        Ok(Some((key, row)))
     }
 
     fn next_staged(&mut self) -> Option<StagedRow> {
@@ -2499,8 +2681,8 @@ impl RemoteRowCursor {
         self.pending_staged.clone()
     }
 
-    /// The next projected row, either directly from a clean common-handle
-    /// stream or from the integer-handle snapshot/staged merge.
+    /// The next projected row, directly from a clean stream or from the
+    /// shared integer/composite-handle snapshot/staged merge.
     pub fn next_row(&mut self) -> Result<Option<Vec<Datum>>, KvTableError> {
         if !self.merge_staged {
             let next = self
@@ -2513,33 +2695,44 @@ impl RemoteRowCursor {
                 row
             }));
         }
-        if self.handle_index.is_none() {
-            debug_assert!(self.staged.len() == 0);
-            let next = self
-                .stream
-                .next_row()
-                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
-            self.note_wire_rows();
-            return Ok(next.map(|mut row| {
-                row.truncate(self.width);
-                row
-            }));
+        self.next_keyed_row().map(|row| row.map(|(_, row)| row))
+    }
+
+    /// The shared keyed merge with record identity retained for writers.
+    /// Its ordering and tombstone rules are shared with projected readers.
+    fn next_keyed_row(&mut self) -> Result<Option<KeyedRow>, KvTableError> {
+        if self.unordered_shadowed.is_some() {
+            // Go UnionScan's snapshot getter drops every key present in the
+            // mutation buffer before applying residuals. No relative order
+            // is needed: replacement rows and inserts come from the staged
+            // iterator, including when their old snapshot row was filtered.
+            while let Some(entry) = self.read_remote()? {
+                if !self.unordered_shadowed.as_ref().unwrap().contains(&entry.0) {
+                    return Ok(Some(entry));
+                }
+            }
+            return Ok(self.staged.find_map(|(key, row)| row.map(|row| (key, row))));
         }
         loop {
             let remote = self.next_remote()?;
             let staged = self.next_staged();
             match (remote, staged) {
                 (None, None) => return Ok(None),
-                (Some((_, row)), None) => {
+                (Some(entry), None) => {
                     self.pending_remote = None;
-                    return Ok(Some(row));
+                    return Ok(Some(entry));
                 }
                 (remote, Some((staged_key, staged_row))) => {
                     // A staged write of the same key is the transaction's own
                     // newer version of that row, so it replaces the snapshot's
                     // and a tombstone drops it entirely.
                     if let Some((remote_key, _)) = &remote {
-                        let ordering = remote_key.as_slice().cmp(staged_key.as_slice());
+                        let ordering = if self.unsigned_handle_order {
+                            record_merge_bytes(remote_key, true)
+                                .cmp(record_merge_bytes(&staged_key, true))
+                        } else {
+                            remote_key.as_slice().cmp(staged_key.as_slice())
+                        };
                         let ordering = if self.descending {
                             ordering.reverse()
                         } else {
@@ -2547,8 +2740,7 @@ impl RemoteRowCursor {
                         };
                         match ordering {
                             std::cmp::Ordering::Less => {
-                                let (_, row) = self.pending_remote.take().expect("just peeked");
-                                return Ok(Some(row));
+                                return Ok(self.pending_remote.take());
                             }
                             std::cmp::Ordering::Equal => self.pending_remote = None,
                             std::cmp::Ordering::Greater => {}
@@ -2556,7 +2748,7 @@ impl RemoteRowCursor {
                     }
                     self.pending_staged = None;
                     if let Some(row) = staged_row {
-                        return Ok(Some(row));
+                        return Ok(Some((staged_key, row)));
                     }
                 }
             }
@@ -3035,6 +3227,9 @@ pub struct TableScanExec {
     cursor: Option<RowCursor>,
     /// The open coprocessor-served cursor, when the backend has one.
     remote: Option<RemoteRowCursor>,
+    /// Logical projection above a remote physical scan, including virtual
+    /// columns. Local record cursors already perform this decoding step.
+    remote_materialization: Option<RemoteRowMaterialization>,
     /// A TiKV partial-aggregation row stream. It is separate from `remote`
     /// because aggregate rows have no record handle and no staged merge.
     partial_remote: Option<Box<dyn PushdownRowStream>>,
@@ -3053,9 +3248,6 @@ pub struct TableScanExec {
     /// output schema.
     partial_input_types: Option<Vec<FieldType>>,
     partial_context: Option<crate::StmtContext>,
-    /// Access-path cardinality selected by the optimizer. Go chooses the
-    /// partial/final split only above the one-row floor for these workloads.
-    estimated_rows: Option<f64>,
     /// Go's `desc` on the `TableScan`: walk the record ranges BACKWARDS.
     /// Set by [`crate::table_access::TableAccess::accept_keep_order`], and
     /// honored on the remote and the local cursor alike -- acceptance is a
@@ -3111,6 +3303,7 @@ pub struct TableScanExec {
     /// `None` for every scan the statement did not ask for it, which is all
     /// of them until the leaf sees the name.
     extra_handle_slot: Option<usize>,
+    native_bindings: Option<Box<crate::physical_builder::ReaderBindings>>,
 }
 
 /// A partial `SUM` in progress.
@@ -3181,6 +3374,29 @@ impl PartialSum {
 }
 
 impl TableScanExec {
+    /// Native builder column IDs are physical metadata identities, not the
+    /// legacy driver's one-based output positions. Bind offsets once without
+    /// rewriting those identities during pruning.
+    pub(crate) fn from_native(
+        meta: ExecutorMeta,
+        table: KvTable,
+        keep: Vec<usize>,
+        extra_handle_slot: Option<usize>,
+        bindings: crate::physical_builder::ReaderBindings,
+        keep_order: bool,
+        descending: bool,
+    ) -> Self {
+        let decode_context = RowDecodeContext::for_query(bindings.context());
+        let statement = PushdownStatementContext::from_stmt(bindings.context());
+        let mut reader = Self::new_with_context(meta, table, decode_context, statement);
+        reader.keep = keep;
+        reader.extra_handle_slot = extra_handle_slot;
+        reader.keep_order = keep_order;
+        reader.descending = descending;
+        reader.native_bindings = Some(Box::new(bindings));
+        reader
+    }
+
     /// Builds a scan over `table` with an explicit row-decode context.
     #[must_use]
     pub fn new_with_context(
@@ -3201,6 +3417,7 @@ impl TableScanExec {
             table,
             cursor: None,
             remote: None,
+            remote_materialization: None,
             partial_remote: None,
             partial_pending: None,
             partial_rows: None,
@@ -3208,7 +3425,6 @@ impl TableScanExec {
             partial_aggregate: None,
             partial_input_types: None,
             partial_context: None,
-            estimated_rows: None,
             descending: false,
             filter: None,
             pushed: Vec::new(),
@@ -3223,6 +3439,7 @@ impl TableScanExec {
             decode_context,
             statement,
             extra_handle_slot: None,
+            native_bindings: None,
         }
     }
 
@@ -3266,7 +3483,7 @@ impl TableScanExec {
     fn open_local_cursor(&mut self) -> Result<(), ExecError> {
         // The pruned column set is the cursor's projection, so an
         // unreferenced column is never decoded on the streaming path either.
-        let projection: Option<&[usize]> = if self.keep.len() == self.table.columns.len() {
+        let projection: Option<&[usize]> = if self.keep.iter().copied().eq(0..self.table.columns.len()) {
             None
         } else {
             Some(&self.keep)
@@ -3291,6 +3508,12 @@ impl TableScanExec {
         );
         Ok(())
     }
+
+    fn has_virtual_projection(&self) -> bool {
+        self.keep
+            .iter()
+            .any(|offset| crate::generated_column::is_virtual(&self.table.columns[*offset]))
+    }
     /// The next row of whichever cursor is open, remote or local.
     ///
     /// A backend may REFUSE a request shape it cannot evaluate -- the
@@ -3306,7 +3529,17 @@ impl TableScanExec {
     fn next_source_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
         if let Some(remote) = self.remote.as_mut() {
             match remote.next_row() {
-                Ok(Some(row)) => return Ok(Some(row)),
+                Ok(Some(row)) => {
+                    let row = match &self.remote_materialization {
+                        Some(projection) => projection
+                            .project_row(row)
+                            .map_err(|error| {
+                                ExecError::unsupported(format!("remote row evaluation failed: {error:?}"))
+                            })?,
+                        None => row,
+                    };
+                    return Ok(Some(row));
+                }
                 Ok(None) => {
                     self.remote = None;
                     self.cursor = None;
@@ -3397,7 +3630,7 @@ impl TableScanExec {
                 }
                 Ok(vec![vec![sum.into_datum()]])
             }
-            PushdownPartialAggregate::Global { functions } => {
+            PushdownPartialAggregate::Global { functions, .. } => {
                 enum PartialValue {
                     Count(i64),
                     SumDecimal(Option<Decimal>),
@@ -3555,39 +3788,6 @@ impl TableScanExec {
                     }
                 }
                 Ok(rows)
-            }
-            PushdownPartialAggregate::GroupBySum {
-                group_offset,
-                sum_offset,
-                sum_type: _,
-                group_type,
-            } => {
-                let mut groups: BTreeMap<Vec<u8>, (Datum, PartialSum)> = BTreeMap::new();
-                while let Some(row) = self.next_source_row()? {
-                    self.scanned.set(self.scanned.get() + 1);
-                    if let Some(filter) = self.filter.as_mut() {
-                        if !filter.admits(&row)? {
-                            continue;
-                        }
-                    }
-                    let Some(group) = row.get(*group_offset).cloned() else {
-                        return Err(ExecError::unsupported(
-                            "partial GROUP BY input is outside the scan row",
-                        ));
-                    };
-                    let Some(value) = row.get(*sum_offset) else {
-                        return Err(ExecError::unsupported(
-                            "partial SUM input is outside the scan row",
-                        ));
-                    };
-                    let key = crate::hash_agg::group_key_part(&group_type.collation(), &group);
-                    let (_, sum) = groups.entry(key).or_insert((group, PartialSum::default()));
-                    sum.accumulate(value)?;
-                }
-                Ok(groups
-                    .into_values()
-                    .map(|(group, sum)| vec![sum.into_datum(), group])
-                    .collect())
             }
             PushdownPartialAggregate::Grouped {
                 group_offsets,
@@ -3776,6 +3976,23 @@ impl TableScanExec {
 
 impl Executor for TableScanExec {
     fn open(&mut self) -> Result<(), ExecError> {
+        if let Some(bindings) = self.native_bindings.as_mut() {
+            if let Some(ranges) = bindings.ranges()? {
+                self.handle_ranges = Some(ranges);
+            }
+            if let Some(predicates) = bindings.filter()? {
+                self.pushed = predicates.clone();
+                if let Some(probe) = &mut self.filter {
+                    probe.replace_predicates(predicates);
+                } else {
+                    self.filter = Some(crate::predicate_pushdown::ScanFilterProbe::new(
+                        bindings.new_filter(predicates),
+                        bindings.context().clone(),
+                        self.meta.new_chunk(),
+                    ));
+                }
+            }
+        }
         self.scanned.set(0);
         self.emitted = 0;
         self.cursor = None;
@@ -3783,14 +4000,25 @@ impl Executor for TableScanExec {
         self.partial_pending = None;
         self.partial_rows = None;
         self.partial_done = false;
-        if let Some(aggregate) = self.partial_aggregate.clone() {
+        self.remote_materialization = None;
+        let virtual_projection = self.has_virtual_projection();
+        if let Some(aggregate) = self
+            .partial_aggregate
+            .as_ref()
+            .filter(|_| !virtual_projection)
+        {
+            let context = self
+                .partial_context
+                .as_ref()
+                .ok_or_else(|| ExecError::internal("partial aggregate has no execution context"))?;
             self.partial_remote = self
                 .table
                 .pushdown_partial_aggregate_cursor(
-                    &self.keep.clone(),
+                    &self.keep,
                     &self.pushed,
                     self.handle_ranges.as_deref(),
-                    &aggregate,
+                    aggregate,
+                    context,
                     self.decode_context.zone(),
                     &self.statement,
                 )
@@ -3815,19 +4043,38 @@ impl Executor for TableScanExec {
         if self.extra_handle_slot.is_some() {
             return self.open_local_cursor();
         }
+        let remote_projection = if virtual_projection {
+            let projection = RemoteRowMaterialization::new(
+                &self.table, &self.keep, &self.decode_context, false,
+            )
+                .map_err(|error| {
+                    ExecError::unsupported(format!("virtual projection failed: {error:?}"))
+                })?;
+            let physical = projection.offsets.clone();
+            // A predicate may cross this projection only if every input is
+            // physical. Keep all residuals above virtual materialization.
+            let predicates = projection.remap_predicates(&self.keep, &self.pushed);
+            self.remote_materialization = Some(projection);
+            Some((physical, predicates))
+        } else {
+            None
+        };
+        let (remote_keep, remote_predicates) = match &remote_projection {
+            Some((keep, predicates)) => (keep.as_slice(), predicates.as_slice()),
+            None => (self.keep.as_slice(), self.pushed.as_slice()),
+        };
         self.remote = self
             .table
             .pushdown_row_cursor_with_context(
-                &self.keep.clone(),
-                &self.pushed,
+                remote_keep,
+                remote_predicates,
                 self.post_filter_projection.as_deref(),
                 self.remote_topn.as_ref(),
-                self.limit,
+                self.limit.filter(|_| !virtual_projection),
                 self.handle_ranges.as_deref(),
                 None,
                 self.descending,
                 self.keep_order,
-                crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
                 &self.decode_context,
                 &self.statement,
             )
@@ -3835,17 +4082,6 @@ impl Executor for TableScanExec {
                 ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
             })?;
         if self.remote.is_some() {
-            // A clean remote stream whose backend lowered every predicate is
-            // already exact. Keep the local filter for residuals and staged
-            // rows, but avoid evaluating the same expression once per wire
-            // row on the common coprocessor path.
-            if self
-                .remote
-                .as_ref()
-                .is_some_and(|remote| remote.predicates_applied() && !remote.merge_staged)
-            {
-                self.filter = None;
-            }
             return Ok(());
         }
         self.open_local_cursor()
@@ -3909,7 +4145,14 @@ impl Executor for TableScanExec {
         // A clean remote scan whose predicates were fully lowered can hand
         // off the decoded columnar batch directly. Keep the existing row
         // path for residual filters, staged overlays, and local fallbacks.
-        if self.filter.is_none() {
+        // A completed remote Selection needs no local re-evaluation, but
+        // must not destroy the retained filter: the next Open (or a refused
+        // request) may read through the local/staged cursor instead.
+        let remote_filter_complete = self.remote_materialization.is_none()
+            && self.remote.as_ref().is_some_and(|remote| {
+                remote.predicates_applied() && !remote.merge_staged
+            });
+        if (self.filter.is_none() || remote_filter_complete) && self.remote_materialization.is_none() {
             if let Some(remote) = self.remote.as_mut() {
                 let target = self.limit.map_or(cap, |limit| {
                     usize::try_from(limit.saturating_sub(self.emitted))
@@ -3952,7 +4195,7 @@ impl Executor for TableScanExec {
                 return Ok(());
             };
             self.scanned.set(self.scanned.get() + 1);
-            if !remote_projected {
+            if !remote_projected && !(remote_filter_complete && self.remote.is_some()) {
                 if let Some(filter) = self.filter.as_mut() {
                     if !filter.admits(&row)? {
                         continue;
@@ -3977,6 +4220,10 @@ impl Executor for TableScanExec {
                     req.append_datum(column, value);
                 }
             }
+            // Go Chunk.AppendRow retains cardinality even with no columns.
+            if req.num_cols() == 0 {
+                req.set_num_virtual_rows(req.num_rows() + 1);
+            }
             self.emitted += 1;
         }
         Ok(())
@@ -3985,6 +4232,7 @@ impl Executor for TableScanExec {
     fn close(&mut self) -> Result<(), ExecError> {
         self.cursor = None;
         self.remote = None;
+        self.remote_materialization = None;
         self.partial_remote = None;
         self.partial_pending = None;
         self.partial_rows = None;
@@ -4065,10 +4313,6 @@ fn append_partial_remote_chunk(
 }
 
 impl crate::table_access::TableAccess for TableScanExec {
-    fn accept_scan_estimate(&mut self, rows: f64) {
-        self.estimated_rows = Some(rows);
-    }
-
     /// Go `checkColCanUseIndex`: a record-key walk ranks by the clustered
     /// handle, or by the single integer handle column, and by nothing else --
     /// so the MaxMinEliminate bounded reverse read is only offered for those
@@ -4114,8 +4358,8 @@ impl crate::table_access::TableAccess for TableScanExec {
         self.accept_keep_order(desc) && self.accept_scan_limit(1)
     }
 
-    fn accept_partial_aggregate(
-        &mut self,
+    fn supports_partial_aggregate(
+        &self,
         aggregate: &PushdownPartialAggregate,
         ctx: &crate::StmtContext,
     ) -> bool {
@@ -4125,14 +4369,24 @@ impl crate::table_access::TableAccess for TableScanExec {
         if !crate::pushdown_blacklist::aggregate_admits(aggregate, ctx) {
             return false;
         }
-        if self.estimated_rows.is_none_or(|rows| rows <= 1.0)
-            || aggregate
+        if aggregate
                 .input_offsets()
                 .into_iter()
                 .any(|offset| offset >= self.keep.len())
             || self.limit.is_some()
             || self.partial_aggregate.is_some()
         {
+            return false;
+        }
+        true
+    }
+
+    fn accept_partial_aggregate(
+        &mut self,
+        aggregate: &PushdownPartialAggregate,
+        ctx: &crate::StmtContext,
+    ) -> bool {
+        if !self.supports_partial_aggregate(aggregate, ctx) {
             return false;
         }
         let input_types = self.meta.ret_field_types().to_vec();
@@ -4190,12 +4444,12 @@ impl crate::table_access::TableAccess for TableScanExec {
     }
 
     fn accept_post_filter_projection(&mut self, keep: &[usize]) -> bool {
-        // The only current consumer is a clean clustered common-handle range.
-        // An integer-handle remote scan needs its handle column after the
-        // projection in order to merge staged rows, so it must keep using the
-        // unchanged wider-row contract until that handle is modelled as a
-        // separate transport field.
+        // A narrowing projection cannot cross UnionScan: its identity and
+        // residual inputs are needed until staged replacements are merged.
+        // Clean common-handle reads retain the existing wire projection.
         if self.filter.is_none()
+            || self.table.has_dirty_content()
+            || self.has_virtual_projection()
             || self.table.common_handle_offsets.is_empty()
             || self.partial_aggregate.is_some()
             || keep.is_empty()
@@ -4224,7 +4478,11 @@ impl crate::table_access::TableAccess for TableScanExec {
     }
 
     fn accept_remote_topn(&mut self, topn: &PushdownTopN) -> bool {
+        // TopN must see the merged relation. Reordering/capping only the
+        // snapshot would break both merge order and replacement semantics.
         if topn.order_by.is_empty()
+            || self.table.has_dirty_content()
+            || self.has_virtual_projection()
             || topn.limit == 0
             || topn
                 .order_by
@@ -4404,6 +4662,36 @@ mod remote_cursor_tests {
     use crate::kv_table::KvColumn;
     use crate::storage::{StorageError, TableStorage};
 
+    #[test]
+    fn a_full_width_projection_is_not_necessarily_identity() {
+        use crate::table_access::TableAccess;
+        let context = crate::StmtContext::for_query();
+        let mut table = KvTable::new(42, vec![
+            bigint_column(1, "a"), bigint_column(2, "b"), bigint_column(3, "c"),
+        ]);
+        table.insert_row(&[Datum::Int(10), Datum::Int(20), Datum::Int(30)], &context).unwrap();
+        for (keep, expected) in [
+            ([2, 0, 1], [30, 10, 20]),
+            ([0, 0, 1], [10, 10, 20]),
+            ([0, 1, 2], [10, 20, 30]),
+        ] {
+            let schema = tidb_expr::schema::Schema::new((1..=3).map(|id| {
+                tidb_expr::column::Column::new(id, FieldType::new(tidb_datatype::FieldTypeCode::LongLong))
+            }).collect());
+            let mut scan = TableScanExec::new(
+                ExecutorMeta::new(schema, 0, 4, 4), table.clone(),
+                context.session_zone(), PushdownStatementContext::default(),
+            );
+            assert!(scan.accept_column_prune(&keep));
+            scan.open().unwrap();
+            let mut chunk = scan.new_chunk();
+            scan.next(&mut chunk).unwrap();
+            assert_eq!(chunk.num_rows(), 1);
+            assert_eq!([0, 1, 2].map(|index| chunk.get_row(0).get_int64(index)), expected);
+            scan.close().unwrap();
+        }
+    }
+
     /// Records the one request a builder sends, then declines to serve it so
     /// the test can assert on the wire shape itself.
     #[derive(Debug)]
@@ -4505,6 +4793,7 @@ mod remote_cursor_tests {
         }, false);
 
         let aggregate = crate::remote_scan::PushdownPartialAggregate::Global {
+            streamed: false,
             functions: vec![crate::remote_scan::PushdownGlobalAggregateFunction {
                 kind: crate::remote_scan::PushdownAggregateKind::Count,
                 input: None,
@@ -4524,6 +4813,7 @@ mod remote_cursor_tests {
             &[0, 1, 2],
             &[],
             &aggregate,
+            &crate::StmtContext::default(),
             &tidb_datatype::SessionTimeZone::utc(),
             &statement,
         );
@@ -4550,6 +4840,50 @@ mod remote_cursor_tests {
             vec![3, 1, 2],
             "handle columns ride after the indexed columns, Go InitSchema order"
         );
+    }
+
+    #[test]
+    fn common_record_identity_preserves_prefix_and_short_key_rules() {
+        let collation = tidb_datatype::Collation::Utf8Mb4GeneralCi;
+        let field_type =
+            FieldType::new(tidb_datatype::FieldTypeCode::Varchar).with_collation(collation);
+        let identity = RemoteCommonHandle {
+            parts: vec![(1, 3, field_type)],
+            zone: SessionTimeZone::utc(),
+            use_new_collation: true,
+        };
+        let actual = identity
+            .record_handle(&[
+                Datum::Int(99),
+                Datum::new_collation_string("界Abdef".as_bytes().to_vec(), collation),
+            ])
+            .unwrap();
+        let truncated = Datum::new_collation_string("界Ab".as_bytes().to_vec(), collation);
+        let expected = Encoder::new(true)
+            .encode_key_in_timezone(&SessionTimeZone::utc(), &[truncated])
+            .unwrap();
+        assert_eq!(actual, RecordHandle::Common(expected));
+
+        let identity = RemoteCommonHandle {
+            parts: vec![(
+                0,
+                -1,
+                FieldType::new(tidb_datatype::FieldTypeCode::NewDecimal),
+            )],
+            zone: SessionTimeZone::utc(),
+            use_new_collation: true,
+        };
+        let value = Datum::Decimal(Decimal::from_int(5));
+        let mut expected = Encoder::new(true)
+            .encode_key_in_timezone(&SessionTimeZone::utc(), std::slice::from_ref(&value))
+            .unwrap();
+        assert!(expected.len() < 9);
+        expected.resize(9, 0);
+        assert_eq!(
+            identity.record_handle(&[value]).unwrap(),
+            RecordHandle::Common(expected)
+        );
+        assert!(identity.record_handle(&[]).is_err());
     }
 
     struct VecStream {
@@ -4819,8 +5153,11 @@ mod remote_cursor_tests {
             field_types: Vec::new(),
             width: 1,
             handle_index: Some(0),
+            common_identity: None,
             table_id: 0,
             merge_staged: false,
+            unordered_shadowed: None,
+            unsigned_handle_order: false,
             descending: false,
             noted_rows: 0,
             predicates_applied: false,
@@ -4855,8 +5192,11 @@ mod remote_cursor_tests {
             field_types: Vec::new(),
             width: 1,
             handle_index: Some(1),
+            common_identity: None,
             table_id: 0,
             merge_staged: false,
+            unordered_shadowed: None,
+            unsigned_handle_order: false,
             descending: false,
             noted_rows: 0,
             predicates_applied: true,
@@ -4945,8 +5285,11 @@ mod remote_cursor_tests {
             field_types: source_types,
             width: 1,
             handle_index: Some(1),
+            common_identity: None,
             table_id: 0,
             merge_staged: false,
+            unordered_shadowed: None,
+            unsigned_handle_order: false,
             descending: false,
             noted_rows: 0,
             predicates_applied: true,
@@ -4955,6 +5298,7 @@ mod remote_cursor_tests {
             cursor,
             handle_position: 1,
             appended_handle: true,
+            materialization: None,
         };
         let handles = vec![TableHandle::Int(8), TableHandle::Int(7)];
         let Some(FinishedLookup::Chunk(finished)) =
@@ -4998,8 +5342,11 @@ mod remote_cursor_tests {
             field_types: Vec::new(),
             width: 1,
             handle_index: None,
+            common_identity: None,
             table_id: 0,
             merge_staged: false,
+            unordered_shadowed: None,
+            unsigned_handle_order: false,
             descending: false,
             noted_rows: 0,
             predicates_applied: true,
@@ -5033,8 +5380,11 @@ mod remote_cursor_tests {
             field_types: Vec::new(),
             width: 1,
             handle_index: None,
+            common_identity: None,
             table_id: 0,
             merge_staged: false,
+            unordered_shadowed: None,
+            unsigned_handle_order: false,
             descending: false,
             noted_rows: 0,
             predicates_applied: true,

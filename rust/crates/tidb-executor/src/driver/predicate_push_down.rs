@@ -148,8 +148,7 @@ pub(crate) fn plan(
     current_db: &str,
     anti_semi: bool,
 ) -> Plan {
-    let Some(bindings) = bindings(&JoinNode::Join(Box::new(join.clone())), catalog, current_db)
-    else {
+    let Some(bindings) = join_bindings(join, catalog, current_db) else {
         return Plan::default();
     };
     let inherited = where_clause.map(extracted_conjuncts).unwrap_or_default();
@@ -183,10 +182,10 @@ fn distribute_join(
     let Some(right) = &join.right else {
         return;
     };
-    let Some(left_names) = relation_names(&join.left, catalog, current_db) else {
+    let Some(left_names) = relation_names(&join.left) else {
         return;
     };
-    let Some(right_names) = relation_names(right, catalog, current_db) else {
+    let Some(right_names) = relation_names(right) else {
         return;
     };
     let mut left = Vec::new();
@@ -889,17 +888,37 @@ fn derive_not_null(
     }
 }
 
-fn relation_names(
-    node: &JoinNode,
-    catalog: &Catalog,
-    current_db: &str,
-) -> Option<BTreeSet<String>> {
-    Some(
-        bindings(node, catalog, current_db)?
-            .into_iter()
-            .map(|binding| binding.qualifier.to_ascii_lowercase())
-            .collect(),
-    )
+// `plan` has already resolved every relation's columns. Side classification
+// only needs the namespace; do not rebuild types or resolve view origins.
+fn relation_names(node: &JoinNode) -> Option<BTreeSet<String>> {
+    fn collect(node: &JoinNode, names: &mut BTreeSet<String>) -> Option<()> {
+        match node {
+            JoinNode::Table(table) => {
+                names.insert(table.alias.as_ref().or(table.name.last())?.to_ascii_lowercase());
+            }
+            JoinNode::Join(join) => {
+                collect(&join.left, names)?;
+                if let Some(right) = &join.right {
+                    collect(right, names)?;
+                }
+            }
+            JoinNode::Derived { alias, .. } => {
+                names.insert(alias.as_ref()?.to_ascii_lowercase());
+            }
+        }
+        Some(())
+    }
+    let mut names = BTreeSet::new();
+    collect(node, &mut names)?;
+    Some(names)
+}
+
+fn join_bindings(join: &Join, catalog: &Catalog, current_db: &str) -> Option<Vec<Binding>> {
+    let mut result = bindings(&join.left, catalog, current_db)?;
+    if let Some(right) = &join.right {
+        result.extend(bindings(right, catalog, current_db)?);
+    }
+    Some(result)
 }
 
 fn bindings(node: &JoinNode, catalog: &Catalog, current_db: &str) -> Option<Vec<Binding>> {
@@ -907,30 +926,30 @@ fn bindings(node: &JoinNode, catalog: &Catalog, current_db: &str) -> Option<Vec<
         JoinNode::Table(table) => {
             let (database, name) = split_table_path(&table.name, current_db).ok()?;
             let qualifier = table.alias.clone().unwrap_or_else(|| name.to_owned());
-            let mut columns = catalog.get_in(database, name)?.column_list();
-            for (column, field_type) in &mut columns {
-                if super::merge_decision::physical_column_is_nullable(
-                    node,
-                    &super::merge_decision::RelColumn {
-                        relation: qualifier.clone(),
-                        column: column.clone(),
-                    },
-                    catalog,
-                    current_db,
-                ) == Some(false)
-                {
-                    field_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+            let entry = catalog.get_in(database, name)?;
+            let mut columns = entry.column_list();
+            // Base-table flags already describe nullability. Only a view's
+            // projected schema needs to recover flags from its source column.
+            // Go ExtractOnCondition reads RetType from its bound columns.
+            if entry.is_view() {
+                for (column, field_type) in &mut columns {
+                    if super::merge_decision::physical_column_is_nullable(
+                        node,
+                        &super::merge_decision::RelColumn {
+                            relation: qualifier.clone(),
+                            column: column.clone(),
+                        },
+                        catalog,
+                        current_db,
+                    ) == Some(false)
+                    {
+                        field_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+                    }
                 }
             }
             Some(vec![Binding { qualifier, columns }])
         }
-        JoinNode::Join(join) => {
-            let mut result = bindings(&join.left, catalog, current_db)?;
-            if let Some(right) = &join.right {
-                result.extend(bindings(right, catalog, current_db)?);
-            }
-            Some(result)
-        }
+        JoinNode::Join(join) => join_bindings(join, catalog, current_db),
         JoinNode::Derived {
             subquery,
             alias: Some(alias),

@@ -76,6 +76,7 @@ pub enum TransportRequestError {
 #[derive(Clone, Debug)]
 pub struct TransportRequest {
     metadata: KvRequestMetadata,
+    cop_lite_worker: Option<Arc<std::sync::atomic::AtomicBool>>,
     execution_cancellation: Arc<CancelHandle>,
     request_cancellation: Option<Arc<CancelHandle>>,
     bound_at: Option<Instant>,
@@ -88,11 +89,24 @@ impl TransportRequest {
     pub fn new(metadata: KvRequestMetadata, execution_cancellation: Arc<CancelHandle>) -> Self {
         Self {
             metadata,
+            cop_lite_worker: None,
             execution_cancellation,
             request_cancellation: None,
             bound_at: None,
             binding: None,
         }
+    }
+
+    /// Shares Go's statement-scoped TryCopLiteWorker across this statement's
+    /// readers. It is local execution ownership, never serialized to TiKV.
+    #[must_use]
+    pub fn with_cop_lite_worker(mut self, token: Arc<std::sync::atomic::AtomicBool>) -> Self {
+        self.cop_lite_worker = Some(token);
+        self
+    }
+
+    pub(crate) fn cop_lite_worker(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+        self.cop_lite_worker.clone()
     }
 
     /// Returns the mandatory outer execution cancellation owner.
@@ -242,6 +256,7 @@ impl TransportRequest {
         }
         Ok(Self {
             metadata: self.metadata.clone(),
+            cop_lite_worker: self.cop_lite_worker.clone(),
             execution_cancellation: Arc::clone(&self.execution_cancellation),
             request_cancellation: Some(self.execution_cancellation.request_child()),
             bound_at: Some(Instant::now()),
@@ -267,6 +282,7 @@ impl TransportRequest {
         metadata.request_source = request_source;
         Ok(Self {
             metadata,
+            cop_lite_worker: self.cop_lite_worker.clone(),
             execution_cancellation: Arc::clone(&self.execution_cancellation),
             request_cancellation: Some(self.execution_cancellation.request_child()),
             bound_at: Some(Instant::now()),

@@ -249,6 +249,7 @@ fn every_seeded_row_carries_the_index_entries_its_table_declares() {
         .lines()
         .filter(|line| !line.is_empty())
         .count();
-    assert_eq!(records, 7 + global_variable_rows);
-    assert_eq!(index_entries, 8 + global_variable_rows);
+    // The builtin binding lock row owns sql_index, time_index and digest_index.
+    assert_eq!(records, 8 + global_variable_rows);
+    assert_eq!(index_entries, 11 + global_variable_rows);
 }

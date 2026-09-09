@@ -290,6 +290,32 @@ pub enum Candidate {
         /// One flag per `ByItems` entry: whether it is a scalar function.
         by_items: Vec<bool>,
     },
+    /// `PhysicalTopN`, including the heap's input count and output window.
+    TopN {
+        /// The complete input task.
+        child: Box<Candidate>,
+        /// The child's logical cardinality.
+        input_rows: f64,
+        /// The cardinality after applying the output window.
+        output_rows: f64,
+        /// The output schema's average row size.
+        row_size: RowSize,
+        /// Whether each ordering expression is a scalar function.
+        by_items: Vec<bool>,
+        /// The requested number of output rows.
+        count: u64,
+        /// The rows skipped before output begins.
+        offset: u64,
+    },
+    /// `PhysicalLimit` inherits its child's cost from `BasePhysicalPlan`;
+    /// only the cardinality changes. Pushed reader limits are priced by the
+    /// reader itself, not by this root operator.
+    Limit {
+        /// The complete input task.
+        child: Box<Candidate>,
+        /// The cardinality after applying the output window.
+        output_rows: f64,
+    },
     /// `PhysicalMergeJoin` on a root task.
     MergeJoin {
         /// The left child.
@@ -358,7 +384,9 @@ pub fn number_of_ranges(node: &Candidate) -> usize {
         | Candidate::Projection { child, .. }
         | Candidate::StreamAgg { child, .. }
         | Candidate::HashAgg { child, .. }
-        | Candidate::Sort { child, .. } => number_of_ranges(child),
+        | Candidate::Sort { child, .. }
+        | Candidate::TopN { child, .. }
+        | Candidate::Limit { child, .. } => number_of_ranges(child),
         Candidate::HashJoin { build, probe, .. } | Candidate::IndexJoin { build, probe, .. } => {
             number_of_ranges(build) + number_of_ranges(probe)
         }
@@ -693,6 +721,46 @@ pub fn evaluate_traced(
                 children: vec![child],
             }
         }
+        Candidate::TopN {
+            child,
+            input_rows,
+            output_rows,
+            row_size,
+            by_items,
+            count,
+            offset,
+        } => {
+            let child = evaluate_traced(child, env, task, option);
+            let row_size = row_size.resolve();
+            let cost = ver2::top_n_cost(
+                option,
+                *input_rows,
+                (*count, *offset),
+                row_size,
+                by_items,
+                (
+                    env.factors.task_cpu(task),
+                    env.factors.task_mem(task),
+                    env.cost_factors.topn,
+                ),
+                &child.cost,
+            );
+            CostedNode {
+                rows: *output_rows,
+                row_size,
+                cost,
+                children: vec![child],
+            }
+        }
+        Candidate::Limit { child, output_rows } => {
+            let child = evaluate_traced(child, env, task, option);
+            CostedNode {
+                rows: *output_rows,
+                row_size: child.row_size,
+                cost: child.cost.clone(),
+                children: vec![child],
+            }
+        }
         Candidate::MergeJoin {
             left,
             right,
@@ -757,6 +825,53 @@ mod tests {
 
     fn env() -> CostEnv {
         CostEnv::default()
+    }
+
+    #[test]
+    fn topn_and_limit_preserve_the_complete_child_cost() {
+        let mut env = env();
+        env.cost_factors.topn = 2.0;
+        env.cost_factors.limit = 9.0;
+        let child = pseudo_full_scan(500.0);
+        let child_cost = evaluate(&child, &env, TaskType::Root);
+        let topn = Candidate::TopN {
+            child: Box::new(child),
+            input_rows: 500.0,
+            output_rows: 10.0,
+            row_size: RowSize::Fixed(72.0),
+            by_items: vec![false],
+            count: 10,
+            offset: 2,
+        };
+        let costed = evaluate(&topn, &env, TaskType::Root);
+        let expected = ver2::top_n_cost(
+            None,
+            500.0,
+            (10, 2),
+            72.0,
+            &[false],
+            (
+                env.factors.task_cpu(TaskType::Root),
+                env.factors.task_mem(TaskType::Root),
+                2.0,
+            ),
+            &child_cost.cost,
+        );
+        assert_eq!(costed.cost, expected);
+        assert_eq!(costed.rows, 10.0);
+        assert_eq!(costed.children[0], child_cost);
+        assert_eq!(number_of_ranges(&topn), 1);
+        let limited = evaluate(
+            &Candidate::Limit {
+                child: Box::new(topn),
+                output_rows: 3.0,
+            },
+            &env,
+            TaskType::Root,
+        );
+        assert_eq!(limited.cost, costed.cost);
+        assert_eq!(limited.rows, 3.0);
+        assert_eq!(limited.children, vec![costed]);
     }
 
     /// `EXPLAIN` prints two decimals, so agreement is asserted at the printed

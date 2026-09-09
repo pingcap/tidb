@@ -160,7 +160,10 @@ fn caller_cancellation_interrupts_hanging_tonic_call_without_closing_generation(
         attempts: Arc::clone(&attempts),
         first_started: Arc::new(Mutex::new(Some(first_started))),
     });
-    let mut client = TonicCoprocessorClient::new().unwrap();
+    let mut client = TonicCoprocessorClient::with_connection_count(
+        std::num::NonZeroUsize::new(1).unwrap(),
+    )
+    .unwrap();
     let pre_cancelled = UnaryCancellation::new();
     pre_cancelled.cancel();
     let error = client

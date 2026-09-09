@@ -121,6 +121,8 @@
 //! [`PlanBuilder::enable_pipelined_window_exec`] carries it with Go's own
 //! default (`ON`).
 
+use crate::physical_property::ColumnSortItem;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use tidb_ast::{
@@ -142,9 +144,7 @@ use super::marker::{self, MarkerKind, PlanMarker};
 use super::{snapshot_schema_and_names, ClauseCode, PlanBuilder, PlanError, ProjectionField};
 use crate::logical::projection::LogicalProjection;
 use crate::logical::rule::flags;
-use crate::logical::window::{
-    BoundType, FrameBound, FrameType, LogicalWindow, WindowFrame, WindowSortItem,
-};
+use crate::logical::window::{BoundType, FrameBound, FrameType, LogicalWindow, WindowFrame};
 use crate::logical::LogicalPlan;
 
 // ***** the spec arena: Go's `*ast.WindowSpec` identity *****
@@ -158,8 +158,8 @@ pub type WindowGroups = Vec<(SpecId, Vec<usize>)>;
 /// `PARTITION BY` items, the `ORDER BY` items and the rewritten arguments.
 pub type WindowProjection = (
     LogicalPlan,
-    Vec<WindowSortItem>,
-    Vec<WindowSortItem>,
+    Vec<ColumnSortItem>,
+    Vec<ColumnSortItem>,
     Vec<Expression>,
 );
 
@@ -965,7 +965,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         &self,
         bound: &AstFrameBound,
         spec: &NamedWindowSpec,
-        order_by: &[WindowSortItem],
+        order_by: &[ColumnSortItem],
     ) -> Result<(), PlanError> {
         let Some(offset) = bound_offset(bound) else {
             // `bound.Type == ast.CurrentRow || bound.UnBounded`.
@@ -1039,7 +1039,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     pub fn check_origin_window_spec(
         &self,
         spec: &NamedWindowSpec,
-        order_by: &[WindowSortItem],
+        order_by: &[ColumnSortItem],
     ) -> Result<(), PlanError> {
         let Some(frame) = &spec.def.spec.frame else {
             return Ok(());
@@ -1088,7 +1088,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     pub fn check_origin_window_funcs(
         &self,
         funcs: &[&WindowFuncCall],
-        order_by: &[WindowSortItem],
+        order_by: &[ColumnSortItem],
     ) -> Result<(), PlanError> {
         for func in funcs {
             if func.ignore_null {
@@ -1164,7 +1164,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     pub fn build_window_function_frame_bound(
         &self,
         spec: &NamedWindowSpec,
-        order_by: &[WindowSortItem],
+        order_by: &[ColumnSortItem],
         bound: &AstFrameBound,
     ) -> Result<FrameBound, PlanError> {
         let frame_kind = spec
@@ -1301,7 +1301,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     pub fn build_window_function_frame(
         &self,
         spec: &NamedWindowSpec,
-        order_by: &[WindowSortItem],
+        order_by: &[ColumnSortItem],
     ) -> Result<Option<WindowFrame>, PlanError> {
         let Some(frame) = &spec.def.spec.frame else {
             return Ok(None);
@@ -1410,7 +1410,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         proj_exprs: &mut Vec<Expression>,
         proj_schema: &mut Schema,
         proj_names: &mut Vec<FieldName>,
-        sort_items: &mut Vec<WindowSortItem>,
+        sort_items: &mut Vec<ColumnSortItem>,
     ) -> Result<(), PlanError> {
         for item in items {
             if matches!(item.expr, Expr::Int(_)) {
@@ -1430,7 +1430,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 continue;
             }
             if let Expression::Column(column) = &built {
-                sort_items.push(WindowSortItem::new(column.clone(), item.desc));
+                sort_items.push(ColumnSortItem::new(column.clone(), item.desc));
                 if !proj_schema.contains(column) {
                     proj_exprs.push(built.clone());
                     proj_names.push(FieldName::default());
@@ -1446,7 +1446,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             proj_names.push(FieldName::default());
             let column = Column::new(self.column_ids.alloc(), ret_type);
             proj_schema.append([column.clone()]);
-            sort_items.push(WindowSortItem::new(column, item.desc));
+            sort_items.push(ColumnSortItem::new(column, item.desc));
         }
         Ok(())
     }

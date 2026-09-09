@@ -89,7 +89,7 @@ impl Session {
         // A binding exists to change this statement's plan; letting a pin
         // outrank it would make CREATE BINDING a no-op. Go's cache refuses to
         // answer from the cache while baselines are being set up too.
-        if self.has_session_bindings() {
+        if self.has_plan_bindings() {
             return None;
         }
         if super::prepared_plan_cache::stmt_cacheable(stmt).is_err() {

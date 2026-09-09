@@ -1,0 +1,160 @@
+diff --git a/tpcc/rand.go b/tpcc/rand.go
+index c02c93e..e2ada16 100644
+--- a/tpcc/rand.go
++++ b/tpcc/rand.go
+@@ -3,6 +3,8 @@ package tpcc
+ import (
+ 	"fmt"
+ 	"math/rand"
++	"os"
++	"strconv"
+ 	"strings"
+ 	"time"
+ 
+@@ -106,8 +108,23 @@ var (
+ 	cLoad       int
+ 	cCustomerID int
+ 	cItemID     int
++	inputSeed   = readInputSeed()
+ )
+ 
++// An opt-in diagnostic seed controls transaction inputs, not database state,
++// wall-clock timestamps, think times, or concurrent execution order.
++func readInputSeed() *int64 {
++	raw, set := os.LookupEnv("GOTPC_TPCC_INPUT_SEED")
++	if !set {
++		return nil
++	}
++	seed, err := strconv.ParseInt(raw, 10, 64)
++	if err != nil {
++		panic(fmt.Errorf("GOTPC_TPCC_INPUT_SEED must be an int64: %w", err))
++	}
++	return &seed
++}
++
+ var cLastTokens = [...]string{
+ 	"BAR", "OUGHT", "ABLE", "PRI", "PRES",
+ 	"ESE", "ANTI", "CALLY", "ATION", "EING"}
+@@ -125,7 +142,11 @@ func randCLastSyllables(n int, b *util.BufAllocator) string {
+ }
+ 
+ func init() {
+-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
++	seed := time.Now().UnixNano()
++	if inputSeed != nil {
++		seed = *inputSeed
++	}
++	r := rand.New(rand.NewSource(seed))
+ 	cLoad = r.Intn(256)
+ 	cItemID = r.Intn(1024)
+ 	cCustomerID = r.Intn(8192)
+diff --git a/tpcc/workload.go b/tpcc/workload.go
+index 6c1983f..7c0fb72 100644
+--- a/tpcc/workload.go
++++ b/tpcc/workload.go
+@@ -180,6 +180,11 @@ func (w *Workloader) InitThread(ctx context.Context, threadID int) context.Conte
+ 		decks:           make([]int, 0, 23),
+ 		lastConnRefresh: time.Now(),
+ 	}
++	if inputSeed != nil {
++		// Stream zero belongs to the process-level nonuniform constants.
++		// Each worker keeps its own stream, independent of goroutine order.
++		s.R.Seed(*inputSeed + int64(threadID) + 1)
++	}
+ 
+ 	for index, txn := range w.txns {
+ 		for i := 0; i < txn.weight; i++ {
+diff --git a/tpcc/input_seed_test.go b/tpcc/input_seed_test.go
+new file mode 100644
+index 0000000..491fd29
+--- /dev/null
++++ b/tpcc/input_seed_test.go
+@@ -0,0 +1,88 @@
++package tpcc
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"os"
++	"os/exec"
++	"reflect"
++	"strings"
++	"testing"
++)
++
++type seedTrace struct {
++	Constants [3]int
++	Workers   [][]int64
++}
++
++func seededChild(seed string) ([]byte, error) {
++	cmd := exec.Command(os.Args[0], "-test.run=^TestTPCCInputSeed$")
++	for _, value := range os.Environ() {
++		if !strings.HasPrefix(value, "GOTPC_TPCC_INPUT_SEED=") && !strings.HasPrefix(value, "GOTPC_REPRO_CHILD=") {
++			cmd.Env = append(cmd.Env, value)
++		}
++	}
++	cmd.Env = append(cmd.Env, "GOTPC_REPRO_CHILD=1", "GOTPC_TPCC_INPUT_SEED="+seed)
++	return cmd.CombinedOutput()
++}
++
++func TestTPCCInputSeed(t *testing.T) {
++	if os.Getenv("GOTPC_REPRO_CHILD") == "1" {
++		loader, err := NewWorkloader(nil, &Config{OutputType: "csv", Threads: 3, Parts: 1, Warehouses: 1, PartitionType: PartitionTypeHash})
++		if err != nil {
++			t.Fatal(err)
++		}
++		trace := seedTrace{Constants: [3]int{cLoad, cItemID, cCustomerID}}
++		for thread := 0; thread < 3; thread++ {
++			ctx := loader.InitThread(context.Background(), thread)
++			s := getTPCCState(ctx)
++			var draws []int64
++			for i := 0; i < 16; i++ {
++				draws = append(draws, s.R.Int63(), int64(randCustomerID(s.R)), int64(randItemID(s.R)))
++			}
++			trace.Workers = append(trace.Workers, draws)
++			loader.CleanupThread(ctx, thread)
++		}
++		encoded, err := json.Marshal(trace)
++		if err != nil {
++			t.Fatal(err)
++		}
++		fmt.Printf("SEED_TRACE:%s\n", encoded)
++		return
++	}
++
++	read := func(seed string) seedTrace {
++		output, err := seededChild(seed)
++		if err != nil {
++			t.Fatalf("child failed: %v: %s", err, output)
++		}
++		for _, line := range strings.Split(string(output), "\n") {
++			if strings.HasPrefix(line, "SEED_TRACE:") {
++				var trace seedTrace
++				if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "SEED_TRACE:")), &trace); err != nil {
++					t.Fatal(err)
++				}
++				return trace
++			}
++		}
++		t.Fatalf("missing trace: %s", output)
++		return seedTrace{}
++	}
++	first, again, different := read("17"), read("17"), read("18")
++	if !reflect.DeepEqual(first, again) {
++		t.Fatal("same seed must preserve nonuniform constants and every worker's input stream across fresh processes")
++	}
++	if first.Constants == different.Constants || reflect.DeepEqual(first.Workers, different.Workers) {
++		t.Fatal("changing seed must change constants and worker streams")
++	}
++	if reflect.DeepEqual(first.Workers[0], first.Workers[1]) {
++		t.Fatal("workers must have distinct input streams")
++	}
++	if !reflect.DeepEqual(read("0"), read("0")) {
++		t.Fatal("zero is a valid deterministic seed, not an unseeded sentinel")
++	}
++	if output, err := seededChild("invalid"); err == nil || !strings.Contains(string(output), "GOTPC_TPCC_INPUT_SEED") {
++		t.Fatalf("invalid seed must fail visibly: %v: %s", err, output)
++	}
++}

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -23,9 +23,10 @@ use super::cache::{
 };
 use super::recovery::RegionErrorRecoveryPlan;
 use super::{
-    KeyRange, RegionAttempt, RegionBackoffBudget, RegionCache, RegionErrorDisposition,
-    RegionGcRound, RegionLoader, RegionLocation, RegionQueryLoader, RegionRecoveryError,
-    RegionRecoveryLoader, RegionRouteError, RegionVerId, StoreMaintenanceRound,
+    KeyRange, LeaderRequest, RegionAttempt, RegionBackoffBudget, RegionCache,
+    RegionErrorDisposition, RegionGcRound, RegionLoader, RegionLocation, RegionQueryLoader,
+    RegionRecoveryError, RegionRecoveryLoader, RegionRouteError, RegionVerId, RequestSelection,
+    RequestSelector, StoreMaintenanceRound,
 };
 
 /// One-shot TiKV health capability used by the bounded maintenance worker.
@@ -130,7 +131,7 @@ struct DriverState {
 
 /// Shared cache state borrowed by foreground session leases and the worker.
 struct BackgroundRegionCacheShared<L> {
-    cache: Arc<Mutex<RegionCache<L>>>,
+    cache: Arc<RwLock<RegionCache<L>>>,
     loader: SharedRegionLoader<L>,
     driver: Arc<(Mutex<DriverState>, Condvar)>,
     leases: Mutex<CacheLeaseAdmission>,
@@ -228,7 +229,7 @@ impl<L> BackgroundRegionCache<L> {
         let loader = cache.loader_handle();
         Self {
             shared: Arc::new(BackgroundRegionCacheShared {
-                cache: Arc::new(Mutex::new(cache)),
+                cache: Arc::new(RwLock::new(cache)),
                 loader,
                 driver: Arc::new((
                     Mutex::new(DriverState {
@@ -258,7 +259,7 @@ impl<L> BackgroundRegionCache<L> {
     {
         Self::start_with_round(cache, interval, gc_limit, |shared, triggered, gc_limit| {
             let mut cache = shared
-                .lock()
+                .write()
                 .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
             Ok(BackgroundMaintenanceRound {
                 triggered,
@@ -277,7 +278,7 @@ impl<L> BackgroundRegionCache<L> {
     where
         L: RegionLoader + Send + 'static,
         F: FnMut(
-                &Arc<Mutex<RegionCache<L>>>,
+                &Arc<RwLock<RegionCache<L>>>,
                 bool,
                 usize,
             ) -> Result<BackgroundMaintenanceRound, BackgroundRegionCacheError>
@@ -291,7 +292,7 @@ impl<L> BackgroundRegionCache<L> {
             return Err(BackgroundRegionCacheError::ZeroGcLimit);
         }
         let loader = cache.loader_handle();
-        let cache = Arc::new(Mutex::new(cache));
+        let cache = Arc::new(RwLock::new(cache));
         let driver = Arc::new((Mutex::new(DriverState::default()), Condvar::new()));
         let worker_cache = Arc::clone(&cache);
         let worker_driver = Arc::clone(&driver);
@@ -382,7 +383,7 @@ impl<L> BackgroundRegionCache<L> {
     fn topology_revision(&self) -> Result<u64, BackgroundRegionCacheError> {
         self.shared
             .cache
-            .lock()
+            .read()
             .map(|cache| cache.topology_revision())
             .map_err(|_| BackgroundRegionCacheError::CachePoisoned)
     }
@@ -396,11 +397,20 @@ impl<L> BackgroundRegionCache<L> {
         L: RegionLoader,
     {
         loop {
+            // Go searches cached metadata under RLock; only TTL renewal is
+            // atomic. Recheck a miss under exclusive ownership before loading.
+            match self
+                .with_cache_read(|cache| cache.inspect_region_lookup(key, require_exact_start))?
+            {
+                Ok(RegionLookupSelection::Hit(location)) => return Ok(Ok(location)),
+                Err(error) => return Ok(Err(error)),
+                Ok(RegionLookupSelection::Load(_)) => {}
+            }
             let selection = {
                 let mut cache = self
                     .shared
                     .cache
-                    .lock()
+                    .write()
                     .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
                 cache.select_region_lookup(key, require_exact_start)
             };
@@ -414,7 +424,7 @@ impl<L> BackgroundRegionCache<L> {
                 let mut cache = self
                     .shared
                     .cache
-                    .lock()
+                    .write()
                     .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
                 cache.publish_region_lookup(loaded)
             };
@@ -426,6 +436,66 @@ impl<L> BackgroundRegionCache<L> {
         }
     }
 
+    /// Borrows canonical metadata without excluding independent readers.
+    pub fn with_cache_read<R>(
+        &self,
+        operation: impl FnOnce(&RegionCache<L>) -> R,
+    ) -> Result<R, BackgroundRegionCacheError> {
+        let cache = self
+            .shared
+            .cache
+            .read()
+            .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
+        Ok(operation(&cache))
+    }
+
+    /// Selects and observes a route under one borrow. A healthy selection
+    /// changes only request-local state; cache invalidation/reload re-evaluates
+    /// under exclusive ownership instead of upgrading an old observation.
+    pub fn with_request_selection<R>(
+        &self,
+        selector: &mut RequestSelector,
+        observe: impl FnOnce(&RegionCache<L>, Result<RequestSelection, RegionRouteError>) -> R,
+    ) -> Result<R, BackgroundRegionCacheError> {
+        let cache = self
+            .shared
+            .cache
+            .read()
+            .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
+        if let Some(selection) = cache.try_select_request(selector) {
+            return Ok(observe(&cache, selection));
+        }
+        drop(cache);
+        let mut cache = self
+            .shared
+            .cache
+            .write()
+            .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
+        let selection = cache.select_request(selector);
+        Ok(observe(&cache, selection))
+    }
+
+    /// Success bookkeeping never discards a valid reply after its cached
+    /// topology was replaced. Unchanged success needs only shared ownership.
+    pub fn on_request_success(
+        &self,
+        request: &LeaderRequest,
+    ) -> Result<Result<(), RegionRecoveryError>, BackgroundRegionCacheError> {
+        if self.with_cache_read(|cache| cache.request_success_is_unchanged(request))? {
+            return Ok(Ok(()));
+        }
+        self.with_cache(|cache| {
+            match cache.on_route_success(request) {
+                Ok(_) | Err(RegionRecoveryError::StaleObservation(_)) => {}
+                Err(error) => return Err(error),
+            }
+            match cache.promote_successful_request(request) {
+                Ok(_) | Err(RegionRecoveryError::StaleObservation(_)) => Ok(()),
+                Err(error) => Err(error),
+            }
+        })
+    }
+
     /// Runs a foreground operation against the same canonical cache authority.
     pub fn with_cache<R>(
         &self,
@@ -434,7 +504,7 @@ impl<L> BackgroundRegionCache<L> {
         let mut cache = self
             .shared
             .cache
-            .lock()
+            .write()
             .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
         Ok(operation(&mut cache))
     }
@@ -498,7 +568,7 @@ impl<L: RegionRecoveryLoader> BackgroundRegionCache<L> {
             let mut cache = self
                 .shared
                 .cache
-                .lock()
+                .write()
                 .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
             cache.plan_region_error(error, attempt, backoff)
         };
@@ -506,22 +576,22 @@ impl<L: RegionRecoveryLoader> BackgroundRegionCache<L> {
             Ok(recovery) => recovery,
             Err(error) => return Ok(Err(error)),
         };
-        let plan = match recovery {
+        let mut plan = match recovery {
             RegionErrorRecoveryPlan::Complete(disposition) => return Ok(Ok(disposition)),
             RegionErrorRecoveryPlan::HydrateEpochNotMatch(plan) => *plan,
         };
-        let replacements = match self
-            .shared
-            .loader
-            .hydrate_regions(&plan.metadata, plan.attempt.store_id)
-        {
+        let replacements = match self.shared.loader.hydrate_regions(
+            &plan.metadata,
+            plan.attempt.store_id,
+            &mut plan.resolved_stores,
+        ) {
             Ok(replacements) => replacements,
             Err(error) => return Ok(Err(error)),
         };
         let mut cache = self
             .shared
             .cache
-            .lock()
+            .write()
             .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
         Ok(cache.publish_epoch_not_match(plan, replacements))
     }
@@ -577,7 +647,7 @@ where
             move |shared, triggered, gc_limit| {
                 let (plans, regions) = {
                     let mut cache = shared
-                        .lock()
+                        .write()
                         .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
                     (
                         cache.plan_store_refreshes(triggered),
@@ -595,7 +665,7 @@ where
                         ..StoreMaintenanceRound::default()
                     };
                     let mut cache = shared
-                        .lock()
+                        .write()
                         .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
                     for observation in observations {
                         match cache.publish_store_refresh(observation) {
@@ -629,7 +699,7 @@ where
                     })
                     .collect::<Vec<_>>();
                 let mut cache = shared
-                    .lock()
+                    .write()
                     .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
                 for result in liveness_results {
                     if cache.publish_store_liveness(result)
@@ -739,7 +809,7 @@ fn shutdown_worker<L>(
 }
 
 fn maintenance_loop<L, F>(
-    cache: Arc<Mutex<RegionCache<L>>>,
+    cache: Arc<RwLock<RegionCache<L>>>,
     driver: Arc<(Mutex<DriverState>, Condvar)>,
     interval: Duration,
     gc_limit: usize,
@@ -748,7 +818,7 @@ fn maintenance_loop<L, F>(
 where
     L: RegionLoader + Send + 'static,
     F: FnMut(
-        &Arc<Mutex<RegionCache<L>>>,
+        &Arc<RwLock<RegionCache<L>>>,
         bool,
         usize,
     ) -> Result<BackgroundMaintenanceRound, BackgroundRegionCacheError>,

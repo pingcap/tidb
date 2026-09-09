@@ -21,7 +21,8 @@
 //! `FDToString(p)` against a golden FD string. Pinning those goldens here
 //! would need the whole pipeline (session/catalog, logical plan construction,
 //! optimization, per-operator `ExtractFD`); on the Rust side
-//! `tidb_planner::logical`'s `extract_fd` is still an explicit stub. They are
+//! `tidb_planner::logical`'s native extraction is not connected to that full
+//! SQL pipeline. These tests are
 //! therefore recorded as ignored go-parity gaps rather than approximated:
 //! hand-constructing FdSet inputs to "reproduce" the golden strings would
 //! assert our derivation, not Go's pipeline.
@@ -33,7 +34,7 @@
 /// subqueries, and one expected error case
 /// ("contains nonaggregated column 'test.x3.a'").
 #[test]
-#[ignore = "go-parity-gap: needs plan-build + LogicalOptimize + per-operator ExtractFD pipeline; tidb-planner's extract_fd is still a stub"]
+#[ignore = "go-parity-gap: needs the full SQL plan-build + LogicalOptimize + ExtractFD pipeline"]
 fn fd_set_extract_fd() {
     // Golden cases live verbatim in Go extract_fd_test.go; see module doc.
 }
@@ -44,7 +45,7 @@ fn fd_set_extract_fd() {
 /// all/part outer rows) plus `UNION ALL` FDs built from
 /// `FindCommonEquivClasses`.
 #[test]
-#[ignore = "go-parity-gap: needs plan-build + LogicalOptimize + Apply/UnionAll ExtractFD; not present outside tidb-planner stubs"]
+#[ignore = "go-parity-gap: needs the full SQL plan-build + LogicalOptimize + Apply/UnionAll ExtractFD pipeline"]
 fn fd_set_extract_fd_for_apply_and_union() {
     // Golden cases live verbatim in Go extract_fd_test.go; see module doc.
 }

@@ -294,31 +294,29 @@ impl Default for SelectivityDefaults {
 /// after the nodes are built.
 ///
 /// `initial` carries the correlated-column product the source accumulates
-/// before node selection. `conditions` describes each CNF item in the same
-/// order the node masks index. A [`ConditionKind::Disjunction`] carries the
-/// caller's own recursive estimate, because the recursion needs the caller's
-/// statistics collection. One source behavior is *not* reproduced here,
-/// because it needs an expression evaluator this crate does not have: no
-/// TopN-assisted string-match evaluation belongs to the caller because it
-/// needs both expressions and statistics. The resulting optional selectivity
-/// is consumed here only if the ordinary statistics nodes left that condition
-/// uncovered.
+/// before node selection. `condition_count` gives the number of CNF items in
+/// the order indexed by node masks. `condition` classifies and estimates an
+/// item only after greedy coverage leaves it uncovered, matching Go's
+/// `notCoveredDNF` and string-match tails. Recursive disjunction and TopN
+/// estimates stay with the caller that owns expressions and statistics; no
+/// such work is performed for a condition already priced by a statistics node.
 #[must_use]
 pub fn combine_selectivity(
     nodes: &mut [StatsNode],
-    conditions: &[ConditionKind],
+    condition_count: usize,
     initial: f64,
     realtime_row_count: i64,
     defaults: SelectivityDefaults,
+    mut condition: impl FnMut(usize) -> ConditionKind,
 ) -> f64 {
-    if realtime_row_count == 0 || conditions.is_empty() {
+    if realtime_row_count == 0 || condition_count == 0 {
         return 1.0;
     }
     let mut ret = initial;
-    let mut mask: i64 = if conditions.len() >= 63 {
+    let mut mask: i64 = if condition_count >= 63 {
         i64::MAX
     } else {
-        (1_i64 << conditions.len()) - 1
+        (1_i64 << condition_count) - 1
     };
 
     for set in get_usable_sets_by_greedy(nodes) {
@@ -332,11 +330,11 @@ pub fn combine_selectivity(
     }
 
     let (mut has_default, mut has_str_match, mut has_negate_str_match) = (false, false, false);
-    for (index, kind) in conditions.iter().enumerate() {
+    for index in 0..condition_count {
         if mask & (1_i64 << index) == 0 {
             continue;
         }
-        match kind {
+        match condition(index) {
             ConditionKind::ConstantFalse => {
                 ret *= 0.0;
                 mask &= !(1_i64 << index);
@@ -353,7 +351,7 @@ pub fn combine_selectivity(
             ConditionKind::NegatedStringMatch(None) => has_negate_str_match = true,
             // `selectivity.go:369-373`: a DNF the caller could estimate covers
             // itself, unless the estimate came out exactly zero.
-            ConditionKind::Disjunction(Some(selectivity)) if *selectivity != 0.0 => {
+            ConditionKind::Disjunction(Some(selectivity)) if selectivity != 0.0 => {
                 ret *= selectivity;
                 mask &= !(1_i64 << index);
             }

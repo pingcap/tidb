@@ -447,12 +447,10 @@ fn wrap_year_operand_for_datetime_compare(left: &mut Expression, right: &mut Exp
     ));
 }
 
-/// Wraps the integer side of a DECIMAL-vs-INT comparison the same way Go's
-/// `newBaseBuiltinFuncWithTp(..., ETDecimal, ETDecimal)` does.
+/// Go `WrapWithCastAsDecimal` for integer arguments of comparisons and
+/// arithmetic: fold strict literals and retain a cast for runtime inputs.
 pub(crate) fn wrap_integer_operand_as_decimal(integer: &mut Expression) {
-    if matches!(integer, Expression::Constant(_))
-        || integer.static_type().map(FieldType::eval_type) != Some(EvalType::Int)
-    {
+    if integer.static_type().map(FieldType::eval_type) != Some(EvalType::Int) {
         return;
     }
     let Some(source_type) = integer.static_type().cloned() else {
@@ -465,7 +463,7 @@ pub(crate) fn wrap_integer_operand_as_decimal(integer: &mut Expression) {
         FieldTypeCode::Long => 10,
         FieldTypeCode::LongLong => 20,
         FieldTypeCode::Year => 4,
-        _ => return,
+        _ => 20,
     };
     let mut target = FieldType::new(FieldTypeCode::NewDecimal);
     target.set_flen(precision);
@@ -474,6 +472,23 @@ pub(crate) fn wrap_integer_operand_as_decimal(integer: &mut Expression) {
         FieldTypeFlags::BINARY
             | (source_type.flags() & (FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL)),
     );
+    // Go WrapWithCastAsDecimal folds strict integer constants and then uses
+    // the result's natural precision/scale. A parameter or deferred constant
+    // keeps the cast node, so subsequent executions read its current value.
+    if let Expression::Constant(constant) = integer {
+        let decimal = match constant.literal_value() {
+            Some(Datum::Int(value)) => Some(tidb_datatype::Decimal::from_int(*value)),
+            Some(Datum::UInt(value)) => Some(tidb_datatype::Decimal::from_uint(*value)),
+            _ => None,
+        };
+        if let Some(decimal) = decimal {
+            let (precision, scale) = decimal.precision_and_frac();
+            target.set_flen(i64::from(precision));
+            target.set_decimal(i64::from(scale));
+            *integer = Expression::Constant(Constant::new(Datum::Decimal(decimal), target));
+            return;
+        }
+    }
     let argument = std::mem::replace(
         integer,
         Expression::Constant(Constant::new(
@@ -491,16 +506,8 @@ pub(crate) fn wrap_integer_operand_as_decimal(integer: &mut Expression) {
 fn wrap_integer_operand_for_decimal_compare(left: &mut Expression, right: &mut Expression) {
     let eval_type = |expression: &Expression| expression.static_type().map(FieldType::eval_type);
     let integer = match (eval_type(left), eval_type(right)) {
-        (Some(EvalType::Decimal), Some(EvalType::Int))
-            if !matches!(right, Expression::Constant(_)) =>
-        {
-            right
-        }
-        (Some(EvalType::Int), Some(EvalType::Decimal))
-            if !matches!(left, Expression::Constant(_)) =>
-        {
-            left
-        }
+        (Some(EvalType::Decimal), Some(EvalType::Int)) => right,
+        (Some(EvalType::Int), Some(EvalType::Decimal)) => left,
         _ => return,
     };
     wrap_integer_operand_as_decimal(integer);
@@ -1036,6 +1043,95 @@ mod tests {
         assert_eq!(target.flen(), 20);
         assert_eq!(target.decimal(), 0);
         assert_ne!(target.flags() & FieldTypeFlags::BINARY, 0);
+    }
+
+    #[test]
+    fn decimal_comparison_folds_integer_literals_with_go_precision() {
+        for (value, precision, unsigned) in [
+            (Datum::Int(24), 2, false),
+            (Datum::Int(-24), 2, false),
+            (Datum::Int(i64::MIN), 19, false),
+            (Datum::UInt(u64::MAX), 20, true),
+        ] {
+            for literal_on_left in [false, true] {
+                let decimal = Expression::Column(crate::column::Column::new(
+                    1,
+                    FieldType::new(FieldTypeCode::NewDecimal),
+                ));
+                let flags = FieldTypeFlags::NOT_NULL
+                    | if unsigned {
+                        FieldTypeFlags::UNSIGNED
+                    } else {
+                        0
+                    };
+                let integer = Expression::Constant(Constant::new(
+                    value.clone(),
+                    FieldType::new(FieldTypeCode::LongLong).with_flags(flags),
+                ));
+                let (left, right) = if literal_on_left {
+                    (integer, decimal)
+                } else {
+                    (decimal, integer)
+                };
+                let (expression, warnings) = refine("lt", left, right);
+                assert!(warnings.is_empty());
+                let Expression::ScalarFunction(function) = expression else {
+                    panic!("comparison")
+                };
+                let Expression::Constant(constant) = &function.args[usize::from(!literal_on_left)]
+                else {
+                    panic!("folded decimal")
+                };
+                let field_type = constant.ret_type.as_ref().unwrap();
+                assert_eq!(field_type.code(), FieldTypeCode::NewDecimal);
+                assert_eq!(field_type.flen(), precision);
+                assert_eq!(field_type.decimal(), 0);
+                assert_eq!(field_type.flags() & FieldTypeFlags::UNSIGNED != 0, unsigned);
+                assert_ne!(field_type.flags() & FieldTypeFlags::BINARY, 0);
+                let Datum::Decimal(converted) = &constant.value else {
+                    panic!("decimal datum")
+                };
+                assert_eq!(converted.to_string(), value.sql_string().unwrap());
+            }
+        }
+        struct Parameter(Datum);
+        impl crate::Columns for Parameter {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
+                if order == 0 {
+                    Ok(self.0.clone())
+                } else {
+                    Err(EvalError::Unsupported("unbound prepared parameter"))
+                }
+            }
+        }
+        for deferred in [false, true] {
+            let mut parameter = Constant::new(Datum::Int(1), FieldType::new(FieldTypeCode::LongLong));
+            parameter.param_marker = Some(crate::constant::ParamMarker { order: 0 });
+            if deferred {
+                let child = Expression::Constant(parameter.clone());
+                parameter.param_marker = None;
+                parameter.deferred_expr = Some(Box::new(child));
+            }
+            let mut cast = Expression::Constant(parameter);
+            wrap_integer_operand_as_decimal(&mut cast);
+            assert!(
+                matches!(&cast, Expression::ScalarFunction(function) if function.func_name.lowercase() == "cast_decimal")
+            );
+            for value in [Datum::Int(2), Datum::Int(-2), Datum::Null] {
+                let expected = match value {
+                    Datum::Int(value) => Datum::Decimal(tidb_datatype::Decimal::from_int(value)),
+                    _ => Datum::Null,
+                };
+                assert_eq!(
+                    crate::eval_expression_once(&cast, &Parameter(value)).unwrap(),
+                    expected
+                );
+            }
+            assert!(crate::eval_expression_once(&cast, &crate::NoColumns).is_err());
+        }
     }
 
     /// The reported statement, structurally: `a > '10ab'` compares INT TO INT

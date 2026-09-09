@@ -1,0 +1,1754 @@
+{
+  "status": "WIP: SQL-mode increment measured and consistency checked; no stable broad throughput gain established",
+  "change": {
+    "files": [
+      "rust/crates/tidb-session/src/stmt_ctx.rs"
+    ],
+    "mechanism": "Move existing SQL-mode derivation into StatementVarSnapshot. Store scanner flags, temporal modes, strict/division/group-by/unsigned/auto-zero booleans, not a string that each query/DML builder reparses. Existing generation invalidation covers SET, restore, reseed and identity. No new parser or workload branch; preserve existing uppercase, trimming and unknown-token behavior.",
+    "go_sources": [
+      "pkg/executor/select.go:1098-1166",
+      "pkg/sessionctx/variable/session.go (typed SQLMode field)"
+    ],
+    "profile_evidence": {
+      "release": "23174d49",
+      "path": "/private/tmp/tidb-empty-restore-mixed-active.txt",
+      "scanner_mode_observations": 45,
+      "context_flag_scan_observations": 44,
+      "interpretation": "Heuristic inclusive non-wait observations in a full-mix all-thread-state sample, not CPU-time percentages."
+    }
+  },
+  "before_binary": {
+    "sha256": "23174d49d0ae6ad4f8d382b868844cf71be250d5279edb4c2e40604c656767f3",
+    "port": 53030,
+    "path": "/private/tmp/tidb-sql-mode-cache-before-x4cfTe/tidb-server"
+  },
+  "after_binary": {
+    "sha256": "d886a36db0b1fc29844a5a619f64981abed4ef19dad8cec80616288ef3a15f43",
+    "port": 53031,
+    "path": "rust/target/release/tidb-server",
+    "server_session": 65403
+  },
+  "regression": {
+    "test": "statement_contexts_reuse_derived_sql_modes",
+    "before": "Two scanner-mode parses for query and DML contexts despite a warm variable snapshot; expected zero",
+    "after": "No repeated scanner parse; six scanner flags, strict/date/group-by/unsigned/auto-zero policy and subsequent SET-to-empty behavior remain correct",
+    "red_log": "/private/tmp/tidb-sql-mode-cache-red.log",
+    "green_log": "/private/tmp/tidb-sql-mode-cache-context-tests.log",
+    "initial_test_compile_issue": "SqlMode does not implement PartialEq; corrected test to compare its fields before obtaining the runtime red result"
+  },
+  "benchmark": {
+    "command": "cd rust && cargo test --offline --locked --release -j12 -p tidb-session --lib statement_sql_mode_construction_benchmark -- --ignored --nocapture",
+    "samples": {
+      "before": [
+        {
+          "mode": "empty",
+          "dml": false,
+          "round": 0,
+          "iterations": 10000,
+          "ns_per_context": 2854
+        },
+        {
+          "mode": "empty",
+          "dml": false,
+          "round": 1,
+          "iterations": 10000,
+          "ns_per_context": 2811
+        },
+        {
+          "mode": "empty",
+          "dml": false,
+          "round": 2,
+          "iterations": 10000,
+          "ns_per_context": 2788
+        },
+        {
+          "mode": "empty",
+          "dml": false,
+          "round": 3,
+          "iterations": 10000,
+          "ns_per_context": 2859
+        },
+        {
+          "mode": "empty",
+          "dml": false,
+          "round": 4,
+          "iterations": 10000,
+          "ns_per_context": 2831
+        },
+        {
+          "mode": "empty",
+          "dml": true,
+          "round": 0,
+          "iterations": 10000,
+          "ns_per_context": 2680
+        },
+        {
+          "mode": "empty",
+          "dml": true,
+          "round": 1,
+          "iterations": 10000,
+          "ns_per_context": 2726
+        },
+        {
+          "mode": "empty",
+          "dml": true,
+          "round": 2,
+          "iterations": 10000,
+          "ns_per_context": 2767
+        },
+        {
+          "mode": "empty",
+          "dml": true,
+          "round": 3,
+          "iterations": 10000,
+          "ns_per_context": 2720
+        },
+        {
+          "mode": "empty",
+          "dml": true,
+          "round": 4,
+          "iterations": 10000,
+          "ns_per_context": 2724
+        },
+        {
+          "mode": "default",
+          "dml": false,
+          "round": 0,
+          "iterations": 10000,
+          "ns_per_context": 3421
+        },
+        {
+          "mode": "default",
+          "dml": false,
+          "round": 1,
+          "iterations": 10000,
+          "ns_per_context": 3354
+        },
+        {
+          "mode": "default",
+          "dml": false,
+          "round": 2,
+          "iterations": 10000,
+          "ns_per_context": 3357
+        },
+        {
+          "mode": "default",
+          "dml": false,
+          "round": 3,
+          "iterations": 10000,
+          "ns_per_context": 3382
+        },
+        {
+          "mode": "default",
+          "dml": false,
+          "round": 4,
+          "iterations": 10000,
+          "ns_per_context": 3397
+        },
+        {
+          "mode": "default",
+          "dml": true,
+          "round": 0,
+          "iterations": 10000,
+          "ns_per_context": 3357
+        },
+        {
+          "mode": "default",
+          "dml": true,
+          "round": 1,
+          "iterations": 10000,
+          "ns_per_context": 3464
+        },
+        {
+          "mode": "default",
+          "dml": true,
+          "round": 2,
+          "iterations": 10000,
+          "ns_per_context": 3456
+        },
+        {
+          "mode": "default",
+          "dml": true,
+          "round": 3,
+          "iterations": 10000,
+          "ns_per_context": 3444
+        },
+        {
+          "mode": "default",
+          "dml": true,
+          "round": 4,
+          "iterations": 10000,
+          "ns_per_context": 3430
+        },
+        {
+          "mode": "expanded",
+          "dml": false,
+          "round": 0,
+          "iterations": 10000,
+          "ns_per_context": 3772
+        },
+        {
+          "mode": "expanded",
+          "dml": false,
+          "round": 1,
+          "iterations": 10000,
+          "ns_per_context": 3839
+        },
+        {
+          "mode": "expanded",
+          "dml": false,
+          "round": 2,
+          "iterations": 10000,
+          "ns_per_context": 3879
+        },
+        {
+          "mode": "expanded",
+          "dml": false,
+          "round": 3,
+          "iterations": 10000,
+          "ns_per_context": 3866
+        },
+        {
+          "mode": "expanded",
+          "dml": false,
+          "round": 4,
+          "iterations": 10000,
+          "ns_per_context": 3868
+        },
+        {
+          "mode": "expanded",
+          "dml": true,
+          "round": 0,
+          "iterations": 10000,
+          "ns_per_context": 3965
+        },
+        {
+          "mode": "expanded",
+          "dml": true,
+          "round": 1,
+          "iterations": 10000,
+          "ns_per_context": 3976
+        },
+        {
+          "mode": "expanded",
+          "dml": true,
+          "round": 2,
+          "iterations": 10000,
+          "ns_per_context": 4009
+        },
+        {
+          "mode": "expanded",
+          "dml": true,
+          "round": 3,
+          "iterations": 10000,
+          "ns_per_context": 4228
+        },
+        {
+          "mode": "expanded",
+          "dml": true,
+          "round": 4,
+          "iterations": 10000,
+          "ns_per_context": 3986
+        }
+      ],
+      "after": [
+        {
+          "mode": "empty",
+          "dml": false,
+          "round": 0,
+          "iterations": 10000,
+          "ns_per_context": 2781
+        },
+        {
+          "mode": "empty",
+          "dml": false,
+          "round": 1,
+          "iterations": 10000,
+          "ns_per_context": 2823
+        },
+        {
+          "mode": "empty",
+          "dml": false,
+          "round": 2,
+          "iterations": 10000,
+          "ns_per_context": 2846
+        },
+        {
+          "mode": "empty",
+          "dml": false,
+          "round": 3,
+          "iterations": 10000,
+          "ns_per_context": 2888
+        },
+        {
+          "mode": "empty",
+          "dml": false,
+          "round": 4,
+          "iterations": 10000,
+          "ns_per_context": 2874
+        },
+        {
+          "mode": "empty",
+          "dml": true,
+          "round": 0,
+          "iterations": 10000,
+          "ns_per_context": 2722
+        },
+        {
+          "mode": "empty",
+          "dml": true,
+          "round": 1,
+          "iterations": 10000,
+          "ns_per_context": 2669
+        },
+        {
+          "mode": "empty",
+          "dml": true,
+          "round": 2,
+          "iterations": 10000,
+          "ns_per_context": 2693
+        },
+        {
+          "mode": "empty",
+          "dml": true,
+          "round": 3,
+          "iterations": 10000,
+          "ns_per_context": 2687
+        },
+        {
+          "mode": "empty",
+          "dml": true,
+          "round": 4,
+          "iterations": 10000,
+          "ns_per_context": 2625
+        },
+        {
+          "mode": "default",
+          "dml": false,
+          "round": 0,
+          "iterations": 10000,
+          "ns_per_context": 2791
+        },
+        {
+          "mode": "default",
+          "dml": false,
+          "round": 1,
+          "iterations": 10000,
+          "ns_per_context": 2851
+        },
+        {
+          "mode": "default",
+          "dml": false,
+          "round": 2,
+          "iterations": 10000,
+          "ns_per_context": 2790
+        },
+        {
+          "mode": "default",
+          "dml": false,
+          "round": 3,
+          "iterations": 10000,
+          "ns_per_context": 2731
+        },
+        {
+          "mode": "default",
+          "dml": false,
+          "round": 4,
+          "iterations": 10000,
+          "ns_per_context": 2820
+        },
+        {
+          "mode": "default",
+          "dml": true,
+          "round": 0,
+          "iterations": 10000,
+          "ns_per_context": 2753
+        },
+        {
+          "mode": "default",
+          "dml": true,
+          "round": 1,
+          "iterations": 10000,
+          "ns_per_context": 2827
+        },
+        {
+          "mode": "default",
+          "dml": true,
+          "round": 2,
+          "iterations": 10000,
+          "ns_per_context": 2758
+        },
+        {
+          "mode": "default",
+          "dml": true,
+          "round": 3,
+          "iterations": 10000,
+          "ns_per_context": 2733
+        },
+        {
+          "mode": "default",
+          "dml": true,
+          "round": 4,
+          "iterations": 10000,
+          "ns_per_context": 2684
+        },
+        {
+          "mode": "expanded",
+          "dml": false,
+          "round": 0,
+          "iterations": 10000,
+          "ns_per_context": 2745
+        },
+        {
+          "mode": "expanded",
+          "dml": false,
+          "round": 1,
+          "iterations": 10000,
+          "ns_per_context": 2795
+        },
+        {
+          "mode": "expanded",
+          "dml": false,
+          "round": 2,
+          "iterations": 10000,
+          "ns_per_context": 2794
+        },
+        {
+          "mode": "expanded",
+          "dml": false,
+          "round": 3,
+          "iterations": 10000,
+          "ns_per_context": 2825
+        },
+        {
+          "mode": "expanded",
+          "dml": false,
+          "round": 4,
+          "iterations": 10000,
+          "ns_per_context": 2829
+        },
+        {
+          "mode": "expanded",
+          "dml": true,
+          "round": 0,
+          "iterations": 10000,
+          "ns_per_context": 2724
+        },
+        {
+          "mode": "expanded",
+          "dml": true,
+          "round": 1,
+          "iterations": 10000,
+          "ns_per_context": 2730
+        },
+        {
+          "mode": "expanded",
+          "dml": true,
+          "round": 2,
+          "iterations": 10000,
+          "ns_per_context": 2717
+        },
+        {
+          "mode": "expanded",
+          "dml": true,
+          "round": 3,
+          "iterations": 10000,
+          "ns_per_context": 2748
+        },
+        {
+          "mode": "expanded",
+          "dml": true,
+          "round": 4,
+          "iterations": 10000,
+          "ns_per_context": 2732
+        }
+      ]
+    },
+    "summary": [
+      {
+        "mode": "empty",
+        "dml": false,
+        "before_median_ns": 2831,
+        "after_median_ns": 2846,
+        "change_percent": 0.5298481102083974
+      },
+      {
+        "mode": "empty",
+        "dml": true,
+        "before_median_ns": 2724,
+        "after_median_ns": 2687,
+        "change_percent": -1.3582966226138082
+      },
+      {
+        "mode": "default",
+        "dml": false,
+        "before_median_ns": 3382,
+        "after_median_ns": 2791,
+        "change_percent": -17.47486694263749
+      },
+      {
+        "mode": "default",
+        "dml": true,
+        "before_median_ns": 3444,
+        "after_median_ns": 2753,
+        "change_percent": -20.06387921022067
+      },
+      {
+        "mode": "expanded",
+        "dml": false,
+        "before_median_ns": 3866,
+        "after_median_ns": 2795,
+        "change_percent": -27.703052250387994
+      },
+      {
+        "mode": "expanded",
+        "dml": true,
+        "before_median_ns": 3986,
+        "after_median_ns": 2730,
+        "change_percent": -31.510286001003507
+      }
+    ],
+    "logs": {
+      "before": "/private/tmp/tidb-sql-mode-cache-before-bench.log",
+      "after": "/private/tmp/tidb-sql-mode-cache-after-bench.log"
+    },
+    "interpretation": "Five samples of 10000 context constructions/drops after 100 warmups per mode and query/DML class. Before/after test binaries are independent, not interleaved. No other SQL, profiling or build overlaps measured loops. A test-only thread-local scanner counter adds a small accounting cost to the old per-context helper but is absent from production. Default and expanded-mode scaling disappears; not SQL throughput evidence."
+  },
+  "validation": {
+    "profile": "WIP",
+    "session": 33546,
+    "exit_code": 0,
+    "unique_tests_passed": 66,
+    "groups": {
+      "stmt_ctx": 5,
+      "scanner": 14,
+      "zero_date": 11,
+      "read_cast": 4,
+      "bad_null": 6,
+      "write_conversion": 2,
+      "generated_columns": 22,
+      "auto_zero": 2
+    },
+    "commands": [
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-session --lib stmt_ctx::tests::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-session --lib tests_sql_mode_scanner::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-session --lib tests_zero_date::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-session --lib tests_read_cast::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-session --lib tests_bad_null::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-session --lib tests_write_conversion::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-session --lib tests_generated_columns::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-session --lib no_auto_value_on_zero",
+      "cd rust && cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "rustfmt --edition 2021 --emit stdout rust/crates/tidb-session/src/stmt_ctx.rs (inspect only added test region)",
+      "git diff --check"
+    ],
+    "logs": [
+      "/private/tmp/tidb-sql-mode-cache-context-tests.log",
+      "/private/tmp/tidb-sql-mode-cache-scanner-tests.log",
+      "/private/tmp/tidb-sql-mode-cache-date-tests.log",
+      "/private/tmp/tidb-sql-mode-cache-read-cast-tests.log",
+      "/private/tmp/tidb-sql-mode-cache-null-tests.log",
+      "/private/tmp/tidb-sql-mode-cache-conversion-tests.log",
+      "/private/tmp/tidb-sql-mode-cache-generated-tests.log",
+      "/private/tmp/tidb-sql-mode-cache-auto-zero-tests.log"
+    ],
+    "build_log": "/private/tmp/tidb-sql-mode-cache-build.log"
+  },
+  "live": {
+    "exit_code": 0,
+    "session_local_cases": 19,
+    "global_read_cases": 11,
+    "before_matches_go": true,
+    "after_matches_go": true,
+    "commands": [
+      "python3 /private/tmp/tidb-empty-restore-live.py --ports 45000 53030 53031",
+      "python3 /private/tmp/tidb-global-reader-live.py --ports 45000 53030 53031"
+    ],
+    "logs": [
+      "/private/tmp/tidb-sql-mode-cache-live.log",
+      "/private/tmp/tidb-sql-mode-cache-global-live.log"
+    ],
+    "scope": "Session-local SET/SET_VAR and SQL prepared statements; read-only globals; no shared settings or tables modified."
+  },
+  "measurement": {
+    "status": "terminal",
+    "session": 71688,
+    "commands": [
+      "python3 rust/scripts/compare-sysbench.py --server before:53030 --server after:53031 --server go:45000 --database perf_sysbench_locking_v2 --workload oltp_read_write --threads 2 --seconds 20 --rounds 3 --table-size 100000 --output /private/tmp/tidb-sql-mode-cache-sysbench-comparison",
+      "python3 /private/tmp/tidb-agg-tpcc-compare.py --server before:53030 --server after:53031 --server go:45000 --output /private/tmp/tidb-sql-mode-cache-tpcc-comparison"
+    ],
+    "logs": [
+      "/private/tmp/tidb-sql-mode-cache-sysbench.log",
+      "/private/tmp/tidb-sql-mode-cache-tpcc.log"
+    ],
+    "host_noise": "Preflight Chrome renderer88.7%, mediaanalysisd86.8%, WindowServer44.8%, Codex Service31.4%, renderer16.6%, mds_stores10.6%. User/system processes preserved; not a quiescent-host measurement. No compiler, profiler or other SQL probe overlaps.",
+    "limits": "Shared evolving dataset and time-seeded TPC-C mix; inspect paired rounds and do not claim broad stable gain from noisy medians.",
+    "exit_code": 0,
+    "sysbench": {
+      "configuration": {
+        "server": [
+          [
+            "before",
+            53030
+          ],
+          [
+            "after",
+            53031
+          ],
+          [
+            "go",
+            45000
+          ]
+        ],
+        "database": "perf_sysbench_locking_v2",
+        "workload": [
+          "oltp_read_write"
+        ],
+        "host": "127.0.0.1",
+        "user": "root",
+        "threads": 2,
+        "seconds": 20,
+        "rounds": 3,
+        "table_size": 100000,
+        "tables": 1,
+        "ps_mode": "auto",
+        "output": "/private/tmp/tidb-sql-mode-cache-sysbench-comparison"
+      },
+      "samples": [
+        {
+          "transactions": 8065,
+          "queries": 161300,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 20.0022,
+          "tps": 403.20564737878834,
+          "qps": 8064.112947575767,
+          "server": "before",
+          "workload": "oltp_read_write",
+          "round": 0,
+          "log": "/private/tmp/tidb-sql-mode-cache-sysbench-comparison/w0-r0-before.log"
+        },
+        {
+          "transactions": 8503,
+          "queries": 170060,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 20.0046,
+          "tps": 425.0522379852634,
+          "qps": 8501.044759705268,
+          "server": "after",
+          "workload": "oltp_read_write",
+          "round": 0,
+          "log": "/private/tmp/tidb-sql-mode-cache-sysbench-comparison/w0-r0-after.log"
+        },
+        {
+          "transactions": 9018,
+          "queries": 180360,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 20.0053,
+          "tps": 450.7805431560637,
+          "qps": 9015.610863121274,
+          "server": "go",
+          "workload": "oltp_read_write",
+          "round": 0,
+          "log": "/private/tmp/tidb-sql-mode-cache-sysbench-comparison/w0-r0-go.log"
+        },
+        {
+          "transactions": 8451,
+          "queries": 169020,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 20.0047,
+          "tps": 422.4507240798412,
+          "qps": 8449.014481596825,
+          "server": "after",
+          "workload": "oltp_read_write",
+          "round": 1,
+          "log": "/private/tmp/tidb-sql-mode-cache-sysbench-comparison/w0-r1-after.log"
+        },
+        {
+          "transactions": 9080,
+          "queries": 181600,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 20.002,
+          "tps": 453.9546045395461,
+          "qps": 9079.092090790922,
+          "server": "go",
+          "workload": "oltp_read_write",
+          "round": 1,
+          "log": "/private/tmp/tidb-sql-mode-cache-sysbench-comparison/w0-r1-go.log"
+        },
+        {
+          "transactions": 8544,
+          "queries": 170880,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 20.0027,
+          "tps": 427.14233578466906,
+          "qps": 8542.84671569338,
+          "server": "before",
+          "workload": "oltp_read_write",
+          "round": 1,
+          "log": "/private/tmp/tidb-sql-mode-cache-sysbench-comparison/w0-r1-before.log"
+        },
+        {
+          "transactions": 8484,
+          "queries": 169680,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 20.0048,
+          "tps": 424.0982164280573,
+          "qps": 8481.964328561146,
+          "server": "go",
+          "workload": "oltp_read_write",
+          "round": 2,
+          "log": "/private/tmp/tidb-sql-mode-cache-sysbench-comparison/w0-r2-go.log"
+        },
+        {
+          "transactions": 8325,
+          "queries": 166500,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 20.0047,
+          "tps": 416.1522042320055,
+          "qps": 8323.044084640109,
+          "server": "before",
+          "workload": "oltp_read_write",
+          "round": 2,
+          "log": "/private/tmp/tidb-sql-mode-cache-sysbench-comparison/w0-r2-before.log"
+        },
+        {
+          "transactions": 8120,
+          "queries": 162400,
+          "errors": 0,
+          "reconnects": 0,
+          "seconds": 20.0043,
+          "tps": 405.9127287633159,
+          "qps": 8118.254575266317,
+          "server": "after",
+          "workload": "oltp_read_write",
+          "round": 2,
+          "log": "/private/tmp/tidb-sql-mode-cache-sysbench-comparison/w0-r2-after.log"
+        }
+      ],
+      "summary": [
+        {
+          "server": "before",
+          "workload": "oltp_read_write",
+          "median_tps": 416.1522042320055,
+          "min_tps": 403.20564737878834,
+          "max_tps": 427.14233578466906,
+          "samples": 3
+        },
+        {
+          "server": "after",
+          "workload": "oltp_read_write",
+          "median_tps": 422.4507240798412,
+          "min_tps": 405.9127287633159,
+          "max_tps": 425.0522379852634,
+          "samples": 3
+        },
+        {
+          "server": "go",
+          "workload": "oltp_read_write",
+          "median_tps": 450.7805431560637,
+          "min_tps": 424.0982164280573,
+          "max_tps": 453.9546045395461,
+          "samples": 3
+        }
+      ]
+    },
+    "tpcc": {
+      "database": "perf_tpcc_locking_v1",
+      "count_per_run": 10000,
+      "note": "Shared evolving dataset; tool RNG is time-seeded; no ignored errors or time cutoff",
+      "samples": [
+        {
+          "server": "before",
+          "threads": 2,
+          "round": 0,
+          "seconds": 21.652213290974032,
+          "counts": {
+            "DELIVERY": 428,
+            "NEW_ORDER": 4424,
+            "ORDER_STATUS": 408,
+            "PAYMENT": 4330,
+            "STOCK_LEVEL": 410
+          },
+          "tps": 461.84654961664415,
+          "new_order_tpm": 12259.254813024201,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t2-r0-before.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "53030",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "2",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "after",
+          "threads": 2,
+          "round": 0,
+          "seconds": 22.40730787499342,
+          "counts": {
+            "DELIVERY": 386,
+            "NEW_ORDER": 4477,
+            "ORDER_STATUS": 434,
+            "PAYMENT": 4293,
+            "STOCK_LEVEL": 410
+          },
+          "tps": 446.28297409882117,
+          "new_order_tpm": 11988.053250242534,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t2-r0-after.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "53031",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "2",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "go",
+          "threads": 2,
+          "round": 0,
+          "seconds": 19.896691208006814,
+          "counts": {
+            "DELIVERY": 373,
+            "NEW_ORDER": 4488,
+            "ORDER_STATUS": 400,
+            "PAYMENT": 4303,
+            "STOCK_LEVEL": 436
+          },
+          "tps": 502.59612995229105,
+          "new_order_tpm": 13533.908587355294,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t2-r0-go.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "45000",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "2",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "after",
+          "threads": 2,
+          "round": 1,
+          "seconds": 18.699784666998312,
+          "counts": {
+            "DELIVERY": 401,
+            "NEW_ORDER": 4523,
+            "ORDER_STATUS": 390,
+            "PAYMENT": 4296,
+            "STOCK_LEVEL": 390
+          },
+          "tps": 534.7655161852299,
+          "new_order_tpm": 14512.46657823477,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t2-r1-after.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "53031",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "2",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "go",
+          "threads": 2,
+          "round": 1,
+          "seconds": 17.71319408301497,
+          "counts": {
+            "DELIVERY": 385,
+            "NEW_ORDER": 4462,
+            "ORDER_STATUS": 401,
+            "PAYMENT": 4335,
+            "STOCK_LEVEL": 417
+          },
+          "tps": 564.5509191133922,
+          "new_order_tpm": 15114.157206503734,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t2-r1-go.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "45000",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "2",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "before",
+          "threads": 2,
+          "round": 1,
+          "seconds": 19.713804957980756,
+          "counts": {
+            "DELIVERY": 382,
+            "NEW_ORDER": 4527,
+            "ORDER_STATUS": 423,
+            "PAYMENT": 4282,
+            "STOCK_LEVEL": 386
+          },
+          "tps": 507.2587469194622,
+          "new_order_tpm": 13778.162083826433,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t2-r1-before.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "53030",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "2",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "go",
+          "threads": 2,
+          "round": 2,
+          "seconds": 18.03026095801033,
+          "counts": {
+            "DELIVERY": 377,
+            "NEW_ORDER": 4512,
+            "ORDER_STATUS": 364,
+            "PAYMENT": 4354,
+            "STOCK_LEVEL": 393
+          },
+          "tps": 554.6231429089376,
+          "new_order_tpm": 15014.757724830755,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t2-r2-go.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "45000",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "2",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "before",
+          "threads": 2,
+          "round": 2,
+          "seconds": 19.63750304200221,
+          "counts": {
+            "DELIVERY": 396,
+            "NEW_ORDER": 4431,
+            "ORDER_STATUS": 395,
+            "PAYMENT": 4401,
+            "STOCK_LEVEL": 377
+          },
+          "tps": 509.22971105905,
+          "new_order_tpm": 13538.381098215903,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t2-r2-before.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "53030",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "2",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "after",
+          "threads": 2,
+          "round": 2,
+          "seconds": 20.396646916982718,
+          "counts": {
+            "DELIVERY": 422,
+            "NEW_ORDER": 4612,
+            "ORDER_STATUS": 390,
+            "PAYMENT": 4216,
+            "STOCK_LEVEL": 360
+          },
+          "tps": 490.27666364483514,
+          "new_order_tpm": 13566.935836379878,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t2-r2-after.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "53031",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "2",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "before",
+          "threads": 8,
+          "round": 0,
+          "seconds": 13.092381790978834,
+          "counts": {
+            "DELIVERY": 386,
+            "NEW_ORDER": 4572,
+            "ORDER_STATUS": 405,
+            "PAYMENT": 4271,
+            "STOCK_LEVEL": 366
+          },
+          "tps": 763.8029626427785,
+          "new_order_tpm": 20952.6428712167,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t8-r0-before.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "53030",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "8",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "after",
+          "threads": 8,
+          "round": 0,
+          "seconds": 13.850273500022013,
+          "counts": {
+            "DELIVERY": 387,
+            "NEW_ORDER": 4451,
+            "ORDER_STATUS": 418,
+            "PAYMENT": 4373,
+            "STOCK_LEVEL": 371
+          },
+          "tps": 722.0074029573573,
+          "new_order_tpm": 19281.92970337918,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t8-r0-after.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "53031",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "8",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "go",
+          "threads": 8,
+          "round": 0,
+          "seconds": 13.050274541019462,
+          "counts": {
+            "DELIVERY": 399,
+            "NEW_ORDER": 4443,
+            "ORDER_STATUS": 404,
+            "PAYMENT": 4353,
+            "STOCK_LEVEL": 401
+          },
+          "tps": 766.267404457134,
+          "new_order_tpm": 20427.156468018282,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t8-r0-go.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "45000",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "8",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "after",
+          "threads": 8,
+          "round": 1,
+          "seconds": 13.233732707973104,
+          "counts": {
+            "DELIVERY": 367,
+            "NEW_ORDER": 4392,
+            "ORDER_STATUS": 407,
+            "PAYMENT": 4382,
+            "STOCK_LEVEL": 452
+          },
+          "tps": 755.6447013604231,
+          "new_order_tpm": 19912.74917024987,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t8-r1-after.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "53031",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "8",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "go",
+          "threads": 8,
+          "round": 1,
+          "seconds": 12.85143512499053,
+          "counts": {
+            "DELIVERY": 388,
+            "NEW_ORDER": 4521,
+            "ORDER_STATUS": 380,
+            "PAYMENT": 4301,
+            "STOCK_LEVEL": 410
+          },
+          "tps": 778.1232136910755,
+          "new_order_tpm": 21107.370294584114,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t8-r1-go.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "45000",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "8",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "before",
+          "threads": 8,
+          "round": 1,
+          "seconds": 13.275004249997437,
+          "counts": {
+            "DELIVERY": 371,
+            "NEW_ORDER": 4604,
+            "ORDER_STATUS": 405,
+            "PAYMENT": 4199,
+            "STOCK_LEVEL": 421
+          },
+          "tps": 753.2954273820237,
+          "new_order_tpm": 20809.032886001023,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t8-r1-before.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "53030",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "8",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "go",
+          "threads": 8,
+          "round": 2,
+          "seconds": 13.714635541953612,
+          "counts": {
+            "DELIVERY": 393,
+            "NEW_ORDER": 4462,
+            "ORDER_STATUS": 399,
+            "PAYMENT": 4335,
+            "STOCK_LEVEL": 411
+          },
+          "tps": 729.1480673627531,
+          "new_order_tpm": 19520.752059435625,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t8-r2-go.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "45000",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "8",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "before",
+          "threads": 8,
+          "round": 2,
+          "seconds": 15.000481499999296,
+          "counts": {
+            "DELIVERY": 408,
+            "NEW_ORDER": 4524,
+            "ORDER_STATUS": 387,
+            "PAYMENT": 4298,
+            "STOCK_LEVEL": 383
+          },
+          "tps": 666.645267353616,
+          "new_order_tpm": 18095.41913704655,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t8-r2-before.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "53030",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "8",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "after",
+          "threads": 8,
+          "round": 2,
+          "seconds": 15.613545999978669,
+          "counts": {
+            "DELIVERY": 383,
+            "NEW_ORDER": 4560,
+            "ORDER_STATUS": 409,
+            "PAYMENT": 4243,
+            "STOCK_LEVEL": 405
+          },
+          "tps": 640.4695000106742,
+          "new_order_tpm": 17523.245520292046,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t8-r2-after.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "53031",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "8",
+            "--count",
+            "10000",
+            "--interval",
+            "10s"
+          ]
+        }
+      ],
+      "warmups": [
+        {
+          "server": "go",
+          "threads": 2,
+          "round": -1,
+          "seconds": 2.338930833968334,
+          "counts": {
+            "DELIVERY": 38,
+            "NEW_ORDER": 439,
+            "ORDER_STATUS": 44,
+            "PAYMENT": 441,
+            "STOCK_LEVEL": 38
+          },
+          "tps": 427.5457766758137,
+          "new_order_tpm": 11261.555757640934,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t2-r-1-go.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "45000",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "2",
+            "--count",
+            "1000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "before",
+          "threads": 2,
+          "round": -1,
+          "seconds": 2.1058978749788366,
+          "counts": {
+            "DELIVERY": 34,
+            "NEW_ORDER": 461,
+            "ORDER_STATUS": 40,
+            "PAYMENT": 429,
+            "STOCK_LEVEL": 36
+          },
+          "tps": 474.85683512076747,
+          "new_order_tpm": 13134.540059440427,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t2-r-1-before.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "53030",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "2",
+            "--count",
+            "1000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "after",
+          "threads": 2,
+          "round": -1,
+          "seconds": 2.0691307919914834,
+          "counts": {
+            "DELIVERY": 35,
+            "NEW_ORDER": 457,
+            "ORDER_STATUS": 35,
+            "PAYMENT": 434,
+            "STOCK_LEVEL": 39
+          },
+          "tps": 483.2947263993527,
+          "new_order_tpm": 13251.941397870252,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t2-r-1-after.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "53031",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "2",
+            "--count",
+            "1000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "go",
+          "threads": 8,
+          "round": -1,
+          "seconds": 1.230532499961555,
+          "counts": {
+            "DELIVERY": 43,
+            "NEW_ORDER": 443,
+            "ORDER_STATUS": 45,
+            "PAYMENT": 424,
+            "STOCK_LEVEL": 45
+          },
+          "tps": 812.6563093873933,
+          "new_order_tpm": 21600.404703516913,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t8-r-1-go.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "45000",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "8",
+            "--count",
+            "1000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "before",
+          "threads": 8,
+          "round": -1,
+          "seconds": 1.3769450830295682,
+          "counts": {
+            "DELIVERY": 41,
+            "NEW_ORDER": 428,
+            "ORDER_STATUS": 44,
+            "PAYMENT": 456,
+            "STOCK_LEVEL": 31
+          },
+          "tps": 726.2453763223368,
+          "new_order_tpm": 18649.98126395761,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t8-r-1-before.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "53030",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "8",
+            "--count",
+            "1000",
+            "--interval",
+            "10s"
+          ]
+        },
+        {
+          "server": "after",
+          "threads": 8,
+          "round": -1,
+          "seconds": 1.379297209030483,
+          "counts": {
+            "DELIVERY": 43,
+            "NEW_ORDER": 444,
+            "ORDER_STATUS": 37,
+            "PAYMENT": 438,
+            "STOCK_LEVEL": 38
+          },
+          "tps": 725.0069045691077,
+          "new_order_tpm": 19314.18393772103,
+          "log": "/private/tmp/tidb-sql-mode-cache-tpcc-comparison/t8-r-1-after.log",
+          "command": [
+            "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+            "tpcc",
+            "run",
+            "-H",
+            "127.0.0.1",
+            "-P",
+            "53031",
+            "-U",
+            "root",
+            "-D",
+            "perf_tpcc_locking_v1",
+            "--warehouses",
+            "1",
+            "-T",
+            "8",
+            "--count",
+            "1000",
+            "--interval",
+            "10s"
+          ]
+        }
+      ],
+      "summary": [
+        {
+          "server": "before",
+          "threads": 2,
+          "median_tps": 507.2587469194622
+        },
+        {
+          "server": "after",
+          "threads": 2,
+          "median_tps": 490.27666364483514
+        },
+        {
+          "server": "go",
+          "threads": 2,
+          "median_tps": 554.6231429089376
+        },
+        {
+          "server": "before",
+          "threads": 8,
+          "median_tps": 753.2954273820237
+        },
+        {
+          "server": "after",
+          "threads": 8,
+          "median_tps": 722.0074029573573
+        },
+        {
+          "server": "go",
+          "threads": 8,
+          "median_tps": 766.267404457134
+        }
+      ]
+    },
+    "paired_changes_percent": {
+      "sysbench": [
+        5.418225351876438,
+        -1.098371973878276,
+        -2.460512131032966
+      ],
+      "tpcc_2": [
+        -3.369858566820849,
+        5.42263084329524,
+        -3.7219052625185545
+      ],
+      "tpcc_8": [
+        -5.472034245691781,
+        0.3118662204766087,
+        -3.9264911377608347
+      ]
+    },
+    "postcheck": {
+      "session": 67894,
+      "exit_code": 0,
+      "conditions_passed": 11,
+      "customers_checked": 30000,
+      "bad_balances": 0,
+      "bad_delivery_counts": 0
+    }
+  },
+  "remaining": [
+    "Shared immutable cost-environment ownership and remeasurement",
+    "UPDATE lazy assertions/fair-lock parity and other recorded compatibility gaps",
+    "Ready/lint, commit, push not performed"
+  ],
+  "profile": {
+    "rejected": {
+      "path": "/private/tmp/tidb-sql-mode-cache-mixed.sample.txt",
+      "reason": "Sampler started 12:11:00 after workload ended 12:10:58; idle-only, not performance evidence."
+    },
+    "corrected": {
+      "session": 25283,
+      "exit_code": 0,
+      "path": "/private/tmp/tidb-sql-mode-cache-mixed-v2.sample.txt",
+      "workload_log": "/private/tmp/tidb-sql-mode-cache-profile-v2-workload.log",
+      "workload_start": "2026-09-07 12:12:29 +0800",
+      "workload_end": "2026-09-07 12:13:03 +0800",
+      "sample_start": "2026-09-07 12:12:30 +0800",
+      "sample_seconds": 15,
+      "transactions": 20000,
+      "interpretation": "All-thread-state sample overlaps full mixed workload; cost-factor construction and teardown remain visible. Not CPU-time percentages."
+    },
+    "postcheck": {
+      "session": 69921,
+      "exit_code": 0,
+      "additional_transactions": 40000,
+      "conditions_passed": 11,
+      "customers_checked": 30000,
+      "bad_balances": 0,
+      "bad_delivery_counts": 0,
+      "logs": [
+        "/private/tmp/tidb-sql-mode-cache-profile-check.log",
+        "/private/tmp/tidb-sql-mode-cache-profile-balances.tsv"
+      ]
+    }
+  }
+}

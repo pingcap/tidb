@@ -85,6 +85,139 @@ impl ColumnResolver for TestTable {
     }
 }
 
+#[test]
+fn retained_conditions_rebuild_current_ranges_without_rewriting() {
+    struct Context {
+        table: TestTable,
+        params: Vec<Datum>,
+        warnings: std::cell::Cell<usize>,
+    }
+    impl tidb_expr::Columns for Context {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+        fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
+            self.params
+                .get(order)
+                .cloned()
+                .ok_or(tidb_expr::EvalError::Unsupported(
+                    "unbound prepared parameter",
+                ))
+        }
+        fn handle_division_by_zero(&self) -> Result<(), tidb_expr::EvalError> {
+            self.warnings.set(self.warnings.get() + 1);
+            Ok(())
+        }
+    }
+    impl ColumnResolver for Context {
+        fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+            tidb_expr::SessionTimeZone::utc()
+        }
+        fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+            self.table.resolve(path)
+        }
+        fn param_value(&self, order: usize) -> Result<Datum, tidb_expr::EvalError> {
+            tidb_expr::Columns::param_value(self, order)
+        }
+        fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+            tidb_expr::fold_constant_in_mode(expression, self, mode);
+        }
+    }
+    let compile = |sql: &str, ctx: &Context| {
+        let tidb_ast::Stmt::Query(query) = tidb_parser::parse(sql).unwrap() else {
+            panic!("query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &*query else {
+            panic!("SELECT")
+        };
+        rewrite_expr_resolved(select.where_clause.as_ref().unwrap(), ctx).unwrap()
+    };
+    let mut ctx = Context {
+        table: TestTable::new(),
+        params: vec![Datum::Int(1), Datum::Int(2)],
+        warnings: std::cell::Cell::new(0),
+    };
+    let cols = [ctx.table.a.clone(), ctx.table.b.clone()];
+    let lengths = [-1, -1];
+    let expressions = [
+        compile("SELECT * FROM t WHERE a = ? AND b > ?", &ctx),
+        compile(
+            "SELECT * FROM t WHERE (a = ? AND b > ?) OR (a = 3 AND b > 4)",
+            &ctx,
+        ),
+    ];
+    for (values, expected) in [
+        ([9, 20], ["[(9 20,9 +inf]]", "[(3 4,3 +inf] (9 20,9 +inf]]"]),
+        ([5, 6], ["[(5 6,5 +inf]]", "[(3 4,3 +inf] (5 6,5 +inf]]"]),
+    ] {
+        ctx.params = values.map(Datum::Int).to_vec();
+        let evaluate = |constant: &tidb_expr::constant::Constant| constant.eval_in(&ctx);
+        for (expression, expected) in expressions.iter().zip(expected) {
+            let conditions = split_cnf_items(expression);
+            let result = super::detacher::detach_cond_and_build_range_for_index_in(
+                &conditions,
+                &cols,
+                &lengths,
+                0,
+                &evaluate,
+            )
+            .unwrap();
+            assert_eq!(ranges_to_go_string(&result.ranges), expected);
+            assert!(result.remained_conds.is_empty());
+        }
+    }
+    let predicate = compile("SELECT * FROM t WHERE a >= ?", &ctx);
+    for value in [9, 2] {
+        ctx.params = vec![Datum::Int(value)];
+        let evaluate = |constant: &tidb_expr::constant::Constant| constant.eval_in(&ctx);
+        let conditions = std::slice::from_ref(&predicate);
+        let tp = cols[0].ret_type.as_ref().unwrap();
+        let table = super::ranger::build_table_range_in(conditions, tp, 0, &evaluate).unwrap();
+        assert_eq!(
+            ranges_to_go_string(&table.ranges),
+            format!("[[{value},+inf]]")
+        );
+        assert_eq!(table.ranges[0].high_val, vec![Datum::Int(i64::MAX)]);
+        let column =
+            super::ranger::build_column_range_in(conditions, tp, -1, 0, &evaluate).unwrap();
+        assert_eq!(
+            ranges_to_go_string(&column.ranges),
+            format!("[[{value},+inf]]")
+        );
+        assert_eq!(column.ranges[0].high_val, vec![Datum::MaxValue]);
+        let partition = super::detacher::detach_cond_and_build_range_for_partition_in(
+            conditions, &cols, &lengths, 0, &evaluate,
+        )
+        .unwrap();
+        assert_eq!(
+            ranges_to_go_string(&partition.ranges),
+            format!("[[{value},+inf]]")
+        );
+        let (simple, _, _) = super::detacher::detach_simple_cond_and_build_range_for_index_in(
+            conditions, &cols, &lengths, 0, &evaluate,
+        )
+        .unwrap();
+        assert_eq!(ranges_to_go_string(&simple), format!("[[{value},+inf]]"));
+    }
+    // Go folds once before DataSource/ranger analysis. Repeated candidates
+    // consume that Constant; they cannot repeat the original division.
+    let predicate = compile("SELECT * FROM t WHERE a >= 1 / 0", &ctx);
+    assert_eq!(ctx.warnings.get(), 1);
+    let evaluate = |constant: &tidb_expr::constant::Constant| constant.eval_in(&ctx);
+    for _ in 0..7 {
+        let result = super::detacher::detach_cond_and_build_range_for_index_in(
+            std::slice::from_ref(&predicate),
+            &cols,
+            &lengths,
+            0,
+            &evaluate,
+        )
+        .unwrap();
+        assert!(result.ranges.is_empty());
+        assert_eq!(ctx.warnings.get(), 1);
+    }
+}
+
 /// Go's `fmt.Sprintf("%v", result)` over `Ranges`.
 fn ranges_to_go_string(ranges: &[Range]) -> String {
     let inner: Vec<String> = ranges.iter().map(Range::to_display_string).collect();

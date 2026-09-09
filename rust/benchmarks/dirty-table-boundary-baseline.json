@@ -1,0 +1,641 @@
+{
+  "date": "2026-09-07",
+  "status": "WIP; corrected transaction-state lifetime, no broad performance win",
+  "increment": "Clear inherited dirty-table marks when constructing a new ordinary or historical transaction snapshot",
+  "base_head": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "files_changed_this_increment": [
+    "rust/crates/tidb-session/src/txn.rs",
+    "rust/crates/tidb-session/src/tests_union_scan.rs",
+    "rust/crates/tidb-executor/src/driver/catalog.rs",
+    "rust/crates/tidb-executor/src/kv_table.rs"
+  ],
+  "before": {
+    "port": 53012,
+    "sha256": "955a227109e71e0160d553947adad3e9f5351e351eb0d642a328d4064dbfd9f9",
+    "preserved_binary": "/private/tmp/tidb-prelock-current-OTBUWh/tidb-server"
+  },
+  "after": {
+    "port": 53013,
+    "sha256": "2814764b8feacdce212eb854b3e9a47706d832c5156787fd518f5ef6b1bf1580",
+    "server_log": "/private/tmp/tidb-dirty-boundary-server.log"
+  },
+  "cluster": "Shared local PD 43379, TiKV 61160, Go 45000; v9.0.0-beta.2.pre-nightly. Older Rust server 53011 idle throughout.",
+  "conclusion": {
+    "sysbench": {
+      "before_median_tps": 452.6870326682394,
+      "after_median_tps": 450.6828224661588,
+      "change_percent": -0.442736384620368
+    },
+    "tpcc_2": {
+      "before_median_tps": 469.27851577092326,
+      "after_median_tps": 475.388747217476,
+      "change_percent": 1.302047982425747
+    },
+    "tpcc_8": {
+      "before_median_tps": 671.7966871959533,
+      "after_median_tps": 663.8667716469325,
+      "change_percent": -1.1804040865577625
+    },
+    "note": "Mixed small changes do not establish a broad throughput improvement. Go remains faster. The earlier multi-second tail did not recur in diagnostics but remains unexplained."
+  },
+  "sysbench": {
+    "configuration": {
+      "server": [
+        [
+          "before",
+          53012
+        ],
+        [
+          "after",
+          53013
+        ],
+        [
+          "go",
+          45000
+        ]
+      ],
+      "database": "perf_sysbench_locking_v2",
+      "workload": [
+        "oltp_read_write"
+      ],
+      "host": "127.0.0.1",
+      "user": "root",
+      "threads": 2,
+      "seconds": 20,
+      "rounds": 3,
+      "table_size": 100000,
+      "tables": 1,
+      "ps_mode": "auto",
+      "output": "/private/tmp/tidb-dirty-boundary-sysbench-comparison"
+    },
+    "samples": [
+      {
+        "transactions": 9212,
+        "queries": 184240,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.0043,
+        "tps": 460.50099228665835,
+        "qps": 9210.019845733166,
+        "server": "before",
+        "workload": "oltp_read_write",
+        "round": 0,
+        "log": "/private/tmp/tidb-dirty-boundary-sysbench-comparison/w0-r0-before.log"
+      },
+      {
+        "transactions": 9016,
+        "queries": 180320,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.0052,
+        "tps": 450.6828224661588,
+        "qps": 9013.656449323176,
+        "server": "after",
+        "workload": "oltp_read_write",
+        "round": 0,
+        "log": "/private/tmp/tidb-dirty-boundary-sysbench-comparison/w0-r0-after.log"
+      },
+      {
+        "transactions": 10060,
+        "queries": 201200,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.0017,
+        "tps": 502.95724863386613,
+        "qps": 10059.144972677323,
+        "server": "go",
+        "workload": "oltp_read_write",
+        "round": 0,
+        "log": "/private/tmp/tidb-dirty-boundary-sysbench-comparison/w0-r0-go.log"
+      },
+      {
+        "transactions": 9214,
+        "queries": 184280,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.004,
+        "tps": 460.6078784243151,
+        "qps": 9212.157568486302,
+        "server": "after",
+        "workload": "oltp_read_write",
+        "round": 1,
+        "log": "/private/tmp/tidb-dirty-boundary-sysbench-comparison/w0-r1-after.log"
+      },
+      {
+        "transactions": 9678,
+        "queries": 193560,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.0045,
+        "tps": 483.79114699192684,
+        "qps": 9675.822939838536,
+        "server": "go",
+        "workload": "oltp_read_write",
+        "round": 1,
+        "log": "/private/tmp/tidb-dirty-boundary-sysbench-comparison/w0-r1-go.log"
+      },
+      {
+        "transactions": 9057,
+        "queries": 181140,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.0072,
+        "tps": 452.6870326682394,
+        "qps": 9053.740653364788,
+        "server": "before",
+        "workload": "oltp_read_write",
+        "round": 1,
+        "log": "/private/tmp/tidb-dirty-boundary-sysbench-comparison/w0-r1-before.log"
+      },
+      {
+        "transactions": 9489,
+        "queries": 189780,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.0026,
+        "tps": 474.38832951716273,
+        "qps": 9487.766590343255,
+        "server": "go",
+        "workload": "oltp_read_write",
+        "round": 2,
+        "log": "/private/tmp/tidb-dirty-boundary-sysbench-comparison/w0-r2-go.log"
+      },
+      {
+        "transactions": 8680,
+        "queries": 173600,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.0049,
+        "tps": 433.8936960444691,
+        "qps": 8677.873920889382,
+        "server": "before",
+        "workload": "oltp_read_write",
+        "round": 2,
+        "log": "/private/tmp/tidb-dirty-boundary-sysbench-comparison/w0-r2-before.log"
+      },
+      {
+        "transactions": 8730,
+        "queries": 174600,
+        "errors": 0,
+        "reconnects": 0,
+        "seconds": 20.0045,
+        "tps": 436.40180959284163,
+        "qps": 8728.036191856832,
+        "server": "after",
+        "workload": "oltp_read_write",
+        "round": 2,
+        "log": "/private/tmp/tidb-dirty-boundary-sysbench-comparison/w0-r2-after.log"
+      }
+    ],
+    "summary": [
+      {
+        "server": "before",
+        "workload": "oltp_read_write",
+        "median_tps": 452.6870326682394,
+        "min_tps": 433.8936960444691,
+        "max_tps": 460.50099228665835,
+        "samples": 3
+      },
+      {
+        "server": "after",
+        "workload": "oltp_read_write",
+        "median_tps": 450.6828224661588,
+        "min_tps": 436.40180959284163,
+        "max_tps": 460.6078784243151,
+        "samples": 3
+      },
+      {
+        "server": "go",
+        "workload": "oltp_read_write",
+        "median_tps": 483.79114699192684,
+        "min_tps": 474.38832951716273,
+        "max_tps": 502.95724863386613,
+        "samples": 3
+      }
+    ]
+  },
+  "tpcc": {
+    "database": "perf_tpcc_locking_v1",
+    "count_per_run": 10000,
+    "note": "Shared evolving dataset; tool RNG is time-seeded; no ignored errors or time cutoff",
+    "command": "python3 /private/tmp/tidb-agg-tpcc-compare.py --server before:53012 --server after:53013 --server go:45000 --output /private/tmp/tidb-dirty-boundary-tpcc-comparison",
+    "raw_results": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/results.json",
+    "samples": [
+      {
+        "server": "before",
+        "threads": 2,
+        "round": 0,
+        "seconds": 19.805443875025958,
+        "counts": {
+          "DELIVERY": 392,
+          "NEW_ORDER": 4562,
+          "ORDER_STATUS": 362,
+          "PAYMENT": 4298,
+          "STOCK_LEVEL": 386
+        },
+        "tps": 504.911683025175,
+        "new_order_tpm": 13820.44258776509,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t2-r0-before.log"
+      },
+      {
+        "server": "after",
+        "threads": 2,
+        "round": 0,
+        "seconds": 19.312022375001106,
+        "counts": {
+          "DELIVERY": 373,
+          "NEW_ORDER": 4519,
+          "ORDER_STATUS": 385,
+          "PAYMENT": 4332,
+          "STOCK_LEVEL": 391
+        },
+        "tps": 517.8121589660507,
+        "new_order_tpm": 14039.958878205498,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t2-r0-after.log"
+      },
+      {
+        "server": "go",
+        "threads": 2,
+        "round": 0,
+        "seconds": 17.112334249948617,
+        "counts": {
+          "DELIVERY": 387,
+          "NEW_ORDER": 4511,
+          "ORDER_STATUS": 375,
+          "PAYMENT": 4331,
+          "STOCK_LEVEL": 396
+        },
+        "tps": 584.373812125019,
+        "new_order_tpm": 15816.661598975763,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t2-r0-go.log"
+      },
+      {
+        "server": "after",
+        "threads": 2,
+        "round": 1,
+        "seconds": 21.03541587496875,
+        "counts": {
+          "DELIVERY": 413,
+          "NEW_ORDER": 4508,
+          "ORDER_STATUS": 390,
+          "PAYMENT": 4297,
+          "STOCK_LEVEL": 392
+        },
+        "tps": 475.388747217476,
+        "new_order_tpm": 12858.31483473829,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t2-r1-after.log"
+      },
+      {
+        "server": "go",
+        "threads": 2,
+        "round": 1,
+        "seconds": 17.522431499965023,
+        "counts": {
+          "DELIVERY": 403,
+          "NEW_ORDER": 4475,
+          "ORDER_STATUS": 413,
+          "PAYMENT": 4299,
+          "STOCK_LEVEL": 410
+        },
+        "tps": 570.6970519485244,
+        "new_order_tpm": 15323.215844817882,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t2-r1-go.log"
+      },
+      {
+        "server": "before",
+        "threads": 2,
+        "round": 1,
+        "seconds": 21.30930708296364,
+        "counts": {
+          "DELIVERY": 394,
+          "NEW_ORDER": 4533,
+          "ORDER_STATUS": 393,
+          "PAYMENT": 4262,
+          "STOCK_LEVEL": 418
+        },
+        "tps": 469.27851577092326,
+        "new_order_tpm": 12763.437071937571,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t2-r1-before.log"
+      },
+      {
+        "server": "go",
+        "threads": 2,
+        "round": 2,
+        "seconds": 18.4601183750201,
+        "counts": {
+          "DELIVERY": 397,
+          "NEW_ORDER": 4515,
+          "ORDER_STATUS": 406,
+          "PAYMENT": 4298,
+          "STOCK_LEVEL": 384
+        },
+        "tps": 541.7083356048149,
+        "new_order_tpm": 14674.878811534436,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t2-r2-go.log"
+      },
+      {
+        "server": "before",
+        "threads": 2,
+        "round": 2,
+        "seconds": 21.5308956670342,
+        "counts": {
+          "DELIVERY": 382,
+          "NEW_ORDER": 4476,
+          "ORDER_STATUS": 413,
+          "PAYMENT": 4327,
+          "STOCK_LEVEL": 402
+        },
+        "tps": 464.448862446114,
+        "new_order_tpm": 12473.238649852838,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t2-r2-before.log"
+      },
+      {
+        "server": "after",
+        "threads": 2,
+        "round": 2,
+        "seconds": 21.68319337500725,
+        "counts": {
+          "DELIVERY": 379,
+          "NEW_ORDER": 4504,
+          "ORDER_STATUS": 386,
+          "PAYMENT": 4312,
+          "STOCK_LEVEL": 419
+        },
+        "tps": 461.1866816410134,
+        "new_order_tpm": 12463.108884666746,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t2-r2-after.log"
+      },
+      {
+        "server": "before",
+        "threads": 8,
+        "round": 0,
+        "seconds": 16.127270500001032,
+        "counts": {
+          "DELIVERY": 407,
+          "NEW_ORDER": 4515,
+          "ORDER_STATUS": 399,
+          "PAYMENT": 4278,
+          "STOCK_LEVEL": 401
+        },
+        "tps": 620.0677293779726,
+        "new_order_tpm": 16797.63478884928,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t8-r0-before.log"
+      },
+      {
+        "server": "after",
+        "threads": 8,
+        "round": 0,
+        "seconds": 15.974308167002164,
+        "counts": {
+          "DELIVERY": 393,
+          "NEW_ORDER": 4361,
+          "ORDER_STATUS": 390,
+          "PAYMENT": 4422,
+          "STOCK_LEVEL": 434
+        },
+        "tps": 626.0052013180024,
+        "new_order_tpm": 16380.052097686852,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t8-r0-after.log"
+      },
+      {
+        "server": "go",
+        "threads": 8,
+        "round": 0,
+        "seconds": 14.083293042029254,
+        "counts": {
+          "DELIVERY": 382,
+          "NEW_ORDER": 4493,
+          "ORDER_STATUS": 410,
+          "PAYMENT": 4307,
+          "STOCK_LEVEL": 408
+        },
+        "tps": 710.06120302664,
+        "new_order_tpm": 19141.82991119216,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t8-r0-go.log"
+      },
+      {
+        "server": "after",
+        "threads": 8,
+        "round": 1,
+        "seconds": 13.869001499959268,
+        "counts": {
+          "DELIVERY": 368,
+          "NEW_ORDER": 4568,
+          "ORDER_STATUS": 426,
+          "PAYMENT": 4251,
+          "STOCK_LEVEL": 387
+        },
+        "tps": 721.0324405855295,
+        "new_order_tpm": 19762.057131568192,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t8-r1-after.log"
+      },
+      {
+        "server": "go",
+        "threads": 8,
+        "round": 1,
+        "seconds": 12.027680166997015,
+        "counts": {
+          "DELIVERY": 419,
+          "NEW_ORDER": 4472,
+          "ORDER_STATUS": 415,
+          "PAYMENT": 4312,
+          "STOCK_LEVEL": 382
+        },
+        "tps": 831.4155232892867,
+        "new_order_tpm": 22308.541320898144,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t8-r1-go.log"
+      },
+      {
+        "server": "before",
+        "threads": 8,
+        "round": 1,
+        "seconds": 14.885455958021339,
+        "counts": {
+          "DELIVERY": 421,
+          "NEW_ORDER": 4504,
+          "ORDER_STATUS": 393,
+          "PAYMENT": 4287,
+          "STOCK_LEVEL": 395
+        },
+        "tps": 671.7966871959533,
+        "new_order_tpm": 18154.63367478344,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t8-r1-before.log"
+      },
+      {
+        "server": "go",
+        "threads": 8,
+        "round": 2,
+        "seconds": 11.900266166019719,
+        "counts": {
+          "DELIVERY": 383,
+          "NEW_ORDER": 4475,
+          "ORDER_STATUS": 412,
+          "PAYMENT": 4313,
+          "STOCK_LEVEL": 417
+        },
+        "tps": 840.3173391662633,
+        "new_order_tpm": 22562.52055661417,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t8-r2-go.log"
+      },
+      {
+        "server": "before",
+        "threads": 8,
+        "round": 2,
+        "seconds": 14.311240916023962,
+        "counts": {
+          "DELIVERY": 380,
+          "NEW_ORDER": 4516,
+          "ORDER_STATUS": 369,
+          "PAYMENT": 4336,
+          "STOCK_LEVEL": 399
+        },
+        "tps": 698.7514261466476,
+        "new_order_tpm": 18933.368642869566,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t8-r2-before.log"
+      },
+      {
+        "server": "after",
+        "threads": 8,
+        "round": 2,
+        "seconds": 15.06326333398465,
+        "counts": {
+          "DELIVERY": 402,
+          "NEW_ORDER": 4479,
+          "ORDER_STATUS": 365,
+          "PAYMENT": 4314,
+          "STOCK_LEVEL": 440
+        },
+        "tps": 663.8667716469325,
+        "new_order_tpm": 17840.755621239667,
+        "log": "/private/tmp/tidb-dirty-boundary-tpcc-comparison/t8-r2-after.log"
+      }
+    ],
+    "summary": [
+      {
+        "server": "before",
+        "threads": 2,
+        "median_tps": 469.27851577092326
+      },
+      {
+        "server": "after",
+        "threads": 2,
+        "median_tps": 475.388747217476
+      },
+      {
+        "server": "go",
+        "threads": 2,
+        "median_tps": 570.6970519485244
+      },
+      {
+        "server": "before",
+        "threads": 8,
+        "median_tps": 671.7966871959533
+      },
+      {
+        "server": "after",
+        "threads": 8,
+        "median_tps": 663.8667716469325
+      },
+      {
+        "server": "go",
+        "threads": 8,
+        "median_tps": 831.4155232892867
+      }
+    ],
+    "warmup_transactions": 6000,
+    "measured_transactions": 180000,
+    "reported_errors": 0
+  },
+  "validation": {
+    "profile": "WIP; Ready/lint not run",
+    "regression_before": {
+      "command": "cd rust && cargo test --offline --locked --release -j12 -p tidb-session --lib direct_transaction_control_does_not_inherit_committed_dirty_marks",
+      "log": "/private/tmp/tidb-dirty-boundary-before2.log",
+      "result": "Failed at fresh transaction inherited committed dirty mark assertion; earlier compile-only private-accessor error is not behavioral evidence."
+    },
+    "union_scan": {
+      "command": "cd rust && cargo test --offline --locked --release -j12 -p tidb-session --lib tests_union_scan",
+      "log": "/private/tmp/tidb-dirty-boundary-after.log",
+      "passed": 11,
+      "coverage": "Direct BEGIN/COMMIT bypass; committed rows preserved; peer BEGIN leaves active writer's private mark and row visibility intact; existing staged insert/update/delete, rollback and autocommit semantics."
+    },
+    "history": {
+      "command": "cd rust && cargo test --offline --locked --release -j12 -p tidb-session --lib as_of_timestamp",
+      "log": "/private/tmp/tidb-dirty-boundary-history-tests.log",
+      "passed": 2
+    },
+    "server_locking": {
+      "command": "cd rust && cargo test --offline --locked --release -j12 -p tidb-server --lib locking",
+      "log": "/private/tmp/tidb-dirty-boundary-locking-tests.log",
+      "passed": 9
+    },
+    "build": {
+      "command": "cd rust && cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "log": "/private/tmp/tidb-dirty-boundary-build.log",
+      "result": "passed"
+    },
+    "live_batch": {
+      "command": "python3 /private/tmp/tidb-batch-locking-verified.py --ports 53013",
+      "log": "/private/tmp/tidb-dirty-boundary-live-batch.log",
+      "passed": 7
+    },
+    "live_prefix": {
+      "command": "python3 /private/tmp/tidb-locking-prefix-probe.py 53013",
+      "log": "/private/tmp/tidb-dirty-boundary-live-prefix.log",
+      "result": "Go and Rust contender waits then returns row 2 after row 1 is deleted"
+    },
+    "tpcc_standard": {
+      "command": "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc tpcc check -H 127.0.0.1 -P 45000 -U root -D perf_tpcc_locking_v1 --warehouses 1 -T 1",
+      "log": "/private/tmp/tidb-dirty-boundary-tpcc-check.log",
+      "passed": 11
+    },
+    "tpcc_balances": {
+      "command": "mysql --protocol=tcp -h127.0.0.1 -P45000 -uroot --plugin-dir=/opt/homebrew/opt/mysql-client/lib/plugin perf_tpcc_locking_v1 < /private/tmp/tidb-tpcc-locking-balance-check.sql",
+      "log": "/private/tmp/tidb-dirty-boundary-balances.tsv",
+      "customers_checked": 30000,
+      "bad_balances": 0,
+      "bad_delivery_counts": 0
+    }
+  },
+  "profile_evidence": {
+    "before": "/private/tmp/tidb-delivery-isolated2.sample.txt",
+    "after": "/private/tmp/tidb-dirty-boundary-delivery.sample.txt",
+    "before_active_worker_observations": 3538,
+    "before_local_cursor_wait_observations": 1667,
+    "after_active_worker_observations": 3583,
+    "after_coprocessor_completion_observations": 1723,
+    "after_path": "TableScan.open -> pushdown_row_cursor_with_context -> CopScanSource.open -> serve_scan_task -> DirectUnaryQueryResponse.pull -> BatchCoprocessorPending.complete",
+    "interpretation": "Clean common-handle scan admission is restored, but the wait moves to coprocessor completion. These are thread-state observations including blocked time, not CPU percentages. Different evolving datasets prevent treating the isolated profile-run timings as a speed comparison.",
+    "isolated_runs": [
+      {
+        "port": 53012,
+        "deliveries": 1000,
+        "average_ms": 26.9,
+        "log": "/private/tmp/tidb-delivery-isolated-profile-workload2.log"
+      },
+      {
+        "port": 53013,
+        "deliveries": 1000,
+        "average_ms": 35.1,
+        "log": "/private/tmp/tidb-dirty-boundary-delivery-profile-workload.log",
+        "note": "Finished before PID lookup completed; no profile taken"
+      },
+      {
+        "port": 53013,
+        "deliveries": 500,
+        "average_ms": 37.3,
+        "log": "/private/tmp/tidb-dirty-boundary-delivery-profile-workload2.log",
+        "note": "Coordinated with a five-second sample"
+      }
+    ],
+    "rejected_evidence": "Initial DELIVERY-only weights summed to one, not required 100; driver panicked before running. /private/tmp/tidb-delivery-isolated.sample.txt is idle and invalid. All temporary source phase timers removed."
+  },
+  "limitations": [
+    "No concurrent builds or profiles during measured comparisons.",
+    "TPC-C driver is time-seeded and dataset evolves; no deterministic seed or data reset.",
+    "Existing residual_selection_uses_logical_rows_over_access_rows failure remains (9.49 vs 53.35), reproduced in a pre-increment binary.",
+    "Fair-locking setting is reported enabled but not propagated by cluster-session construction; complete lifecycle is needed before enabling it.",
+    "Full locking-shape matrix, Linux execution, and Ready/lint remain unverified."
+  ],
+  "next_action": "Measure coprocessor submission/completion and TiKV response execution detail timings against Go; determine whether transport scheduling, store execution or request shape dominates before changing behavior."
+}

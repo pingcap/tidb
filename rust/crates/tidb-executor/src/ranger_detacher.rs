@@ -101,7 +101,7 @@ mod tests {
         let detached = crate::index_range::detach_cond_and_build_range_for_index(
             &columns,
             &predicate,
-            &SessionTimeZone::utc(),
+            &tidb_expr::rewriter::ZonedNoResolver::new(SessionTimeZone::utc()),
         )
         .expect("predicate has an index range");
         detached
@@ -205,7 +205,7 @@ mod tests {
         let detached = crate::index_range::detach_conds_for_column(
             &column,
             &[&low, &high, &residual],
-            &SessionTimeZone::utc(),
+            &tidb_expr::rewriter::ZonedNoResolver::new(SessionTimeZone::utc()),
         );
         assert_eq!(detached.access_count, 2);
         assert_eq!(detached.residual, vec![&residual]);

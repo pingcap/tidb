@@ -22,10 +22,83 @@
 use crate::direct_unary_client_fixture::*;
 
 #[test]
+fn region_evicted_after_task_build_rebuilds_ranges_before_any_rpc() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let retry_control = Arc::new(RecordingRetryControl::default());
+    let old = location(1, "a", "z", "tikv-old:20160");
+    let shared = tidb_txnkv::SharedReadRuntime::new_injected(
+        ScriptedClient {
+            calls: calls.clone(),
+            responses: [Ok(response(b"left")), Ok(response(b"right"))]
+                .into_iter()
+                .collect(),
+            events: Rc::new(RefCell::new(Vec::new())),
+            liveness: RefCell::new(VecDeque::new()),
+            batch_errors: RefCell::new(VecDeque::new()),
+            batch_ready_immediately: RefCell::new(VecDeque::new()),
+            batch_completion_gate: None,
+        },
+        RegionCache::new(ScriptedLoader {
+            cluster_id: 9001,
+            calls: loader_calls.clone(),
+            regions: [
+                old.clone(),
+                location(2, "a", "m", "tikv-left:20160"),
+                location(3, "m", "z", "tikv-right:20160"),
+            ]
+            .into_iter()
+            .collect(),
+        }),
+    );
+    let cache = shared.region_cache_handle();
+    let transport = DirectUnaryQueryTransport::with_shared_runtime(
+        shared,
+        DirectUnaryRuntimeConfig {
+            default_timeout: Duration::from_secs(60),
+            seed_read_bytes: 4096,
+            observation_time,
+            region_retry_waiter: retry_control.clone(),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+        tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
+    )
+    .unwrap();
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
+    assert_eq!(loader_calls.borrow().as_slice(), [b"a".to_vec()]);
+    assert!(cache
+        .with_cache(|cache| cache.invalidate(old.region))
+        .unwrap());
+    assert!(calls.borrow().is_empty());
+
+    assert_eq!(result.next_raw().unwrap(), Some(b"left".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), Some(b"right".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), None);
+    assert_eq!(
+        calls
+            .borrow()
+            .iter()
+            .map(|call| call.region_id)
+            .collect::<Vec<_>>(),
+        [2, 3]
+    );
+    assert_eq!(
+        loader_calls.borrow().as_slice(),
+        [b"a".to_vec(), b"a".to_vec(), b"m".to_vec()]
+    );
+    assert_eq!(
+        retry_control.sleeps.lock().unwrap().len(),
+        1,
+        "reuse the existing bounded region-miss backoff"
+    );
+}
+
+#[test]
 fn nil_leader_sleeps_then_invalidates_reloads_and_resends() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
-    let retry_control = Rc::new(RecordingRetryControl::default());
+    let retry_control = Arc::new(RecordingRetryControl::default());
     let transport = transport_with_loader_calls_and_config(
         Rc::clone(&calls),
         [Ok(not_leader(1, None)), Ok(response(b"reloaded"))],
@@ -53,7 +126,7 @@ fn nil_leader_sleeps_then_invalidates_reloads_and_resends() {
         [b"a".to_vec(), b"a".to_vec()]
     );
     assert_eq!(
-        retry_control.sleeps.borrow().as_slice(),
+        retry_control.sleeps.lock().unwrap().as_slice(),
         [Duration::from_millis(2), Duration::from_millis(2)]
     );
 }
@@ -62,8 +135,8 @@ fn nil_leader_sleeps_then_invalidates_reloads_and_resends() {
 fn cancellation_during_nil_leader_sleep_keeps_cached_route_and_skips_pd_and_redispatch() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
-    let retry_control = Rc::new(RecordingRetryControl::default());
-    retry_control.fail_next_sleep.set(true);
+    let retry_control = Arc::new(RecordingRetryControl::default());
+    retry_control.fail_next_sleep.store(true, Ordering::SeqCst);
     let transport = transport_with_loader_calls_and_config(
         Rc::clone(&calls),
         [Ok(not_leader(1, None)), Ok(response(b"same-cached-route"))],
@@ -102,7 +175,7 @@ fn cancellation_during_nil_leader_sleep_keeps_cached_route_and_skips_pd_and_redi
 fn retry_wait_never_crosses_the_bind_anchored_deadline() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let events = Rc::new(RefCell::new(Vec::new()));
-    let retry_control = Rc::new(RecordingRetryControl::default());
+    let retry_control = Arc::new(RecordingRetryControl::default());
     let transport = transport_with_transport_failures(
         Rc::clone(&calls),
         [Err(connection_failure(
@@ -127,7 +200,7 @@ fn retry_wait_never_crosses_the_bind_anchored_deadline() {
     let error = result.next_raw().unwrap_err().to_string();
     assert!(error.contains("query deadline exceeded"), "{error}");
     assert!(!error.contains("cancelled by caller"), "{error}");
-    assert!(retry_control.sleeps.borrow().is_empty());
+    assert!(retry_control.sleeps.lock().unwrap().is_empty());
     assert_eq!(calls.borrow().len(), 1);
     assert_eq!(
         events
@@ -143,7 +216,7 @@ fn retry_wait_never_crosses_the_bind_anchored_deadline() {
 fn elapsed_deadline_blocks_zero_wait_dispatch_and_cancellation_wins() {
     for cancel_execution in [false, true] {
         let calls = Rc::new(RefCell::new(Vec::new()));
-        let retry_control = Rc::new(RecordingRetryControl::default());
+        let retry_control = Arc::new(RecordingRetryControl::default());
         let execution = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
         let mut request_metadata = metadata("a", "z");
         request_metadata.tikv_client_read_timeout_ms = 1;
@@ -173,7 +246,7 @@ fn elapsed_deadline_blocks_zero_wait_dispatch_and_cancellation_wins() {
             assert!(error.contains("query deadline exceeded"), "{error}");
         }
         assert!(calls.borrow().is_empty());
-        assert!(retry_control.sleeps.borrow().is_empty());
+        assert!(retry_control.sleeps.lock().unwrap().is_empty());
     }
 }
 
@@ -181,7 +254,7 @@ fn elapsed_deadline_blocks_zero_wait_dispatch_and_cancellation_wins() {
 fn rebuild_splits_failed_task_in_place_and_keeps_future_task_order_and_attempt() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
-    let retry_control = Rc::new(RecordingRetryControl::default());
+    let retry_control = Arc::new(RecordingRetryControl::default());
     let transport = transport_with_loader_calls_and_config(
         Rc::clone(&calls),
         [
@@ -236,7 +309,7 @@ fn rebuild_splits_failed_task_in_place_and_keeps_future_task_order_and_attempt()
 fn unordered_rebuild_replaces_the_completed_region_instead_of_the_first_region() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
-    let retry_control = Rc::new(RecordingRetryControl::default());
+    let retry_control = Arc::new(RecordingRetryControl::default());
     let transport = batch_first_transport_with_config(
         Rc::clone(&calls),
         [
@@ -287,7 +360,7 @@ fn unordered_rebuild_replaces_the_completed_region_instead_of_the_first_region()
 #[test]
 fn one_region_budget_is_shared_by_sender_and_outer_rebuild_backoff() {
     let calls = Rc::new(RefCell::new(Vec::new()));
-    let retry_control = Rc::new(RecordingRetryControl::default());
+    let retry_control = Arc::new(RecordingRetryControl::default());
     let transport = transport_with_loader_calls_and_config(
         Rc::clone(&calls),
         [Ok(not_leader(1, None))],
@@ -307,7 +380,7 @@ fn one_region_budget_is_shared_by_sender_and_outer_rebuild_backoff() {
     assert!(error.contains("terminal region error"), "{error}");
     assert_eq!(calls.borrow().len(), 1);
     assert_eq!(
-        retry_control.sleeps.borrow().as_slice(),
+        retry_control.sleeps.lock().unwrap().as_slice(),
         [Duration::from_millis(2)]
     );
 }
@@ -315,7 +388,7 @@ fn one_region_budget_is_shared_by_sender_and_outer_rebuild_backoff() {
 #[test]
 fn split_child_region_gets_an_independent_budget() {
     let calls = Rc::new(RefCell::new(Vec::new()));
-    let retry_control = Rc::new(RecordingRetryControl::default());
+    let retry_control = Arc::new(RecordingRetryControl::default());
     let transport = transport_with_loader_calls_and_config(
         Rc::clone(&calls),
         [Ok(region_not_found(1)), Ok(not_leader(10, None))],
@@ -340,7 +413,7 @@ fn split_child_region_gets_an_independent_budget() {
     assert_eq!(calls.borrow().len(), 2);
     assert_eq!(calls.borrow()[1].region_id, 10);
     assert_eq!(
-        retry_control.sleeps.borrow().as_slice(),
+        retry_control.sleeps.lock().unwrap().as_slice(),
         [Duration::from_millis(2), Duration::from_millis(2)]
     );
 }
@@ -349,7 +422,7 @@ fn split_child_region_gets_an_independent_budget() {
 fn unknown_region_error_invalidates_and_rebuilds_under_outer_region_miss() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
-    let retry_control = Rc::new(RecordingRetryControl::default());
+    let retry_control = Arc::new(RecordingRetryControl::default());
     let transport = transport_with_loader_calls_and_config(
         Rc::clone(&calls),
         [
@@ -377,7 +450,7 @@ fn unknown_region_error_invalidates_and_rebuilds_under_outer_region_miss() {
         [b"a".to_vec(), b"a".to_vec()]
     );
     assert_eq!(
-        retry_control.sleeps.borrow().as_slice(),
+        retry_control.sleeps.lock().unwrap().as_slice(),
         [Duration::from_millis(2)]
     );
 }

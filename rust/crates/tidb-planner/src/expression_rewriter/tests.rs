@@ -109,7 +109,7 @@ fn join_type_of(plan: &LogicalPlan) -> LogicalJoinType {
 fn correlated(unique_id: i64) -> Expression {
     Expression::CorrelatedColumn(CorrelatedColumn {
         column: col(unique_id),
-        data: None,
+        data: Default::default(),
     })
 }
 
@@ -290,7 +290,7 @@ fn no_decorrelate_in_select_applies_only_in_the_field_list() {
     };
     let cor = vec![CorrelatedColumn {
         column: col(1),
-        data: None,
+        data: Default::default(),
     }];
     let mut warnings = Vec::new();
     assert!(is_no_decorrelate(
@@ -862,11 +862,11 @@ fn duplicate_references_to_one_outer_column_resolve_once() {
     let cor = vec![
         CorrelatedColumn {
             column: col(1),
-            data: None,
+            data: Default::default(),
         },
         CorrelatedColumn {
             column: col(1),
-            data: None,
+            data: Default::default(),
         },
     ];
     let resolved = extract_cor_columns_by_schema(&cor, &Schema::new(vec![col(1)]));

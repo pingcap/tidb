@@ -1,0 +1,41 @@
+{
+  "status": "Goal blocked pending explicit fixture-write approval after three consecutive goal turns. Driver checks passed, but mixed-workload comparison never started and no performance completion is claimed.",
+  "change": "Opt-in GOTPC_TPCC_INPUT_SEED controls both process-level nonuniform constants and separate worker random streams in the pinned go-tpc driver. Transaction logic, SQL, unseeded defaults and server policy are unchanged. The comparison runner rotates before/after/repeated-before/Go and rejects incomplete runs or mismatched transaction-type counts.",
+  "scope_limit": "Input reproducibility is not replay: database state, wall-clock timestamps, concurrent order and optional think times remain uncontrolled. The repeated-before label uses the identical baseline endpoint to expose unchanged-code variation.",
+  "driver": {
+    "source": "/private/tmp/tidb-tpcc-tool-OY7S5G/source",
+    "revision": "a9ca4818625deef91ff80f6c395a575ccae22b7c",
+    "patch": "rust/benchmarks/tpcc-input-seed.patch",
+    "patch_sha256": "899b6420582375d19814e2a10b94792533f7d34167fe4ae1497357e1c42a0784",
+    "binary": "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc-seeded",
+    "binary_sha256": "7aba3dabd53f1593f4911f1d6169052d3a5c66ad3502e1dd9185fe05a46e59fb",
+    "original_binary_preserved": "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc",
+    "build_command": "GOMAXPROCS=12 GOEXPERIMENT=jsonv2 GOPROXY=off GOSUMDB=off go build -mod=readonly -p 12 -o /private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc-seeded ./cmd/go-tpc"
+  },
+  "validation": {
+    "profile": "WIP",
+    "working_directory": "/private/tmp/tidb-tpcc-tool-OY7S5G/source",
+    "red_command": "GOMAXPROCS=12 GOEXPERIMENT=jsonv2 GOPROXY=off GOSUMDB=off go test -mod=readonly -p 12 -count=1 ./tpcc -run '^TestTPCCInputSeed$'",
+    "red_log": "/private/tmp/tidb-tpcc-input-seed-red-v5.log",
+    "red_result": "Runtime failure: identical requested seeds do not preserve constants and worker streams in the unmodified driver. Earlier build/setup failures are not this regression evidence.",
+    "green_command": "GOMAXPROCS=12 GOEXPERIMENT=jsonv2 GOPROXY=off GOSUMDB=off go test -mod=readonly -p 12 -count=1 ./tpcc ./pkg/workload ./cmd/go-tpc",
+    "green_log": "/private/tmp/tidb-tpcc-input-seed-green.log",
+    "green_result": "Pass. Fresh processes reproduce constants and worker streams for equal seeds, different workers have distinct streams, zero is a valid seed, and invalid input fails visibly.",
+    "patch_check_command": "git apply --reverse --check /Users/qiliu/projects/tidb/rust/benchmarks/tpcc-input-seed.patch",
+    "patch_check_result": "Pass; check only, no source reversal.",
+    "harness_guards": [
+      {"log": "/private/tmp/tidb-seed-invalid-count.log", "result": "Rejects count smaller than worker count before SQL or output creation."},
+      {"log": "/private/tmp/tidb-seed-unpatched-tool.log", "result": "Rejects unpatched driver before SQL or output creation."}
+    ]
+  },
+  "comparison": {
+    "status": "Not started: auto-review rejected persistent writes to the shared benchmark fixture; explicit approval requested asynchronously. No live handle exists, no output directory was created, and no retry was made.",
+    "command": "python3 rust/scripts/compare-tpcc.py --tool /private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc-seeded --server before:53051 --server after:53052 --server repeat_before:53051 --server go:45000 --database perf_tpcc_locking_v1 --threads 2 8 --count 10000 --warmup-count 1000 --rounds 4 --seed 1 --output /private/tmp/tidb-frame-write-seeded-tpcc",
+    "planned_measured_transactions": 320000,
+    "planned_warmup_transactions": 8000,
+    "before_binary_sha256": "4f081c5fd78090b28191e5067906a25eee654791c2e6eb33fe6b25f5a58742d4",
+    "after_binary_sha256": "68730b1de1185340661edf516676c8002ce8e1818cf037a247fbc77aa99efee5",
+    "data_reset": false
+  },
+  "remaining": "Resume the goal and run the comparison only after explicit approval for 320000 measured plus 8000 warmup persistent transactions on local perf_tpcc_locking_v1, then repeat both existing TPC-C consistency checks. No fixture reset or schema change is authorized. The third-turn audit verified no benchmark/build process and no seeded-run output directory/log. Unaffected packet, context-cost and state-comparison diagnostics are terminal; they cannot replace mixed-workload evidence. Preserve the prior negative TPC-C results and both candidate servers. No production Rust optimization, commit or push in this increment."
+}

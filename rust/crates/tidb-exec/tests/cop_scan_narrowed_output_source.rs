@@ -309,7 +309,6 @@ fn request_over(
         keep_order: false,
         desc: false,
         allow_unordered_response: false,
-        read_ahead_batches: tidb_executor::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
         snapshot_ts: 4_242,
         ranges: vec![(Key::from_bytes(b"a"), Key::from_bytes(b"z"))],
         range_hints: Vec::new(),

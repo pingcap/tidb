@@ -36,7 +36,7 @@
 //! the server it is compared against.
 
 use std::fs;
-use std::io::{self, BufReader, Read, Write};
+use std::io::{self, BufReader, IoSlice, Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -310,6 +310,20 @@ impl Write for ClientStream {
         match &mut *self.inner.lock().expect("client stream lock") {
             ClientStreamInner::Plain(stream) => stream.write(buffer),
             ClientStreamInner::Tls(stream) => stream.write(buffer),
+            ClientStreamInner::Upgrading => Err(io::Error::other("connection is mid-upgrade")),
+        }
+    }
+
+    fn write_vectored(&mut self, buffers: &[IoSlice<'_>]) -> io::Result<usize> {
+        match &mut *self.inner.lock().expect("client stream lock") {
+            ClientStreamInner::Plain(stream) => stream.write_vectored(buffers),
+            ClientStreamInner::Tls(stream) => {
+                // StreamOwned does not forward vectored writes. Borrow its
+                // existing connection/socket so TLS accepts both frame parts
+                // before completing I/O, without introducing another owner.
+                let stream = stream.as_mut();
+                rustls::Stream::new(&mut stream.conn, &mut stream.sock).write_vectored(buffers)
+            }
             ClientStreamInner::Upgrading => Err(io::Error::other("connection is mid-upgrade")),
         }
     }

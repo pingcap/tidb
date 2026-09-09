@@ -19,20 +19,19 @@
 //! transport's sole route-scoped in-flight table.
 
 use crate::{rpc::DirectUnaryClientError, DirectUnaryResponse};
+use std::{cell::RefCell, sync::Arc};
 
 use super::{
-    BatchCommandEntry, BatchCommandTag, BatchInflightError, BatchPublicationReceipt, BatchRoute,
-    OpaqueBatchCommand,
+    reply_pair, BatchCommandEntry, BatchCommandTag, BatchInflightError, BatchReply,
+    BatchRequestProgress, OpaqueBatchCommand,
 };
-use crate::rpc::{
-    completion_pair, AsyncRequestPublication, CompletionError, CompletionNotifier, CompletionPull,
-    CompletionRunLoop, PendingRequest,
-};
+use crate::rpc::{AsyncRequestPublication, CompletionError, CompletionNotifier, PendingRequest};
 
 /// Pull-side owner of one concrete Coprocessor BatchCommands attempt.
 pub struct BatchCoprocessorPending {
-    completion: CompletionPull<OpaqueBatchCommand, BatchInflightError>,
-    publication_route: Option<BatchRoute>,
+    completion: BatchReply,
+    progress: Arc<BatchRequestProgress>,
+    barrier: RefCell<Option<crate::rpc::transport_runtime::PublicationBarrier>>,
 }
 
 impl BatchCoprocessorPending {
@@ -40,45 +39,29 @@ impl BatchCoprocessorPending {
         encoded_request: Vec<u8>,
         forwarded_host: Option<&str>,
     ) -> (BatchCommandEntry, Self) {
-        let (completion, pull) = completion_pair(CompletionRunLoop::new(), || {});
+        let (completion, pull) = reply_pair();
         super::wire::wire_diag::note_outbound(BatchCommandTag::Coprocessor);
         let command = OpaqueBatchCommand::new(BatchCommandTag::Coprocessor, encoded_request);
         let mut entry = BatchCommandEntry::new(command, completion);
         if let Some(forwarded_host) = forwarded_host {
             entry = entry.with_forwarded_host(forwarded_host);
         }
+        let progress = entry.progress();
         (
             entry,
             Self {
                 completion: pull,
-                publication_route: None,
+                progress,
+                barrier: RefCell::new(None),
             },
         )
     }
 
-    pub(in crate::rpc) fn bind_publication(
+    pub(in crate::rpc) fn retain_barrier(
         &mut self,
-        receipts: &[BatchPublicationReceipt],
-    ) -> Result<(), DirectUnaryClientError> {
-        let [receipt] = receipts else {
-            return Err(DirectUnaryClientError::InvalidRequest(format!(
-                "one Coprocessor command requires exactly one BatchCommands publication receipt, got {}",
-                receipts.len()
-            )));
-        };
-        if receipt.request_ids().len() != 1 {
-            return Err(DirectUnaryClientError::InvalidRequest(format!(
-                "one Coprocessor command requires exactly one published request ID, got {}",
-                receipt.request_ids().len()
-            )));
-        }
-        if self.publication_route.is_some() {
-            return Err(DirectUnaryClientError::InvalidRequest(
-                "Coprocessor pending attempt was bound to publication twice".to_owned(),
-            ));
-        }
-        self.publication_route = Some(receipt.route().clone());
-        Ok(())
+        barrier: crate::rpc::transport_runtime::PublicationBarrier,
+    ) {
+        *self.barrier.get_mut() = Some(barrier);
     }
 
     fn map_result(
@@ -87,7 +70,7 @@ impl BatchCoprocessorPending {
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
         match result {
             Ok(command) if command.tag() == BatchCommandTag::Coprocessor => {
-                let route = self.publication_route.as_ref().ok_or_else(|| {
+                let route = self.progress.publication_route().ok_or_else(|| {
                     DirectUnaryClientError::InvalidRequest(
                         "successful Coprocessor completion has no publication identity".to_owned(),
                     )
@@ -117,7 +100,19 @@ impl PendingRequest for BatchCoprocessorPending {
     }
 
     fn publication(&self) -> Option<AsyncRequestPublication> {
-        self.publication_route.as_ref().map(|route| {
+        if self.progress.publication_route().is_none() {
+            // Only an explicit pre-response observer needs this barrier.
+            // Ordinary completion reads the route recorded by in-flight
+            // publication, without a separate worker acknowledgement.
+            if let Some(barrier) = self.barrier.borrow_mut().take() {
+                barrier.wait();
+            }
+        }
+        self.try_publication()
+    }
+
+    fn try_publication(&self) -> Option<AsyncRequestPublication> {
+        self.progress.publication_route().map(|route| {
             AsyncRequestPublication::new(
                 route.physical_address(),
                 route.physical_channel_version(),
@@ -144,5 +139,67 @@ impl PendingRequest for BatchCoprocessorPending {
     ) -> Result<Result<DirectUnaryResponse, DirectUnaryClientError>, CompletionError> {
         let result = self.completion.complete(call)?;
         Ok(self.map_result(result))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rpc::batch::{
+        BatchInflightTable, BatchRoute, BatchScheduler, BatchWireResponse, PendingBatchCommand,
+    };
+
+    #[test]
+    fn completed_response_keeps_route_without_collecting_submission_receipt() {
+        let (entry, mut pending) = BatchCoprocessorPending::entry(vec![], Some("logical:20160"));
+        assert!(pending.try_publication().is_none());
+        assert!(pending.try_complete().unwrap().is_none());
+        let mut scheduler = BatchScheduler::new();
+        scheduler.push(entry);
+        let groups = scheduler.build_with_limit(1).into_parts();
+        let (_, group) = groups.forwarded.into_iter().next().unwrap();
+        let scheduled = group.into_entries().into_iter().next().unwrap();
+        let request_id = scheduled.request_id();
+        let (_, request) = PendingBatchCommand::from_scheduled(scheduled);
+        let route = BatchRoute::forwarded("physical:20160", "logical:20160", 17);
+        let mut inflight = BatchInflightTable::new();
+        inflight.publish(route.clone(), vec![request]).unwrap();
+        let response = BatchWireResponse::new(
+            vec![OpaqueBatchCommand::new(
+                BatchCommandTag::Coprocessor,
+                b"response".to_vec(),
+            )],
+            vec![request_id],
+            0,
+            None,
+            0,
+        )
+        .unwrap();
+        assert_eq!(inflight.receive(&route, response).completed, 1);
+        // No separate submission acknowledgement is needed for completion.
+        let response = pending.try_complete().unwrap().unwrap().unwrap();
+        assert_eq!(response.physical_address(), route.physical_address());
+        assert_eq!(
+            response.physical_channel_version(),
+            route.physical_channel_version()
+        );
+        assert_eq!(pending.publication().unwrap().batch_stream_generation(), 17);
+    }
+
+    #[test]
+    fn admission_failure_completes_without_receipt_or_invented_route() {
+        let (entry, mut pending) = BatchCoprocessorPending::entry(vec![], None);
+        entry
+            .completion()
+            .schedule_error(BatchInflightError::Transport(
+                DirectUnaryClientError::AdmissionBusy {
+                    address: "physical:20160".to_owned(),
+                },
+            ));
+        assert!(matches!(
+            pending.try_complete().unwrap(),
+            Some(Err(DirectUnaryClientError::AdmissionBusy { .. }))
+        ));
+        assert!(pending.try_publication().is_none());
     }
 }

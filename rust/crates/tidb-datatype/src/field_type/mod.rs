@@ -20,6 +20,7 @@ mod memory;
 mod names;
 mod value;
 
+use crate::charset::CharsetName;
 use crate::go_runtime::GoSharedSlice;
 use crate::{output_format, Charset, Collation, EvalType, GoString};
 use std::fmt;
@@ -29,7 +30,8 @@ pub use aggregate::{agg_field_type, aggregate_eval_type, merge_field_type, set_t
 pub use builder::FieldTypeBuilder;
 pub use names::{str_to_type, type_str, type_to_str};
 pub use value::{
-    default_field_type_for_value, parser_default_field_type_for_value, FieldTypeValue,
+    default_field_type_for_value, infer_param_type_from_datum, parser_default_field_type_for_value,
+    FieldTypeValue,
 };
 
 /// Parser normalization used for ENUM/SET display length.
@@ -520,8 +522,10 @@ pub struct FieldType {
     flen: i64,
     decimal: i64,
     collation: Collation,
-    charset_name: String,
-    collation_name: String,
+    // Go copies immutable string headers in both Clone and DeepCopy. Keep
+    // their bytes shared; a setter replaces only this type's string handle.
+    charset_name: CharsetName,
+    collation_name: CharsetName,
     elems: GoSharedSlice<GoString>,
     elems_is_binary_literal: GoSharedSlice<bool>,
     array: bool,
@@ -585,8 +589,8 @@ impl FieldType {
             flen,
             decimal,
             collation,
-            charset_name: collation.charset().name().to_owned(),
-            collation_name: collation.name().to_owned(),
+            charset_name: CharsetName::from_static(collation.charset().name()),
+            collation_name: CharsetName::from_static(collation.name()),
             elems: GoSharedSlice::default(),
             elems_is_binary_literal: GoSharedSlice::default(),
             array: false,
@@ -601,8 +605,8 @@ impl FieldType {
             flen: UNSPECIFIED_LENGTH,
             decimal: UNSPECIFIED_LENGTH,
             collation: Collation::Binary,
-            charset_name: String::new(),
-            collation_name: String::new(),
+            charset_name: CharsetName::default(),
+            collation_name: CharsetName::default(),
             elems: GoSharedSlice::default(),
             elems_is_binary_literal: GoSharedSlice::default(),
             array: false,
@@ -814,24 +818,20 @@ impl FieldType {
     /// Replaces the field's registered collation.
     pub fn with_collation(mut self, collation: Collation) -> Self {
         self.collation = collation;
-        self.charset_name = collation.charset().name().to_owned();
-        self.collation_name = collation.name().to_owned();
+        self.charset_name = CharsetName::from_static(collation.charset().name());
+        self.collation_name = CharsetName::from_static(collation.name());
         self
     }
 
     /// Mirrors `FieldType.SetCharset` and preserves source spelling.
-    pub fn with_charset_name(mut self, charset: impl Into<String>) -> Self {
-        self.charset_name = charset.into();
+    pub fn with_charset_name(mut self, charset: impl AsRef<str>) -> Self {
+        self.set_charset_name(charset);
         self
     }
 
     /// Mirrors `FieldType.SetCollate` and preserves source spelling.
-    pub fn with_collation_name(mut self, collation: impl Into<String>) -> Self {
-        let collation = collation.into();
-        self.collation = crate::get_collator_with_mode(true, &collation)
-            .new_collation()
-            .expect("new-collation lookup always returns a concrete collation");
-        self.collation_name = collation;
+    pub fn with_collation_name(mut self, collation: impl AsRef<str>) -> Self {
+        self.set_collation_name(collation);
         self
     }
 
@@ -1018,7 +1018,7 @@ impl FieldType {
     /// Directly mirrors `pkg/types/etc.go::IsBinaryStr`: a type is a binary
     /// string only when it is a string SQL type whose collation is `binary`.
     pub fn is_binary_string(&self) -> bool {
-        self.is_string() && self.collation_name == "binary"
+        self.is_string() && self.collation_name.as_ref() == "binary"
     }
 
     /// Returns whether this is a non-binary character string.
@@ -1041,7 +1041,7 @@ impl FieldType {
         // Go's trailing `ft.GetCollate() != "utf8mb4_0900_bin"` guard, which
         // overrides the VARCHAR exemption below: this collation NEVER carries
         // restored data, whatever the SQL type.
-        if self.collation_name == "utf8mb4_0900_bin" {
+        if self.collation_name.as_ref() == "utf8mb4_0900_bin" {
             return false;
         }
         // `collate.IsBinCollation`, whose membership is the same list as
@@ -1131,8 +1131,8 @@ impl FieldType {
     }
 
     /// Mirrors Go `FieldType.SetCharset`: sets the charset name.
-    pub fn set_charset_name(&mut self, charset: impl Into<String>) {
-        self.charset_name = charset.into();
+    pub fn set_charset_name(&mut self, charset: impl AsRef<str>) {
+        self.charset_name = charset.as_ref().into();
     }
 
     /// Mirrors Go `FieldType.SetCollate`: sets the collation name.
@@ -1141,12 +1141,12 @@ impl FieldType {
     /// cache uses the same exact-name lookup and `utf8mb4_bin` fallback as
     /// Go's new-collation runtime; it must never normalize a spelling such as
     /// `BINARY` into a different source collation.
-    pub fn set_collation_name(&mut self, collation: impl Into<String>) {
-        let collation = collation.into();
-        self.collation = crate::get_collator_with_mode(true, &collation)
+    pub fn set_collation_name(&mut self, collation: impl AsRef<str>) {
+        let collation = collation.as_ref();
+        self.collation = crate::get_collator_with_mode(true, collation)
             .new_collation()
             .expect("new-collation lookup always returns a concrete collation");
-        self.collation_name = collation;
+        self.collation_name = collation.into();
     }
 
     /// Sets the collation from an already-resolved [`Collation`], refreshing
@@ -1156,8 +1156,8 @@ impl FieldType {
     /// writes the canonical source spellings as well as the cache.
     pub fn set_collation(&mut self, collation: Collation) {
         self.collation = collation;
-        self.charset_name = collation.charset().name().to_owned();
-        self.collation_name = collation.name().to_owned();
+        self.charset_name = CharsetName::from_static(collation.charset().name());
+        self.collation_name = CharsetName::from_static(collation.name());
     }
 
     /// Mirrors `FieldType.UpdateFlenAndDecimalUnderLimit`.
@@ -1306,10 +1306,10 @@ impl FieldType {
             parts.push("BINARY".to_owned());
         }
         if self.code().is_type_char() || self.code().is_type_blob() {
-            if !self.charset_name.is_empty() && self.charset_name != "binary" {
+            if !self.charset_name.is_empty() && self.charset_name.as_ref() != "binary" {
                 parts.push(format!("CHARACTER SET {}", self.charset_name));
             }
-            if !self.collation_name.is_empty() && self.collation_name != "binary" {
+            if !self.collation_name.is_empty() && self.collation_name.as_ref() != "binary" {
                 parts.push(format!("COLLATE {}", self.collation_name));
             }
         }
@@ -1367,15 +1367,15 @@ impl FieldType {
         if self.has_flag(FieldTypeFlags::ZEROFILL) {
             output.extend_from_slice(b" ZEROFILL");
         }
-        if self.has_flag(FieldTypeFlags::BINARY) && self.charset_name != "binary" {
+        if self.has_flag(FieldTypeFlags::BINARY) && self.charset_name.as_ref() != "binary" {
             output.extend_from_slice(b" BINARY");
         }
         if self.code().is_type_char() || self.code().is_type_blob() {
-            if !self.charset_name.is_empty() && self.charset_name != "binary" {
+            if !self.charset_name.is_empty() && self.charset_name.as_ref() != "binary" {
                 output.extend_from_slice(b" CHARACTER SET ");
                 output.extend_from_slice(self.charset_name.to_uppercase().as_bytes());
             }
-            if !self.collation_name.is_empty() && self.collation_name != "binary" {
+            if !self.collation_name.is_empty() && self.collation_name.as_ref() != "binary" {
                 output.extend_from_slice(b" COLLATE ");
                 output.extend_from_slice(self.collation_name.as_bytes());
             }
@@ -1396,7 +1396,8 @@ impl FieldType {
         let mut output = String::new();
         match self.array_element_code() {
             FieldTypeCode::VarString | FieldTypeCode::String => {
-                let binary = self.charset_name == "binary" && self.collation_name == "binary";
+                let binary = self.charset_name.as_ref() == "binary"
+                    && self.collation_name.as_ref() == "binary";
                 output.push_str(if binary { "BINARY" } else { "CHAR" });
                 if self.flen != UNSPECIFIED_LENGTH {
                     output.push_str(&format!("({})", self.flen));
@@ -1405,8 +1406,8 @@ impl FieldType {
                     if self.has_flag(FieldTypeFlags::BINARY) {
                         output.push_str(" BINARY");
                     }
-                    if self.charset_name != "binary"
-                        && self.charset_name != "utf8mb4"
+                    if self.charset_name.as_ref() != "binary"
+                        && self.charset_name.as_ref() != "utf8mb4"
                         && !self.charset_name.is_empty()
                     {
                         output.push_str(" CHARSET ");

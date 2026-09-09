@@ -63,11 +63,16 @@
 //! `HashAggPartialWorker.partialResultsMap[finalConcurrency]`); a group key
 //! routes to final worker `bucket(key) % M`, so one group's partial pieces
 //! all land on one final worker. DIVERGENCE (unobservable): Go partitions
-//! with `murmur3.Sum32`, this uses FNV-1a 32-bit -- only partition
+//! with `murmur3.Sum32`, this reuses the map key's fingerprint -- only partition
 //! ASSIGNMENT differs, never results. Every group records the global row
 //! sequence of its first contributing row; merges keep the minimum, and the
 //! final emission sorts by it, so output order is FIRST-SEEN order -- the
 //! serial path's exact contract, stricter than Go's random map iteration.
+//!
+//! Before allocating channels or submitting workers, bounded lookahead reads
+//! at most two batches. Empty or one-batch inputs that reach EOF fold inline
+//! with the same states and finalization. Larger inputs dispatch every
+//! prefetched batch exactly once and continue through the worker pipeline.
 //!
 //! # What stays serial, and why
 //!
@@ -223,25 +228,63 @@ struct PipelinePlan<C: Columns + Send + Sync + Clone + 'static> {
 /// `group by l_orderkey`, 1.5M groups) keys by the raw `Option<i64>` so no
 /// per-group key allocation happens; every other shape keeps the encoded
 /// `Vec<u8>` key.
-#[derive(Clone, PartialEq, Eq, Hash)]
-enum PipelineMapKey {
+#[derive(Clone, PartialEq, Eq)]
+struct PipelineMapKey {
+    fingerprint: u64,
+    value: PipelineKeyValue,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum PipelineKeyValue {
     Int(Option<i64>),
     Bytes(Vec<u8>),
 }
 
 impl PipelineMapKey {
-    /// The byte length `new_group_bytes` was charging under the encoded
-    /// representation, kept for tracker continuity.
-    fn charge_len(&self) -> usize {
-        match self {
-            // 8-byte varint body + flag + separator.
-            PipelineMapKey::Int(_) => 10,
-            PipelineMapKey::Bytes(bytes) => bytes.len(),
+    fn integer(value: Option<i64>) -> Self {
+        Self {
+            fingerprint: value.map_or_else(
+                || fast_bytes_fingerprint(&[NIL_FLAG]),
+                |value| fast_bytes_fingerprint(&value.to_le_bytes()),
+            ),
+            value: PipelineKeyValue::Int(value),
         }
+    }
+
+    fn encoded(bytes: Vec<u8>) -> Self {
+        Self {
+            fingerprint: fast_bytes_fingerprint(&bytes),
+            value: PipelineKeyValue::Bytes(bytes),
+        }
+    }
+
+    fn bucket(&self, bucket_count: usize) -> usize {
+        // Keep the low map-index bits and high control-byte bits available
+        // inside each worker's map even for power-of-two worker counts.
+        ((self.fingerprint >> 32) as usize) % bucket_count
+    }
+
+    /// The byte length `new_group_bytes` was charging under the encoded
+    /// representation, plus the fingerprint retained with every group.
+    fn charge_len(&self) -> usize {
+        let encoded_len = match &self.value {
+            // 8-byte varint body + flag + separator.
+            PipelineKeyValue::Int(_) => 10,
+            PipelineKeyValue::Bytes(bytes) => bytes.len(),
+        };
+        encoded_len + std::mem::size_of::<u64>()
     }
 }
 
-type PipelineMap = HashMap<PipelineMapKey, PipelineGroup, BuildHasherDefault<super::ParallelIntHasher>>;
+impl std::hash::Hash for PipelineMapKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Constructors hash the complete key value once. Equality still
+        // compares the retained value, so fingerprint collisions are safe.
+        state.write_u64(self.fingerprint);
+    }
+}
+
+type PipelineMap = HashMap<PipelineMapKey, PipelineGroup, BuildHasherDefault<IdentityU64Hasher>>;
 
 /// One group inside a worker's map: the global row sequence of the first
 /// contributing row plus the group's aggregate states.
@@ -264,18 +307,6 @@ impl PipelineGroup {
             bytes,
         )
     }
-}
-
-/// FNV-1a 32-bit over the encoded key: plays Go's
-/// `murmur3.Sum32(key) % finalConcurrency` partition role. See the module
-/// docs for why a different hash here is unobservable.
-fn key_bucket(key: &[u8], bucket_count: usize) -> usize {
-    let mut hash: u32 = 0x811c_9dc5;
-    for &byte in key {
-        hash ^= u32::from(byte);
-        hash = hash.wrapping_mul(0x0100_0193);
-    }
-    (hash as usize) % bucket_count
 }
 
 /// Reads one concurrency system variable with Go's resolution order: the
@@ -315,7 +346,8 @@ impl<C: HashAggContext> HashAggExec<C> {
     }
 
     /// `(partial, final, dispatched_chunks, partial_worker_threads)` for the
-    /// last Open's pipeline run; `None` when the aggregation ran serially.
+    /// last Open's pipeline run; zero dispatches/workers for inline admission,
+    /// `None` when the aggregation used the separate serial implementation.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn pipeline_run_info(&self) -> Option<(usize, usize, usize, usize)> {
@@ -439,6 +471,43 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
     /// workers merge their buckets and hand ONE merged map each back; the
     /// main thread then finishes values in first-seen order.
     pub(super) fn execute_parallel_pipeline(&mut self) -> Result<(), ExecError> {
+        // A completed input batch has no work to overlap across lanes.
+        // Look ahead by at most one batch; a short batch alone is not EOF.
+        // Reuse the pipeline's state and finalization so admission changes
+        // scheduling, not aggregate semantics or empty-input defaults.
+        let mut prefetched = Vec::with_capacity(2);
+        for _ in 0..2 {
+            let before = self.child_chunk.memory_usage();
+            self.child.next(&mut self.child_chunk)?;
+            self.tracker.consume(self.child_chunk.memory_usage() - before);
+            self.memory.check()?;
+            if self.child_chunk.num_rows() == 0 {
+                self.is_child_drained = true;
+                let mut global = PipelineMap::default();
+                for chunk in &prefetched {
+                    fold_chunk(
+                        FoldInputs {
+                            ctx: &self.ctx,
+                            group_by: &self.group_by,
+                            group_collations: &self.group_collations,
+                            integer_columns: self.integer_group_columns.as_deref(),
+                            agg_funcs: &self.agg_funcs,
+                        },
+                        std::slice::from_mut(&mut global),
+                        1,
+                        &self.tracker,
+                        chunk,
+                        0,
+                    )?;
+                }
+                self.memory.check()?;
+                return self.finish_pipeline(global);
+            }
+            self.child_returned_empty = false;
+            let replacement = self.child.new_chunk();
+            prefetched.push(std::mem::replace(&mut self.child_chunk, replacement));
+        }
+        let mut prefetched = prefetched.into_iter();
         let stats = Arc::clone(
             self.pipeline_stats
                 .as_ref()
@@ -486,9 +555,7 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
             child,
             child_chunk,
             child_returned_empty,
-            truncated,
             memory,
-            parallel_output,
             ..
         } = self;
         let memory: &StatementMemory = memory;
@@ -580,10 +647,15 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
                 if abort.raised() {
                     break;
                 }
-                let before = child_chunk.memory_usage();
-                if let Err(error) = child.next(child_chunk) {
-                    fetch_error = Some(error);
-                    break;
+                if let Some(chunk) = prefetched.next() {
+                    *child_chunk = chunk;
+                } else {
+                    let before = child_chunk.memory_usage();
+                    if let Err(error) = child.next(child_chunk) {
+                        fetch_error = Some(error);
+                        break;
+                    }
+                    tracker.consume(child_chunk.memory_usage() - before);
                 }
                 let rows = child_chunk.num_rows();
                 if rows == 0 {
@@ -591,7 +663,6 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
                     break;
                 }
                 *child_returned_empty = false;
-                tracker.consume(child_chunk.memory_usage() - before);
                 // The parallel spill helper is not ported yet (module docs):
                 // the quota check between chunks is what bounds memory here.
                 if let Err(error) = memory.check() {
@@ -651,38 +722,46 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
         for map in merged_maps {
             merge_map(&mut global, map)?;
         }
+        if child_drained {
+            self.is_child_drained = true;
+        }
+        self.finish_pipeline(global)
+    }
+
+    /// Common output handling for inline and worker-produced partial states.
+    fn finish_pipeline(&mut self, global: PipelineMap) -> Result<(), ExecError> {
         let mut groups: Vec<PipelineGroup> = global.into_values().collect();
         groups.sort_unstable_by_key(|group| group.first_seq);
 
         // Finish values in first-seen order (the serial path's contract).
         let ret_types = self.meta.ret_field_types().to_vec();
-        let width = plan.agg_funcs.len();
-        parallel_output.clear();
-        if groups.is_empty() && plan.group_by.is_empty() {
+        let width = self.agg_funcs.len();
+        self.parallel_output.clear();
+        if groups.is_empty() && self.emit_default_row && self.group_by.is_empty() {
             // Go: no group-by and no data yields ONE empty group, so a
             // global COUNT is 0 rather than an empty result set.
-            let mut states: Vec<AggState> = plan.agg_funcs.iter().map(AggState::new).collect();
+            let mut states: Vec<AggState> = self.agg_funcs.iter().map(AggState::new).collect();
             for (c, state) in states.iter_mut().enumerate() {
                 let value = finish_agg_value(
                     state,
-                    &plan.agg_funcs[c],
+                    &self.agg_funcs[c],
                     &ret_types[c],
-                    &plan.ctx,
-                    &mut truncated[c],
+                    &self.ctx,
+                    &mut self.truncated[c],
                 )?;
-                parallel_output.push(value);
+                self.parallel_output.push(value);
             }
         } else {
             for group in &mut groups {
                 for (c, state) in group.states.iter_mut().enumerate() {
                     let value = finish_agg_value(
                         state,
-                        &plan.agg_funcs[c],
+                        &self.agg_funcs[c],
                         &ret_types[c],
-                        &plan.ctx,
-                        &mut truncated[c],
+                        &self.ctx,
+                        &mut self.truncated[c],
                     )?;
-                    parallel_output.push(value);
+                    self.parallel_output.push(value);
                 }
             }
         }
@@ -690,9 +769,6 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
         self.parallel_output_cursor = 0;
         self.parallel_output_active = true;
         self.executed = true;
-        if child_drained {
-            self.is_child_drained = true;
-        }
         Ok(())
     }
 }
@@ -728,7 +804,7 @@ fn fold_chunk<C: Columns>(
     for row_index in 0..chunk.num_rows() {
         let row = chunk.get_row(row_index);
         let seq = base_seq.saturating_add(row_index as u64);
-        let (key, key_len): (PipelineMapKey, usize) = match integer_columns {
+        let key = match integer_columns {
             Some([(index, false)]) => {
                 let index = *index;
                 let value = if row.is_null(index) {
@@ -736,9 +812,7 @@ fn fold_chunk<C: Columns>(
                 } else {
                     Some(row.get_int64(index))
                 };
-                let key = PipelineMapKey::Int(value);
-                let len = key.charge_len();
-                (key, len)
+                PipelineMapKey::integer(value)
             }
             _ => {
                 let mut key = Vec::new();
@@ -757,20 +831,11 @@ fn fold_chunk<C: Columns>(
                         }
                     }
                 }
-                let len = key.len();
-                (PipelineMapKey::Bytes(key), len)
+                PipelineMapKey::encoded(key)
             }
         };
-        let bucket = match &key {
-            PipelineMapKey::Int(value) => key_bucket(
-                &match value {
-                    Some(v) => v.to_le_bytes().to_vec(),
-                    None => vec![NIL_FLAG],
-                },
-                bucket_count,
-            ),
-            PipelineMapKey::Bytes(bytes) => key_bucket(bytes, bucket_count),
-        };
+        let bucket = key.bucket(bucket_count);
+        let key_len = key.charge_len();
         let entry = match maps[bucket].entry(key) {
             std::collections::hash_map::Entry::Occupied(occupied) => occupied.into_mut(),
             std::collections::hash_map::Entry::Vacant(vacant) => {
@@ -1009,6 +1074,125 @@ mod tests {
     use tidb_expr::NoColumns;
     use tidb_expr::column::Column;
 
+    #[test]
+    fn pipeline_key_hash_has_constant_cost_for_encoded_and_integer_keys() {
+        #[derive(Default)]
+        struct CountingHasher(usize);
+        impl std::hash::Hasher for CountingHasher {
+            fn finish(&self) -> u64 {
+                self.0 as u64
+            }
+
+            fn write(&mut self, bytes: &[u8]) {
+                self.0 += bytes.len();
+            }
+        }
+
+        let keys = [0, 1, 7, 8, 31, 120, 1024]
+            .into_iter()
+            .map(|len| PipelineMapKey::encoded(vec![b'x'; len]))
+            .chain(
+                [None, Some(i64::MIN), Some(0), Some(i64::MAX)]
+                    .into_iter()
+                    .map(PipelineMapKey::integer),
+            );
+        for key in keys {
+            for _ in 0..3 {
+                let mut hasher = CountingHasher::default();
+                std::hash::Hash::hash(&key, &mut hasher);
+                assert_eq!(hasher.0, 8, "map lookups must hash only the fingerprint");
+            }
+        }
+    }
+
+    #[test]
+    fn pipeline_key_collisions_keep_exact_groups_through_growth_and_merge() {
+        let funcs = [AggFunc::new(AggKind::Count, None)];
+        let keys: Vec<_> = (0..200_i64)
+            .flat_map(|value| {
+                [
+                    PipelineMapKey::integer(Some(value)),
+                    PipelineMapKey::encoded(value.to_le_bytes().to_vec()),
+                ]
+            })
+            .chain([
+                PipelineMapKey::integer(None),
+                PipelineMapKey::encoded(Vec::new()),
+            ])
+            .map(|mut key| {
+                // Force every key into the same hash bucket, including
+                // different key types with identical byte representations.
+                key.fingerprint = 42;
+                key
+            })
+            .collect();
+        let mut global = PipelineMap::default();
+        for round in (0..3_u64).rev() {
+            let mut incoming = PipelineMap::default();
+            for (index, key) in keys.iter().enumerate() {
+                let seq = round * keys.len() as u64 + index as u64;
+                let (mut group, _) = PipelineGroup::new(&funcs, seq, key.charge_len());
+                group.states[0].partial = Partial::Count(1);
+                incoming.insert(key.clone(), group);
+            }
+            merge_map(&mut global, incoming).unwrap();
+        }
+        assert_eq!(global.len(), keys.len());
+        for (index, key) in keys.iter().enumerate() {
+            let group = &global[key];
+            assert_eq!(group.first_seq, index as u64);
+            assert!(matches!(group.states[0].partial, Partial::Count(3)));
+            for workers in [1, 2, 3, 4, 7, 16] {
+                assert_eq!(key.bucket(workers), key.clone().bucket(workers));
+            }
+        }
+    }
+
+    #[test]
+    fn pipeline_fold_charges_retained_fingerprint_once_per_group() {
+        let mut chunk = Chunk::new_with_capacity(&[long()], 3);
+        chunk.append_int64(0, 5);
+        chunk.append_null(0);
+        chunk.append_int64(0, 5);
+        let funcs = [AggFunc::new(AggKind::Count, None)];
+        let groups = [col(0)];
+        let collations = [tidb_datatype::Collation::Binary];
+        // Exercise both the raw integer key and expression-encoded key.
+        for columns in [Some(&[(0, false)][..]), None] {
+            let tracker = Tracker::new(0, -1);
+            let mut maps = vec![PipelineMap::default()];
+            for round in 0..2 {
+                fold_chunk(
+                    FoldInputs {
+                        ctx: &NoColumns,
+                        group_by: &groups,
+                        group_collations: &collations,
+                        integer_columns: columns,
+                        agg_funcs: &funcs,
+                    },
+                    &mut maps,
+                    1,
+                    &tracker,
+                    &chunk,
+                    round * 3,
+                )
+                .unwrap();
+                assert_eq!(maps[0].len(), 2);
+                let expected: i64 = maps[0]
+                    .keys()
+                    .map(|key| {
+                        let encoded_len = match &key.value {
+                            PipelineKeyValue::Int(_) => 10,
+                            PipelineKeyValue::Bytes(bytes) => bytes.len(),
+                        };
+                        new_group_bytes(encoded_len + std::mem::size_of::<u64>(), funcs.len())
+                    })
+                    .sum();
+                assert_eq!(tracker.bytes_consumed(), expected);
+            }
+        }
+    }
+
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::LongLong)
     }
@@ -1037,19 +1221,25 @@ mod tests {
         data: Chunk,
         offset: usize,
         chunk_size: usize,
+        calls: usize,
+        fail_on_call: Option<usize>,
     }
     impl MultiChunkSource {
-        fn new(rows: &[(i64, i64)], chunk_size: usize) -> Box<dyn Executor> {
+        fn new(rows: &[(i64, i64)], chunk_size: usize) -> Box<Self> {
             let fields = vec![long(), long()];
             let mut data = Chunk::new_with_capacity(&fields, rows.len().max(1));
             for (g, v) in rows {
                 data.append_int64(0, *g);
                 data.append_int64(1, *v);
             }
+            Self::from_chunk(fields, data, chunk_size)
+        }
+
+        fn from_chunk(fields: Vec<FieldType>, data: Chunk, chunk_size: usize) -> Box<Self> {
             let mut cols = Vec::new();
-            for i in 0..2 {
-                let mut c = Column::new(i + 1, long());
-                c.index = i;
+            for (i, field) in fields.iter().enumerate() {
+                let mut c = Column::new(i as i64 + 1, field.clone());
+                c.index = i as i64;
                 cols.push(c);
             }
             Box::new(MultiChunkSource {
@@ -1058,16 +1248,23 @@ mod tests {
                 data,
                 offset: 0,
                 chunk_size,
+                calls: 0,
+                fail_on_call: None,
             })
         }
     }
     impl Executor for MultiChunkSource {
         fn open(&mut self) -> Result<(), ExecError> {
             self.offset = 0;
+            self.calls = 0;
             Ok(())
         }
         fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
             req.reset();
+            self.calls += 1;
+            if self.fail_on_call == Some(self.calls) {
+                return Err(ExecError::internal("injected aggregate input failure"));
+            }
             let end = (self.offset + self.chunk_size).min(self.data.num_rows());
             while self.offset < end {
                 req.append_row(self.data.get_row(self.offset));
@@ -1091,7 +1288,7 @@ mod tests {
             self.meta.max_chunk_size()
         }
         fn new_chunk(&self) -> Chunk {
-            Chunk::new_with_capacity(&self.fields, self.chunk_size)
+            Chunk::new_with_capacity(&self.fields, self.meta.max_chunk_size())
         }
     }
 
@@ -1156,6 +1353,82 @@ mod tests {
     const ROWS_PER_GROUP: usize = 400;
     const CHUNK_SIZE: usize = 100;
 
+    #[test]
+    fn pipeline_composite_keys_match_serial_for_nulls_collations_and_long_strings() {
+        use tidb_datatype::Collation;
+
+        let long_key = "x".repeat(1024);
+        let rows = [
+            (Some("Alpha"), Some(7), Some(10)),
+            (Some("alpha"), Some(7), Some(20)),
+            (Some(""), Some(7), None),
+            (None, Some(7), Some(-5)),
+            (Some("Alpha"), None, Some(2)),
+            (Some("Alpha"), Some(i64::MIN), Some(-3)),
+            (Some("prefix\0tail"), Some(7), Some(4)),
+            (Some(long_key.as_str()), Some(i64::MAX), Some(9)),
+            (Some("prefix\0tail"), Some(7), None),
+        ];
+        let row_count = rows.len() * 8;
+        for (collation, group_count) in [(Collation::Binary, 8), (Collation::Utf8Mb4GeneralCi, 7)] {
+            let text_type = FieldType::new(FieldTypeCode::Varchar).with_collation(collation);
+            let mut text_column = Column::new(1, text_type.clone());
+            text_column.index = 0;
+            let text_expr = Expression::Column(text_column);
+            let fields = vec![text_type.clone(), long(), long()];
+            let mut data = Chunk::new_with_capacity(&fields, row_count);
+            for _ in 0..8 {
+                for (text, integer, value) in rows {
+                    match text {
+                        Some(text) => data.append_bytes(0, text.as_bytes()),
+                        None => data.append_null(0),
+                    }
+                    for (index, value) in [(1, integer), (2, value)] {
+                        match value {
+                            Some(value) => data.append_int64(index, value),
+                            None => data.append_null(index),
+                        }
+                    }
+                }
+            }
+            let make = |chunk_size| {
+                build(
+                    vec![text_expr.clone(), col(1)],
+                    vec![
+                        AggFunc::new(AggKind::FirstRow, Some(text_expr.clone())),
+                        AggFunc::new(AggKind::FirstRow, Some(col(1))),
+                        AggFunc::new(AggKind::Count, Some(col(2))),
+                        AggFunc::new(AggKind::Sum, Some(col(2))),
+                        AggFunc::new(AggKind::Min, Some(col(2))),
+                        AggFunc::new(AggKind::Max, Some(col(2))),
+                    ],
+                    MultiChunkSource::from_chunk(fields.clone(), data.clone(), chunk_size),
+                    &[text_type.clone(), long(), long(), decimal(), long(), long()],
+                )
+            };
+            let mut serial = make(7).with_pipeline_concurrency_override(1, 1);
+            let expected = run(&mut serial);
+            assert_eq!(expected.len(), group_count);
+            for chunk_size in [1, 7, row_count] {
+                for (partial, final_) in [(2, 3), (4, 4)] {
+                    let mut exec = make(chunk_size)
+                        .with_pipeline_concurrency_override(partial, final_);
+                    assert!(exec.pipeline_eligibility().is_some());
+                    exec.open().unwrap();
+                    assert_eq!(drain_rows(&mut exec), expected);
+                    let (_, _, dispatched, workers) = exec.pipeline_run_info().unwrap();
+                    if chunk_size == row_count {
+                        assert_eq!((dispatched, workers), (0, 0));
+                    } else {
+                        assert_eq!(dispatched, row_count.div_ceil(chunk_size));
+                        assert!(workers > 1);
+                    }
+                    exec.close().unwrap();
+                }
+            }
+        }
+    }
+
     fn dataset() -> Vec<(i64, i64)> {
         // Deterministic spread: group g gets values that stress COUNT/SUM/
         // MIN/MAX/FIRST_ROW, including NULL-adjacent extremes and negatives.
@@ -1209,7 +1482,8 @@ mod tests {
             count_sum_min_max_first_funcs(),
             MultiChunkSource::new(&data, CHUNK_SIZE),
             &wide_out_types(),
-        );
+        )
+        .with_pipeline_concurrency_override(1, 1);
         let serial_rows = run(&mut serial_exec);
         assert_eq!(serial_rows.len(), GROUPS as usize, "one row per group");
 
@@ -1413,6 +1687,103 @@ mod tests {
         // 1/1 refuses the pipeline (Go builder.go).
         let exec = make(vars("1", "1"));
         assert_eq!(exec.pipeline_eligibility(), None);
+    }
+
+    #[test]
+    fn serial_reference_keeps_its_concurrency_override_when_opened() {
+        let mut exec = build(
+            vec![col(0)],
+            count_sum_min_max_first_funcs(),
+            MultiChunkSource::new(&[(1, 2)], 1),
+            &wide_out_types(),
+        )
+        .with_pipeline_concurrency_override(1, 1);
+        exec.open().unwrap();
+        assert!(exec.pipeline_run_info().is_none(), "the serial reference must actually run serially");
+        exec.close().unwrap();
+    }
+
+    #[test]
+    fn exhausted_single_batch_does_not_start_aggregate_workers() {
+        for data in [vec![], vec![(3, 10)], vec![(3, 10), (1, 4), (3, 7)]] {
+            for group_by in [vec![], vec![col(0)]] {
+                let mut serial = build(
+                    group_by.clone(), count_sum_min_max_first_funcs(),
+                    MultiChunkSource::new(&data, 3), &wide_out_types(),
+                ).with_pipeline_concurrency_override(1, 1);
+                let expected = run(&mut serial);
+                let mut exec = build(
+                    group_by, count_sum_min_max_first_funcs(),
+                    MultiChunkSource::new(&data, 3), &wide_out_types(),
+                );
+                // Reopen must reset results and admission state, not replay
+                // stale buffered input from the previous execution.
+                for _ in 0..2 {
+                    exec.open().unwrap();
+                    assert_eq!(drain_rows(&mut exec), expected);
+                    let (_, _, dispatched, workers) = exec.pipeline_run_info().unwrap();
+                    assert_eq!((dispatched, workers), (0, 0),
+                        "an exhausted batch needs no worker handoff");
+                    exec.close().unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn short_batches_are_not_eof_and_prefetched_rows_are_not_lost() {
+        let data = [(3, 10), (1, 4), (3, 7), (1, -8), (2, 90)];
+        let mut serial = build(
+            vec![col(0)], count_sum_min_max_first_funcs(),
+            MultiChunkSource::new(&data, 3), &wide_out_types(),
+        ).with_pipeline_concurrency_override(1, 1);
+        let expected = run(&mut serial);
+        let mut child = MultiChunkSource::new(&data, 3);
+        child.chunk_size = 1; // Every produced batch is shorter than capacity.
+        let mut exec = build(
+            vec![col(0)], count_sum_min_max_first_funcs(), child, &wide_out_types(),
+        );
+        exec.open().unwrap();
+        assert_eq!(drain_rows(&mut exec), expected);
+        let (_, _, dispatched, workers) = exec.pipeline_run_info().unwrap();
+        assert_eq!(dispatched, data.len());
+        assert!(workers > 1);
+        exec.close().unwrap();
+    }
+
+    #[test]
+    fn input_errors_before_and_after_worker_admission_publish_no_rows() {
+        for fail_on_call in 1..=4 {
+            let mut child = MultiChunkSource::new(&[(3, 10), (1, 4), (3, 7)], 1);
+            child.fail_on_call = Some(fail_on_call);
+            let mut exec = build(
+                vec![col(0)], count_sum_min_max_first_funcs(), child, &wide_out_types(),
+            );
+            exec.open().unwrap();
+            let mut output = exec.new_chunk();
+            let error = exec.next(&mut output).unwrap_err();
+            assert!(matches!(error, ExecError::Internal(message) if message == "injected aggregate input failure"));
+            assert_eq!(output.num_rows(), 0);
+            if fail_on_call <= 2 {
+                assert_eq!(exec.pipeline_run_info().unwrap().3, 0);
+            }
+            exec.close().unwrap();
+        }
+    }
+
+    #[test]
+    fn inline_admission_observes_statement_memory_cancellation() {
+        let mut exec = build(
+            vec![col(0)], count_sum_min_max_first_funcs(),
+            MultiChunkSource::new(&[(1, 2)], 3), &wide_out_types(),
+        );
+        exec.open().unwrap();
+        exec.memory.session_tracker().consume(exec.memory.quota() + 1);
+        let mut output = exec.new_chunk();
+        assert!(matches!(exec.next(&mut output), Err(ExecError::MemoryExceedForQuery { .. })));
+        assert_eq!(output.num_rows(), 0);
+        assert_eq!(exec.pipeline_run_info().unwrap().3, 0);
+        exec.close().unwrap();
     }
 
     /// FAIL-BEFORE/PASS-AFTER: the PRODUCTION statement context — the one

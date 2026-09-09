@@ -69,6 +69,7 @@ pub(crate) fn build_plain_having(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    candidate: &mut Option<tidb_planner::candidate_cost::Candidate>,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let fields = having_select_fields(projected, scope);
     let outputs = having_outputs(projected, scope);
@@ -98,6 +99,9 @@ pub(crate) fn build_plain_having(
         let (applied, widened_scope, _) =
             append_correlated_apply(source, current_scope, correlated, catalog, current_db, ctx)?;
         source = applied;
+        // No costed inner task exists for this runtime Apply. Keep the
+        // absence through the filter above it rather than pricing a leaf.
+        *candidate = None;
         *current_scope = widened_scope;
     }
     let resolver = ScopeResolver {
@@ -106,6 +110,19 @@ pub(crate) fn build_plain_having(
     let mut predicate = rewrite_expr_resolved(&predicate, &resolver)
         .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
     refine_comparisons(&mut predicate, ctx).map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+    *candidate = candidate.take().map(|child| {
+        let input_rows = tidb_planner::candidate_cost::evaluate(
+            &child,
+            ctx.optimizer_cost_env(),
+            tidb_planner::task_type::TaskType::Root,
+        )
+        .rows;
+        tidb_planner::candidate_cost::Candidate::Selection {
+            child: Box::new(child),
+            input_rows,
+            conditions: vec![matches!(predicate, Expression::ScalarFunction(_))],
+        }
+    });
     let schema = source.schema().clone();
     Ok(Box::new(SelectionExec::new(
         ExecutorMeta::new(schema, 1, INIT_CAP, MAX_CHUNK_SIZE),

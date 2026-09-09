@@ -15,26 +15,23 @@
 //! Concrete tonic BatchCommands stream inside the retained transport runtime.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tidb_proto::tikvpb::{tikv_client::TikvClient, BatchCommandsRequest};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::client::PhysicalChannelIdentity;
 use crate::rpc::channel_pool::{ChannelPool, VersionedChannel};
 use crate::rpc::forwarding;
 use crate::rpc::transport_runtime::WorkerCommand;
-use crate::rpc::{
-    CompletionRequest, DirectUnaryClientError, DirectUnaryConnectionError, UnaryCallContext,
-};
+use crate::rpc::{DirectUnaryClientError, DirectUnaryConnectionError, UnaryCallContext};
 
 use super::{
-    BatchEntry, BatchEntryCompletion, BatchGroup, BatchInflightError, BatchInflightTable,
-    BatchRoute, BatchScheduler, BatchWireRequest, BatchWireResponse, OpaqueBatchCommand,
-    PendingBatchCommand,
+    BatchCommandCompletion, BatchEntry, BatchEntryCompletion, BatchGroup, BatchInflightError,
+    BatchInflightTable, BatchRoute, BatchScheduler, BatchWireRequest, BatchWireResponse,
+    OpaqueBatchCommand, PendingBatchCommand,
 };
 
 const MAX_RECV_MESSAGE_SIZE: usize = (i64::MAX as usize).saturating_sub(1);
@@ -44,14 +41,20 @@ const STREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 // Pinned client-go's default TiKV MaxBatchSize bounds the per-connection
 // BatchCommands admission channel at 128 requests.
 const MAX_STREAM_OPENING_PACKETS: usize = 128;
-
-/// The original once-only completion carried from admission through receive.
-pub type BatchCommandCompletion = CompletionRequest<OpaqueBatchCommand, BatchInflightError>;
+// client-go's default TiKV MaxBatchSize, independent of SQL workload shape.
+pub(in crate::rpc) const MAX_BATCH_COMMANDS: usize = 128;
 
 /// One command admitted to the retained scheduler and duplex transport.
 pub type BatchCommandEntry = BatchEntry<OpaqueBatchCommand, BatchCommandCompletion>;
 
-/// Observable identity assigned to one submitted direct or forwarded packet.
+/// One caller's admission and acknowledgement remain independent of batching.
+pub(in crate::rpc) struct BatchSubmission {
+    pub entries: Vec<BatchCommandEntry>,
+    pub call: Option<UnaryCallContext>,
+    pub reply: Option<oneshot::Sender<Vec<BatchPublicationReceipt>>>,
+}
+
+/// One caller's published command identities within a direct or forwarded packet.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BatchPublicationReceipt {
     route: BatchRoute,
@@ -102,6 +105,13 @@ struct ActiveStream {
     terminal: Arc<Mutex<Option<BatchInflightError>>>,
     open_state: Arc<Mutex<StreamOpenState>>,
     outbound: mpsc::UnboundedSender<BatchCommandsRequest>,
+    receiver: tokio::task::AbortHandle,
+}
+
+impl Drop for ActiveStream {
+    fn drop(&mut self) {
+        self.receiver.abort();
+    }
 }
 
 struct StreamOpenState {
@@ -122,8 +132,8 @@ struct PreparedBatch {
 
 struct BatchSubmitContext<'a> {
     channels: &'a mut ChannelPool,
-    runtime: &'a tokio::runtime::Runtime,
-    commands: &'a std_mpsc::Sender<WorkerCommand>,
+    runtime: &'a tokio::runtime::Handle,
+    commands: &'a mpsc::UnboundedSender<WorkerCommand>,
 }
 
 impl PreparedBatch {
@@ -151,7 +161,7 @@ impl PreparedBatch {
     }
 }
 
-/// Scheduler, route generation, stream, and pending ownership for one worker.
+/// Scheduler, route generation, stream, and pending ownership for one connection.
 pub(in crate::rpc) struct BatchTransportState {
     scheduler: BatchScheduler<OpaqueBatchCommand, BatchCommandCompletion>,
     streams: HashMap<StreamKey, ActiveStream>,
@@ -162,9 +172,12 @@ pub(in crate::rpc) struct BatchTransportState {
 }
 
 impl BatchTransportState {
-    pub(in crate::rpc) fn new(shutdown: watch::Receiver<bool>) -> Self {
+    pub(in crate::rpc) fn new(
+        shutdown: watch::Receiver<bool>,
+        request_ids: Arc<std::sync::atomic::AtomicU64>,
+    ) -> Self {
         Self {
-            scheduler: BatchScheduler::new(),
+            scheduler: BatchScheduler::with_id_allocator(request_ids),
             streams: HashMap::new(),
             generations: HashMap::new(),
             reconnect_budget: HashSet::new(),
@@ -173,68 +186,131 @@ impl BatchTransportState {
         }
     }
 
-    pub(in crate::rpc) async fn submit(
+    pub(in crate::rpc) fn submit(
         &mut self,
         channels: &mut ChannelPool,
-        runtime: &tokio::runtime::Runtime,
+        runtime: &tokio::runtime::Handle,
         address: &str,
-        entries: Vec<BatchCommandEntry>,
-        call: Option<&UnaryCallContext>,
-        commands: &std_mpsc::Sender<WorkerCommand>,
-    ) -> Vec<BatchPublicationReceipt> {
-        if let Some(call) = call {
-            let error = if call.cancellation().is_cancelled() {
-                Some(DirectUnaryClientError::CallerCancelled)
-            } else if call.timeout().is_zero() {
-                Some(call_deadline_elapsed(
-                    address,
-                    channels.version(address).unwrap_or(0),
-                ))
-            } else {
-                None
-            };
-            if let Some(error) = error {
-                for entry in entries {
-                    entry
-                        .completion()
-                        .fail(BatchInflightError::Transport(error.clone()));
-                }
-                return Vec::new();
-            }
-        }
-        for entry in entries {
-            self.scheduler.push(entry);
-        }
-        let groups = self.scheduler.build_with_limit(usize::MAX).into_parts();
+        submissions: Vec<BatchSubmission>,
+        commands: &mpsc::UnboundedSender<WorkerCommand>,
+    ) {
+        let needs_receipts = submissions
+            .iter()
+            .any(|submission| submission.reply.is_some());
+        let mut callers = Vec::new();
+        let mut receipts = Vec::new();
         let mut context = BatchSubmitContext {
             channels,
             runtime,
             commands,
         };
-        let mut receipts =
-            Vec::with_capacity(groups.forwarded.len() + usize::from(groups.direct.is_some()));
+        for BatchSubmission {
+            entries,
+            call,
+            reply,
+        } in submissions
+        {
+            let mut progress = Vec::new();
+            for entry in entries {
+                // Check each caller's own absolute deadline even when a large
+                // submission spans multiple publications. A sibling's context
+                // must never become the context of the combined packet.
+                let error = call.as_ref().and_then(|call| {
+                    if call.cancellation().is_cancelled() {
+                        Some(DirectUnaryClientError::CallerCancelled)
+                    } else if call.timeout().is_zero() {
+                        Some(call_deadline_elapsed(
+                            address,
+                            context.channels.version(address).unwrap_or(0),
+                        ))
+                    } else {
+                        None
+                    }
+                });
+                if let Some(error) = error {
+                    entry
+                        .completion()
+                        .fail(BatchInflightError::Transport(error));
+                    continue;
+                }
+                if reply.is_some() {
+                    progress.push(entry.progress());
+                }
+                self.scheduler.push(entry);
+                if self.scheduler.len() == MAX_BATCH_COMMANDS {
+                    receipts.extend(self.flush(&mut context, address, needs_receipts));
+                }
+            }
+            if let Some(reply) = reply {
+                callers.push((reply, progress));
+            }
+        }
+        receipts.extend(self.flush(&mut context, address, needs_receipts));
+        for (reply, progress) in callers {
+            // Preserve packet identity but restrict every acknowledgement to
+            // this caller's published IDs. Canceled/unpublished entries have
+            // no matching ID and cannot acquire a sibling's receipt.
+            let mut published_ids: Vec<_> = progress
+                .into_iter()
+                .filter(|entry| entry.publication_route().is_some())
+                .map(|entry| entry.request_id())
+                .collect();
+            // A large vector can span many packets. Sorting once avoids a
+            // quadratic scan of all of its entries for each published ID.
+            published_ids.sort_unstable();
+            let own_receipts = receipts
+                .iter()
+                .filter_map(|receipt| {
+                    let request_ids: Vec<_> = receipt
+                        .request_ids
+                        .iter()
+                        .copied()
+                        .filter(|id| published_ids.binary_search(id).is_ok())
+                        .collect();
+                    (!request_ids.is_empty()).then(|| BatchPublicationReceipt {
+                        route: receipt.route.clone(),
+                        request_ids,
+                    })
+                })
+                .collect();
+            let _ = reply.send(own_receipts);
+        }
+    }
+
+    fn flush(
+        &mut self,
+        context: &mut BatchSubmitContext<'_>,
+        address: &str,
+        needs_receipts: bool,
+    ) -> Vec<BatchPublicationReceipt> {
+        let groups = self.scheduler.build_with_limit(usize::MAX).into_parts();
+        let mut receipts = Vec::new();
         if let Some(group) = groups.direct {
-            if let Some(receipt) = self.send_group(&mut context, address, None, group).await {
+            if let Some(receipt) = self.send_group(context, address, None, group, needs_receipts) {
                 receipts.push(receipt);
             }
         }
         for (forwarded_host, group) in groups.forwarded {
-            if let Some(receipt) = self
-                .send_group(&mut context, address, Some(forwarded_host.as_str()), group)
-                .await
-            {
+            if let Some(receipt) = self.send_group(
+                context,
+                address,
+                Some(forwarded_host.as_str()),
+                group,
+                needs_receipts,
+            ) {
                 receipts.push(receipt);
             }
         }
         receipts
     }
 
-    async fn send_group(
+    fn send_group(
         &mut self,
         context: &mut BatchSubmitContext<'_>,
         address: &str,
         forwarded_host: Option<&str>,
         group: BatchGroup<OpaqueBatchCommand, BatchCommandCompletion>,
+        needs_receipts: bool,
     ) -> Option<BatchPublicationReceipt> {
         let prepared = PreparedBatch::from_group(group);
         let key = StreamKey::new(address, forwarded_host);
@@ -252,15 +328,12 @@ impl BatchTransportState {
         }
 
         if !self.streams.contains_key(&key) {
-            if let Err(error) = self
-                .recreate_stream(
-                    context.channels,
-                    context.runtime,
-                    key.clone(),
-                    context.commands,
-                )
-                .await
-            {
+            if let Err(error) = self.recreate_stream(
+                context.channels,
+                context.runtime,
+                key.clone(),
+                context.commands,
+            ) {
                 prepared.fail(BatchInflightError::Transport(error));
                 return None;
             }
@@ -310,9 +383,9 @@ impl BatchTransportState {
             request_ids,
             pending,
         } = prepared;
+        let receipt_ids = needs_receipts.then(|| request_ids.clone());
         let request =
-            match BatchWireRequest::new(batch_commands, request_ids.clone(), client_send_time_ns())
-            {
+            match BatchWireRequest::new(batch_commands, request_ids, client_send_time_ns()) {
                 Ok(request) => request,
                 Err(error) => {
                     let mut open_state = open_state
@@ -343,7 +416,11 @@ impl BatchTransportState {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis())
                 .unwrap_or(0);
-            eprintln!("[WTRACE s{} w={now}] publish addr={address} ids={:?}", stream.serial, request_ids);
+            eprintln!(
+                "[WTRACE s{} w={now}] publish addr={address} ids={:?}",
+                stream.serial,
+                request.request_ids()
+            );
         }
         let send_error = outbound.send(request.into_proto()).err().map(|_| {
             BatchInflightError::Transport(stream_error(
@@ -360,10 +437,10 @@ impl BatchTransportState {
                 .fail_route(&route, error.clone());
         }
         drop(terminal_guard);
-        let receipt = BatchPublicationReceipt {
+        let receipt = receipt_ids.map(|request_ids| BatchPublicationReceipt {
             route: route.clone(),
             request_ids,
-        };
+        });
 
         if send_error.is_some() {
             self.reconnect_budget.remove(&key);
@@ -371,7 +448,7 @@ impl BatchTransportState {
         } else {
             self.reconnect_budget.insert(key);
         }
-        Some(receipt)
+        receipt
     }
 
     fn route_for_submission(
@@ -390,26 +467,26 @@ impl BatchTransportState {
         key.route(physical_channel, *generation)
     }
 
-    pub(in crate::rpc) async fn handle_event(
+    pub(in crate::rpc) fn handle_event(
         &mut self,
         channels: &mut ChannelPool,
-        runtime: &tokio::runtime::Runtime,
-        commands: &std_mpsc::Sender<WorkerCommand>,
+        runtime: &tokio::runtime::Handle,
+        commands: &mpsc::UnboundedSender<WorkerCommand>,
         event: BatchStreamEvent,
     ) {
         let BatchStreamEvent::Retired { route } = event;
         let key = StreamKey::new(route.physical_address(), route.forwarded_host());
         if self.remove_stream_if_current(&key, &route) && self.reconnect_budget.remove(&key) {
-            let _ = self.recreate_stream(channels, runtime, key, commands).await;
+            let _ = self.recreate_stream(channels, runtime, key, commands);
         }
     }
 
-    async fn recreate_stream(
+    fn recreate_stream(
         &mut self,
         channels: &mut ChannelPool,
-        runtime: &tokio::runtime::Runtime,
+        runtime: &tokio::runtime::Handle,
         key: StreamKey,
-        commands: &std_mpsc::Sender<WorkerCommand>,
+        commands: &mpsc::UnboundedSender<WorkerCommand>,
     ) -> Result<(), DirectUnaryClientError> {
         // PARTIAL: open is bounded and shutdown-cancelable, but prolonged
         // outage retry/backoff policy remains above this transport slice.
@@ -500,7 +577,7 @@ fn open_stream(
     key: &StreamKey,
     route: &BatchRoute,
     selected: VersionedChannel,
-    commands: std_mpsc::Sender<WorkerCommand>,
+    commands: mpsc::UnboundedSender<WorkerCommand>,
     inflight: Arc<Mutex<BatchInflightTable>>,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<ActiveStream, DirectUnaryClientError> {
@@ -525,7 +602,7 @@ fn open_stream(
         packets_admitted: 0,
     }));
     let receive_open_state = Arc::clone(&open_state);
-    tokio::spawn(async move {
+    let receiver = selected.tasks.spawn(async move {
         if super::super::transport_runtime::wtrace_enabled() {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -656,13 +733,14 @@ fn open_stream(
                 }
             }
         }
-    });
+    }).ok_or(DirectUnaryClientError::Closed)?;
     Ok(ActiveStream {
         route: route.clone(),
         terminal,
         open_state,
         outbound,
         serial: stream_serial,
+        receiver,
     })
 }
 

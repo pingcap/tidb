@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use tidb_proto::{errorpb, metapb};
@@ -22,6 +23,7 @@ use super::cache::StoreLabels;
 use super::{
     BucketMetadata, PeerRole, RegionCache, RegionLoadError, RegionLocation, RegionMetadata,
     RegionMetadataPeer, RegionRecoveryLoader, RegionRouteError, RegionVerId, SelectorRecovery,
+    StoreMetadata, StoreResolveState,
 };
 
 /// Exact route observation attached to one failed TiKV request.
@@ -240,6 +242,7 @@ pub(super) struct EpochNotMatchRecoveryPlan {
     pub(super) observed_location: RegionLocation,
     pub(super) observed_topology_revision: u64,
     pub(super) metadata: Vec<RegionMetadata>,
+    pub(super) resolved_stores: BTreeMap<u64, Option<StoreMetadata>>,
 }
 
 impl<L: RegionRecoveryLoader> RegionCache<L> {
@@ -257,10 +260,12 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
     ) -> Result<RegionErrorDisposition, RegionRecoveryError> {
         match self.plan_region_error(error, attempt, backoff)? {
             RegionErrorRecoveryPlan::Complete(disposition) => Ok(disposition),
-            RegionErrorRecoveryPlan::HydrateEpochNotMatch(plan) => {
-                let replacements = self
-                    .loader_handle()
-                    .hydrate_regions(&plan.metadata, plan.attempt.store_id)?;
+            RegionErrorRecoveryPlan::HydrateEpochNotMatch(mut plan) => {
+                let replacements = self.loader_handle().hydrate_regions(
+                    &plan.metadata,
+                    plan.attempt.store_id,
+                    &mut plan.resolved_stores,
+                )?;
                 self.publish_epoch_not_match(*plan, replacements)
             }
         }
@@ -537,11 +542,30 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
         for current in &mismatch.current_regions {
             metadata.push(region_metadata(current)?);
         }
+        // Go newRegion consults the canonical store set. Even NeedCheck
+        // retains its resolved address until the separate refresh owner
+        // replaces it; Removed is a known tombstone, not a cache miss.
+        let resolved_stores = metadata
+            .iter()
+            .flat_map(|region| &region.peers)
+            .filter_map(|peer| {
+                self.stores.get(&peer.store_id).map(|store| {
+                    let metadata = (store.resolve_state() != StoreResolveState::Removed)
+                        .then(|| StoreMetadata {
+                            id: store.id(),
+                            address: store.address().to_owned(),
+                            labels: store.labels().to_vec(),
+                        });
+                    (peer.store_id, metadata)
+                })
+            })
+            .collect();
         *recovery_plan = Some(EpochNotMatchRecoveryPlan {
             attempt,
             observed_location,
             observed_topology_revision: self.topology_revision(),
             metadata,
+            resolved_stores,
         });
         Ok(RegionErrorDisposition::RebuildRanges {
             delay: Duration::ZERO,

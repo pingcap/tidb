@@ -121,6 +121,7 @@ impl DriverError {
     #[must_use]
     pub fn to_mysql_error(self) -> MysqlError {
         match self {
+        DriverError::Mysql(error) => error,
         // Go `util.SyntaxError` (`pkg/util/misc.go:172`):
         // `ErrParse.GenWithStackByArgs(SyntaxErrorPrefix, err.Error())` over
         // ErrParse's `"%s %s"` — the prefix sentence, one space, then the

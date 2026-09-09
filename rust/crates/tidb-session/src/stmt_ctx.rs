@@ -46,7 +46,14 @@ pub(crate) struct StatementVarSnapshot {
     connection_collation: String,
     allow_write_row_id: bool,
     sysdate_is_now: bool,
-    mode_upper: String,
+    sql_mode: tidb_parser::SqlMode,
+    date_modes: tidb_datatype::DateModes,
+    string_type_flags: tidb_datatype::ConversionFlags,
+    strict_sql_mode: bool,
+    error_for_division_by_zero: bool,
+    only_full_group_by: bool,
+    no_unsigned_subtraction: bool,
+    auto_increment_zero_explicit: bool,
     allow_auto_random_explicit_insert: bool,
     shard_allocate_step: u64,
     like_default_escape: u8,
@@ -74,23 +81,42 @@ pub(crate) struct StatementVarSnapshot {
 }
 
 impl Session {
+    /// Installs the transaction owner's selected-row collector while it runs
+    /// a statement. Clearing it also drops keys from a failed attempt.
+    pub fn set_selected_lock_keys(
+        &mut self,
+        keys: Option<tidb_executor::select_lock::SelectedLockKeys>,
+    ) {
+        self.selected_lock_keys = keys;
+    }
+
+    /// Drains the current attempt's selected record keys for lock acquisition.
+    pub fn take_selected_lock_keys(&self) -> Vec<Vec<u8>> {
+        self.selected_lock_keys
+            .as_ref()
+            .map_or_else(Vec::new, tidb_executor::select_lock::SelectedLockKeys::take)
+    }
+
     fn optimizer_cost_env(
         &self,
         mem_quota: i64,
         tmp_storage_on_oom: bool,
-    ) -> (tidb_planner::candidate_cost::CostEnv, f64) {
+    ) -> (Arc<tidb_planner::candidate_cost::CostEnv>, f64) {
         // Everything below derives from the session's variable table, except
-        // the two per-statement arguments, which are patched onto the cached
-        // copy -- so a statement pays one stamp check and one clone instead
-        // of thirty-odd string lookups and parses. Go's equivalents are
-        // typed `SessionVars` fields maintained at `SET`.
+        // the two per-statement arguments. Share the immutable snapshot until
+        // either source changes; retained contexts must keep their old policy.
+        // Go's equivalents are typed `SessionVars` fields maintained at `SET`.
         let generation = self.vars.generation();
-        if let Some((cached_at, env, join_concurrency)) = self.cost_env_cache.borrow().as_ref() {
+        if let Some((cached_at, env, join_concurrency)) = self.cost_env_cache.borrow_mut().as_mut() {
             if *cached_at == generation {
-                let mut env = env.clone();
-                env.session.mem_quota = mem_quota;
-                env.session.enable_tmp_storage_on_oom = tmp_storage_on_oom;
-                return (env, *join_concurrency);
+                if env.session.mem_quota != mem_quota
+                    || env.session.enable_tmp_storage_on_oom != tmp_storage_on_oom
+                {
+                    let updated = Arc::make_mut(env);
+                    updated.session.mem_quota = mem_quota;
+                    updated.session.enable_tmp_storage_on_oom = tmp_storage_on_oom;
+                }
+                return (Arc::clone(env), *join_concurrency);
             }
         }
         let number = |name: &str, default: f64| {
@@ -159,6 +185,7 @@ impl Session {
         env.cost_factors.index_join = number("tidb_opt_index_join_cost_factor", 1.0);
 
         let join_concurrency = resolved_concurrency("tidb_hash_join_concurrency");
+        let env = Arc::new(env);
         *self.cost_env_cache.borrow_mut() = Some((generation, env.clone(), join_concurrency));
         (env, join_concurrency)
     }
@@ -184,11 +211,11 @@ impl Session {
 
     /// Captures the policy a row result keeps after its statement finishes.
     ///
-    /// Go retains the memory tracker and chunk bounds from the statement's
-    /// existing context. This session currently materializes rows before the
-    /// wire layer takes ownership, so refresh only the session-memory policy
-    /// and create the result's statement handle here. Constructing a complete
-    /// `StmtContext` would also snapshot planner, expression, sequence, and
+    /// Go's eager cursor attaches a row-container tracker to session memory
+    /// and retains the producing statement's chunk bounds. This session
+    /// materializes rows before the wire layer takes ownership, so refresh
+    /// only the session-memory policy and create the retention handle here.
+    /// A complete `StmtContext` would also snapshot planner, expression, sequence, and
     /// user state that result materialization never reads.
     pub fn result_materialization_authority(&self) -> crate::ResultMaterializationAuthority {
         let quota = self
@@ -544,6 +571,9 @@ impl Session {
         };
         let snapshot = std::rc::Rc::new(StatementVarSnapshot {
             generation,
+            string_type_flags: tidb_datatype::ConversionFlags::default()
+                .with_skip_ascii_check(on(tidb_vardef::tidb_vars::TIDB_SKIP_ASCII_CHECK))
+                .with_skip_utf8_check(on(tidb_vardef::tidb_vars::TIDB_SKIP_UTF8_CHECK)),
             version: self.vars.get_system("version").ok(),
             connection_charset: self
                 .vars
@@ -673,7 +703,17 @@ impl Session {
                 .ok()
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or_default(),
-            mode_upper,
+            sql_mode: scanner_sql_mode_of(&mode_upper),
+            date_modes: tidb_datatype::DateModes {
+                no_zero_date: has("NO_ZERO_DATE"),
+                no_zero_in_date: has("NO_ZERO_IN_DATE"),
+                allow_invalid_dates: has("ALLOW_INVALID_DATES"),
+            },
+            strict_sql_mode: has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"),
+            error_for_division_by_zero: has("ERROR_FOR_DIVISION_BY_ZERO"),
+            only_full_group_by: has("ONLY_FULL_GROUP_BY"),
+            no_unsigned_subtraction: has("NO_UNSIGNED_SUBTRACTION"),
+            auto_increment_zero_explicit: has("NO_AUTO_VALUE_ON_ZERO"),
         });
         *self.statement_var_cache.borrow_mut() = Some(std::rc::Rc::clone(&snapshot));
         snapshot
@@ -694,6 +734,16 @@ impl Session {
         // The session-variable half, parsed once per variable-table
         // generation; see [`StatementVarSnapshot`].
         let snapshot = self.statement_var_snapshot();
+        // This setting is instance-scoped, unlike the two cached SESSION
+        // checks. A peer's SET GLOBAL must affect the next statement without
+        // mutating a context that is already executing.
+        let check_mb4 = self
+            .vars
+            .get_global(tidb_vardef::tidb_vars::TIDB_CHECK_MB4_VALUE_IN_UTF8)
+            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
+        let string_type_flags = snapshot
+            .string_type_flags
+            .with_skip_utf8mb4_check(!check_mb4);
         let version = snapshot.version.clone();
         let tidb_info = Some(self.vars.tidb_info());
         let connection_charset = snapshot.connection_charset.clone();
@@ -702,12 +752,6 @@ impl Session {
         let clock = self.statement_clock(&zone);
         let allow_write_row_id = snapshot.allow_write_row_id;
         let sysdate_is_now = snapshot.sysdate_is_now;
-        let has = |flag: &str| {
-            snapshot
-                .mode_upper
-                .split(',')
-                .any(|part| part.trim() == flag)
-        };
         let allow_auto_random_explicit_insert = snapshot.allow_auto_random_explicit_insert;
         let shard_allocate_step = snapshot.shard_allocate_step;
         let like_default_escape = snapshot.like_default_escape;
@@ -732,17 +776,9 @@ impl Session {
         let block_encryption_mode = snapshot.block_encryption_mode;
         let arbitrator_wait_averse = snapshot.arbitrator_wait_averse;
         let arbitrator_reserved = snapshot.arbitrator_reserved;
-        // GLOBAL-scope reads stay LIVE: a peer's `SET GLOBAL` moves them
-        // without this session's generation changing.
-        let password_validation_globals = tidb_util::password_validation::VALIDATE_PASSWORD_SYSVARS
-            .into_iter()
-            .map(|name| {
-                (
-                    name.to_owned(),
-                    self.vars.get_global(name).unwrap_or_default(),
-                )
-            })
-            .collect::<HashMap<_, _>>();
+        // Capture this statement's owner, not values or a connection-time
+        // reader: SET GLOBAL validation temporarily selects a scratch table.
+        let globals = self.vars.global_sysvars();
         let tmp_storage_on_oom = {
             let value = self
                 .vars
@@ -760,23 +796,23 @@ impl Session {
         );
         self.session_memory
             .configure(mem_quota, oom_action, tmp_storage_on_oom);
+        let memory = self
+            .session_memory
+            .statement_with_arbitration(arbitrator_wait_averse, arbitrator_reserved);
         // The SAME three bits on both branches: a query reads them for
         // `CAST(... AS DATE/DATETIME)`, a DML statement reads them for the
         // column write. They used to be attached only below, which left every
         // read with the all-false default -- and made `NO_ZERO_DATE` silently
         // inoperative on the read path.
-        let date_modes = tidb_datatype::DateModes {
-            no_zero_date: has("NO_ZERO_DATE"),
-            no_zero_in_date: has("NO_ZERO_IN_DATE"),
-            allow_invalid_dates: has("ALLOW_INVALID_DATES"),
-        };
+        let date_modes = snapshot.date_modes;
         if !is_dml {
-            let ctx = tidb_executor::StmtContext::for_query()
+            let ctx = tidb_executor::StmtContext::for_query_with_memory(memory)
                 // A read's error levels do not depend on the mode, but DDL
                 // takes this same context and Go's DDL checks DO read
                 // `SQLMode.HasStrictMode()`. See `StmtContext::with_strict`.
-                .with_strict(has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"))
+                .with_strict(snapshot.strict_sql_mode)
                 .with_date_modes(date_modes)
+                .with_string_type_flags(string_type_flags)
                 .with_cte_max_recursion_depth(cte_depth)
                 .with_join_reorder_threshold(join_reorder_threshold)
                 .with_advanced_join_reorder(advanced_join_reorder)
@@ -791,7 +827,7 @@ impl Session {
                 .with_planned_apply_channel(Arc::clone(&self.planned_apply))
                 .with_allow_write_row_id(allow_write_row_id)
                 .with_static_partition_prune(static_partition_prune)
-                .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
+                .with_only_full_group_by(snapshot.only_full_group_by)
                 .with_new_only_full_group_by_check(new_only_full_group_by_check)
                 .with_session_state(current_db, version, tidb_info)
                 .with_connection_charset_info(
@@ -799,14 +835,11 @@ impl Session {
                     connection_collation.clone(),
                 )
                 .with_user(self.current_user.clone(), self.login_user.clone())
-                .with_global_sysvars(password_validation_globals.clone())
+                .with_global_sysvar_reader(move |name| globals.get_for_global_scope(name).ok())
                 .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
                 .with_connection_id(self.connection_id)
                 .with_advisory_locks(self.advisory_locks.clone())
-                .with_statement_memory(
-                    self.session_memory
-                        .statement_with_arbitration(arbitrator_wait_averse, arbitrator_reserved),
-                )
+                .with_selected_lock_keys(self.selected_lock_keys.clone())
                 .with_rand_session(Arc::clone(&self.rand))
                 .with_last_insert_id_channel(Arc::clone(&self.published_last_insert_id))
                 .with_retry_auto_ids(Arc::clone(&self.retry_auto_ids))
@@ -823,8 +856,8 @@ impl Session {
                 .with_block_encryption_mode(block_encryption_mode)
                 .with_sequences(self.sequence_snapshot())
                 .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
-                .with_sql_mode(scanner_sql_mode_of(&snapshot.mode_upper))
-                .with_no_unsigned_subtraction(has("NO_UNSIGNED_SUBTRACTION"))
+                .with_sql_mode(snapshot.sql_mode)
+                .with_no_unsigned_subtraction(snapshot.no_unsigned_subtraction)
                 .with_like_default_escape(like_default_escape)
                 .with_default_string_match_selectivity(default_string_match_selectivity)
                 .with_sysdate_is_now(sysdate_is_now)
@@ -844,27 +877,26 @@ impl Session {
             return ctx;
         }
         let (increment, offset) = self.auto_increment_step();
-        let ctx = tidb_executor::StmtContext::for_dml(
-            has("ERROR_FOR_DIVISION_BY_ZERO"),
-            has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES"),
+        let ctx = tidb_executor::StmtContext::for_dml_with_memory(
+            snapshot.error_for_division_by_zero,
+            snapshot.strict_sql_mode,
             ignore_err,
+            memory,
         )
         .with_date_modes(date_modes)
+        .with_string_type_flags(string_type_flags)
         .with_planned_apply_channel(Arc::clone(&self.planned_apply))
         .with_allow_write_row_id(allow_write_row_id)
-        .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
+        .with_only_full_group_by(snapshot.only_full_group_by)
         .with_new_only_full_group_by_check(new_only_full_group_by_check)
         .with_session_state(current_db, version, tidb_info)
         .with_connection_charset_info(connection_charset, connection_collation)
         .with_user(self.current_user.clone(), self.login_user.clone())
-        .with_global_sysvars(password_validation_globals)
+        .with_global_sysvar_reader(move |name| globals.get_for_global_scope(name).ok())
         .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
         .with_connection_id(self.connection_id)
         .with_advisory_locks(self.advisory_locks.clone())
-        .with_statement_memory(
-            self.session_memory
-                .statement_with_arbitration(arbitrator_wait_averse, arbitrator_reserved),
-        )
+        .with_selected_lock_keys(self.selected_lock_keys.clone())
         .with_rand_session(Arc::clone(&self.rand))
         .with_last_insert_id_channel(Arc::clone(&self.published_last_insert_id))
         .with_retry_auto_ids(Arc::clone(&self.retry_auto_ids))
@@ -883,12 +915,12 @@ impl Session {
         .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
         .with_sysdate_is_now(sysdate_is_now)
         .with_clock(clock, zone)
-        .with_sql_mode(scanner_sql_mode_of(&snapshot.mode_upper))
-        .with_no_unsigned_subtraction(has("NO_UNSIGNED_SUBTRACTION"))
+        .with_sql_mode(snapshot.sql_mode)
+        .with_no_unsigned_subtraction(snapshot.no_unsigned_subtraction)
         .with_like_default_escape(like_default_escape)
         .with_default_string_match_selectivity(default_string_match_selectivity)
         .with_auto_increment_step(increment, offset)
-        .with_auto_increment_zero_explicit(has("NO_AUTO_VALUE_ON_ZERO"))
+        .with_auto_increment_zero_explicit(snapshot.auto_increment_zero_explicit)
         .with_foreign_key_checks(self.foreign_key_checks())
         .with_constraint_check_in_place(constraint_check_in_place)
         // Go `optimizeDupKeyCheckForNormalInsert` + `getPessimisticLazyCheckMode`
@@ -1037,6 +1069,8 @@ impl Session {
 /// The scanner flags Go's `Parser.SetSQLMode` consults, read off an
 /// already-uppercased, already-expanded `@@sql_mode` text.
 pub(crate) fn scanner_sql_mode_of(mode: &str) -> tidb_parser::SqlMode {
+    #[cfg(test)]
+    tests::SCANNER_MODE_PARSES.with(|count| count.set(count.get() + 1));
     let has = |flag: &str| mode.split(',').any(|part| part.trim() == flag);
     tidb_parser::SqlMode {
         real_as_float: has("REAL_AS_FLOAT"),
@@ -1051,6 +1085,326 @@ pub(crate) fn scanner_sql_mode_of(mode: &str) -> tidb_parser::SqlMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        pub(super) static SCANNER_MODE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    #[test]
+    fn statement_cost_environments_share_immutable_snapshots() {
+        let mut session = Session::new();
+        let query = session.statement_context(false);
+        let dml = session.statement_context(true);
+        assert!(std::ptr::eq(
+            query.optimizer_cost_env(),
+            dml.optimizer_cost_env()
+        ));
+        let cloned = query.clone();
+        assert!(std::ptr::eq(
+            query.optimizer_cost_env(),
+            cloned.optimizer_cost_env()
+        ));
+
+        let original_tmp = query.optimizer_cost_env().session.enable_tmp_storage_on_oom;
+        let generation = session.vars.generation();
+        session
+            .vars
+            .set_global(
+                "tidb_enable_tmp_storage_on_oom",
+                if original_tmp { "OFF" } else { "ON" }.to_owned(),
+            )
+            .unwrap();
+        assert_eq!(session.vars.generation(), generation);
+        let updated = session.statement_context(false);
+        assert_eq!(
+            updated
+                .optimizer_cost_env()
+                .session
+                .enable_tmp_storage_on_oom,
+            !original_tmp
+        );
+        assert_eq!(
+            query.optimizer_cost_env().session.enable_tmp_storage_on_oom,
+            original_tmp
+        );
+        assert!(!std::ptr::eq(
+            query.optimizer_cost_env(),
+            updated.optimizer_cost_env()
+        ));
+        let same_policy = session.statement_context(true);
+        assert!(std::ptr::eq(
+            updated.optimizer_cost_env(),
+            same_policy.optimizer_cost_env()
+        ));
+
+        session
+            .vars
+            .set_system("tidb_distsql_scan_concurrency", "7".to_owned())
+            .unwrap();
+        let new_variables = session.statement_context(false);
+        assert_eq!(
+            new_variables
+                .optimizer_cost_env()
+                .session
+                .distsql_scan_concurrency,
+            7.0
+        );
+        assert!(!std::ptr::eq(
+            updated.optimizer_cost_env(),
+            new_variables.optimizer_cost_env()
+        ));
+
+        let (old_quota, _) = session.optimizer_cost_env(1024, original_tmp);
+        let (new_quota, _) = session.optimizer_cost_env(2048, original_tmp);
+        assert_eq!(old_quota.session.mem_quota, 1024);
+        assert_eq!(new_quota.session.mem_quota, 2048);
+        assert!(!Arc::ptr_eq(&old_quota, &new_quota));
+        drop(new_quota);
+        let (unretained, _) = session.optimizer_cost_env(4096, !original_tmp);
+        assert_eq!(unretained.session.mem_quota, 4096);
+        assert_eq!(unretained.session.enable_tmp_storage_on_oom, !original_tmp);
+        assert_eq!(old_quota.session.mem_quota, 1024);
+    }
+
+    #[test]
+    fn statement_contexts_reuse_derived_sql_modes() {
+        let mut session = Session::new();
+        session.vars.set_system("sql_mode", "ANSI,STRICT_ALL_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ALLOW_INVALID_DATES,ERROR_FOR_DIVISION_BY_ZERO,NO_UNSIGNED_SUBTRACTION,NO_AUTO_VALUE_ON_ZERO,NO_BACKSLASH_ESCAPES,HIGH_NOT_PRECEDENCE".to_owned()).unwrap();
+        drop(session.statement_context(false));
+        SCANNER_MODE_PARSES.with(|count| count.set(0));
+        for dml in [false, true] {
+            let context = session.statement_context(dml);
+            let mode = context.sql_mode();
+            assert!(mode.real_as_float && mode.ansi_quotes && mode.pipes_as_concat);
+            assert!(mode.no_backslash_escapes && mode.high_not_precedence && mode.ignore_space);
+            assert!(context.strict());
+            assert!(context.only_full_group_by());
+            assert!(context.no_unsigned_subtraction());
+            let dates = context.date_modes();
+            assert!(dates.no_zero_date && dates.no_zero_in_date && dates.allow_invalid_dates);
+            if dml {
+                assert!(context.auto_increment_zero_is_explicit());
+            }
+        }
+        SCANNER_MODE_PARSES.with(|count| assert_eq!(count.get(), 0));
+        session.vars.set_system("sql_mode", String::new()).unwrap();
+        let context = session.statement_context(true);
+        let mode = context.sql_mode();
+        assert!(!mode.real_as_float && !mode.ansi_quotes && !mode.pipes_as_concat);
+        assert!(!mode.no_backslash_escapes && !mode.high_not_precedence && !mode.ignore_space);
+        assert!(!context.strict());
+        assert!(!context.only_full_group_by());
+        assert!(!context.no_unsigned_subtraction());
+        assert!(!context.auto_increment_zero_is_explicit());
+        let dates = context.date_modes();
+        assert!(!dates.no_zero_date && !dates.no_zero_in_date && !dates.allow_invalid_dates);
+    }
+
+    #[test]
+    #[ignore = "isolated SQL-mode context timing; no timing assertion"]
+    fn statement_sql_mode_construction_benchmark() {
+        use std::hint::black_box;
+        use std::time::Instant;
+        let mut session = Session::new();
+        let default = session.vars.get_system("sql_mode").unwrap();
+        for (name, mode) in [("empty", ""), ("default", default.as_str()), ("expanded", "ANSI,TRADITIONAL,NO_BACKSLASH_ESCAPES,HIGH_NOT_PRECEDENCE,NO_UNSIGNED_SUBTRACTION,NO_AUTO_VALUE_ON_ZERO")] {
+            session.vars.set_system("sql_mode", mode.to_owned()).unwrap();
+            for dml in [false, true] {
+                for _ in 0..100 {
+                    drop(black_box(session.statement_context(dml)));
+                }
+                for round in 0..5 {
+                    let started = Instant::now();
+                    for _ in 0..10_000 {
+                        drop(black_box(session.statement_context(dml)));
+                    }
+                    println!("sql-mode-context mode={name} dml={dml} round={round} iterations=10000 ns_per_context={}", started.elapsed().as_nanos() / 10_000);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prepared_statement_charset_flags_follow_session_and_instance_changes() {
+        use tidb_executor::Columns;
+        let mut session = Session::new();
+        let original = session.statement_context(false);
+        assert!(!original.type_flags().skip_ascii_check());
+        assert!(!original.type_flags().skip_utf8_check());
+        assert!(!original.type_flags().skip_utf8mb4_check());
+        session
+            .vars
+            .set_system("tidb_skip_ascii_check", "ON".to_owned())
+            .unwrap();
+        session
+            .vars
+            .set_system("tidb_skip_utf8_check", "ON".to_owned())
+            .unwrap();
+        let changed = session.statement_context(false);
+        assert!(changed.type_flags().skip_ascii_check());
+        assert!(changed.type_flags().skip_utf8_check());
+        assert!(!original.type_flags().skip_ascii_check());
+        let cached = session.statement_var_snapshot();
+        let generation = session.vars.generation();
+        session
+            .vars
+            .set_global("tidb_check_mb4_value_in_utf8", "OFF".to_owned())
+            .unwrap();
+        let changed_global = session.statement_context(false);
+        assert_eq!(generation, session.vars.generation());
+        assert!(std::rc::Rc::ptr_eq(
+            &cached,
+            &session.statement_var_snapshot()
+        ));
+        assert!(changed_global.type_flags().skip_utf8mb4_check());
+        assert!(!changed.type_flags().skip_utf8mb4_check());
+        // Restore the instance setting even though contexts retain snapshots.
+        session
+            .vars
+            .set_global("tidb_check_mb4_value_in_utf8", "ON".to_owned())
+            .unwrap();
+        let dml = session
+            .statement_context(true)
+            .with_statement_class(tidb_executor::StatementClass::Insert);
+        assert!(dml.type_flags().skip_ascii_check());
+        assert!(dml.type_flags().skip_utf8_check());
+        assert!(!dml.type_flags().skip_utf8mb4_check());
+    }
+
+    #[test]
+    fn ordinary_statements_keep_variable_derived_caches() {
+        let mut session = Session::new();
+        let snapshot = session.statement_var_snapshot();
+        let generation = session.vars.generation();
+        for (sql, fails) in [
+            ("SELECT 1", false),
+            ("SELECT 2", false),
+            ("SELECT * FROM missing_cache_test_table", true),
+        ] {
+            assert_eq!(session.run(sql).is_err(), fails, "{sql}");
+            assert_eq!(session.vars.generation(), generation, "{sql}");
+            assert!(std::rc::Rc::ptr_eq(
+                &snapshot,
+                &session.statement_var_snapshot()
+            ));
+        }
+        let restore = session.vars.snapshot_system("sql_mode");
+        session
+            .vars
+            .set_system("sql_mode", "ANSI".to_owned())
+            .unwrap();
+        let overlaid = session.statement_var_snapshot();
+        assert!(!std::rc::Rc::ptr_eq(&snapshot, &overlaid));
+        assert!(session.scanner_sql_mode().ansi_quotes);
+        session.vars.restore_system(restore);
+        assert!(!std::rc::Rc::ptr_eq(
+            &overlaid,
+            &session.statement_var_snapshot()
+        ));
+        assert!(!session.scanner_sql_mode().ansi_quotes);
+    }
+
+    #[test]
+    fn version_identity_invalidates_cached_statement_vars() {
+        let mut session = Session::new();
+        let original = session.statement_var_snapshot();
+        let info = tidb_util::versioninfo::VersionInfo::build_default()
+            .with_configured_versions("v9.0.0", "8.0.11-TiDB-v9.0.0");
+        let expected = info.server_version.clone();
+        session.set_version_info(info);
+        let updated = session.statement_var_snapshot();
+        assert_eq!(updated.version.as_deref(), Some(expected.as_str()));
+        assert!(!std::rc::Rc::ptr_eq(&original, &updated));
+    }
+
+    #[test]
+    #[ignore = "isolated statement-boundary timing; no timing assertion"]
+    fn ordinary_statement_cache_benchmark() {
+        use std::hint::black_box;
+        use std::time::Instant;
+        let mut session = Session::new();
+        for _ in 0..100 {
+            black_box(session.run("SELECT 1").unwrap());
+        }
+        for round in 0..5 {
+            let started = Instant::now();
+            for _ in 0..10_000 {
+                black_box(session.run("SELECT 1").unwrap());
+            }
+            println!("statement-cache round={round} iterations=10000 ns_per_statement={}", started.elapsed().as_nanos() / 10_000);
+        }
+    }
+
+    #[test]
+    #[ignore = "isolated context construction timing; no timing assertion"]
+    fn statement_global_reader_construction_benchmark() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        let mut session = Session::new();
+        for dictionary_bytes in [0, 1024, 65536] {
+            session
+                .vars
+                .set_global("validate_password.dictionary", "x".repeat(dictionary_bytes))
+                .unwrap();
+            for dml in [false, true] {
+                for _ in 0..100 {
+                    drop(black_box(session.statement_context(dml)));
+                }
+                for round in 0..5 {
+                    let started = Instant::now();
+                    for _ in 0..10_000 {
+                        drop(black_box(session.statement_context(dml)));
+                    }
+                    println!("global-context dictionary_bytes={dictionary_bytes} dml={dml} round={round} iterations=10000 ns_per_context={}", started.elapsed().as_nanos() / 10_000);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn selected_record_keys_reach_the_owner_from_query_and_dml_contexts() {
+        use tidb_executor::select_lock::{SelectLockExec, SelectedLockKeys};
+        use tidb_executor::{Executor, ExecutorMeta, TableDualExec};
+
+        let mut session = Session::new();
+        assert!(session
+            .statement_context(false)
+            .selected_lock_keys()
+            .is_none());
+        session.set_selected_lock_keys(Some(SelectedLockKeys::default()));
+        for is_dml in [false, true] {
+            let context = session.statement_context(is_dml);
+            let selected = context
+                .selected_lock_keys()
+                .expect("owner installed collector");
+            let source = TableDualExec::new(
+                ExecutorMeta::new(Default::default(), 0, 1, 1),
+                1,
+            );
+            let mut exec = SelectLockExec::new(
+                Box::new(source),
+                vec![Box::new(|_| Ok(Some(b"selected-record".to_vec())))],
+                selected,
+            );
+            let mut chunk = exec.new_chunk();
+            exec.open().unwrap();
+            exec.next(&mut chunk).unwrap();
+            assert!(session.take_selected_lock_keys().is_empty());
+            exec.next(&mut chunk).unwrap();
+            assert_eq!(
+                session.take_selected_lock_keys(),
+                [b"selected-record".to_vec()]
+            );
+            exec.close().unwrap();
+        }
+        session.set_selected_lock_keys(None);
+        assert!(session
+            .statement_context(false)
+            .selected_lock_keys()
+            .is_none());
+        assert!(session.take_selected_lock_keys().is_empty());
+    }
 
     #[test]
     fn fast_statement_context_does_not_build_decode_key_metadata() {

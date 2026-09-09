@@ -34,12 +34,11 @@ pub enum ConstantFoldMode {
 /// Runs the NOT NULL half of Go's `foldConstant`
 /// (`pkg/expression/constant_fold.go`) over a freshly built tree, bottom up.
 ///
-/// Go REPLACES a wholly-constant subtree with a `Constant`, and while doing so
-/// stamps `NotNullFlag` on or off according to the value it computed. That
-/// flag is the only part of the substitution anything downstream of this
-/// rewriter can observe -- an evaluable tree gives the same rows either way --
-/// so this walk computes the same fold and keeps only its flag, rather than
-/// rewriting nodes this tier still evaluates directly.
+/// Go replaces a wholly-constant subtree with a `Constant` and derives its
+/// `NotNullFlag` from the computed value. This walk derives only that flag;
+/// it does not supply the folded value that some parent type constructors
+/// inspect. Callers needing that representation must use the construction
+/// fold, not treat this metadata-only walk as a substitute.
 ///
 /// The flag is not decoration: `SHOW COLUMNS` on a view reads it, which is how
 /// `CREATE VIEW v AS SELECT CAST('' AS CHAR(32))` reports `NO` for a column no
@@ -59,52 +58,54 @@ pub fn fold_constant_in_mode(
     if mode == ConstantFoldMode::Disabled {
         return;
     }
-    let original = (mode == ConstantFoldMode::Try).then(|| expr.clone());
-    let warning_bookmark = ctx.warning_count();
-    let _ = fold_current_value_in(expr, ctx);
-    if mode == ConstantFoldMode::Try && ctx.warning_count() > warning_bookmark {
-        ctx.truncate_warnings(warning_bookmark);
-        *expr = original.expect("try-fold mode retained the original expression");
+    // Go newFunctionImpl only bookmarks warnings for NewFunctionTryFold.
+    // Build a replacement without changing the original function, so rejecting
+    // a warning-producing fold needs neither a tree copy nor a rollback.
+    let warning_bookmark = (mode == ConstantFoldMode::Try).then(|| ctx.warning_count());
+    let replacement = fold_current_value_in(expr, ctx);
+    if let Some(bookmark) = warning_bookmark {
+        if ctx.warning_count() > bookmark {
+            ctx.truncate_warnings(bookmark);
+            return;
+        }
+    }
+    if let Some((folded, is_deferred)) = replacement {
+        let original = std::mem::replace(expr, Expression::Constant(folded));
+        if is_deferred {
+            let Expression::Constant(folded) = expr else {
+                unreachable!()
+            };
+            folded.deferred_expr = Some(Box::new(original));
+        }
     }
 }
 
-fn fold_current_value_in(expr: &mut Expression, ctx: &impl crate::Columns) -> Option<Datum> {
-    // Recursively fold sub-expressions FIRST (Go's `FoldConstant` walks
-    // bottom-up): a nested `date_add_month("...", "...")` whose args are all
-    // constants becomes a Constant before the parent checks its own args.
-    // Lazy short-circuit functions are exempt: their UNTAKEN branches must
-    // not evaluate -- `SELECT IF(1, 1, 1/0)` runs without dividing, so
-    // plan-time folding inside them would fabricate both warnings and
-    // errors the runtime never reaches.
-    if let Expression::ScalarFunction(func) = expr {
-        let lazy = is_lazy_short_circuit(func.func_name.lowercase());
-        if !lazy {
-            for arg in &mut func.args {
-                fold_current_value_in(arg, ctx);
-            }
-        }
-    }
+fn fold_current_value_in(
+    expr: &Expression,
+    ctx: &impl crate::Columns,
+) -> Option<(crate::constant::Constant, bool)> {
+    // Go foldConstant's ordinary scalar arm inspects the already-built args;
+    // it does not recursively revisit every descendant at each parent.
     let func = match expr {
-        Expression::Constant(constant) => return Some(constant.value.clone()),
-        Expression::Column(_) | Expression::CorrelatedColumn(_) => return None,
         Expression::ScalarFunction(func) => func,
+        _ => return None,
     };
-    // Go `FoldConstant` copies the original expression's collation state onto
-    // the replacement constant.  That state is semantic: metadata functions
-    // such as COERCIBILITY and enclosing collation aggregation inspect it
-    // after folding.
-    let original_collation = func.collation.clone();
-    let unfoldable = is_unfoldable(func.func_name.lowercase());
+    if is_unfoldable(func.func_name.lowercase()) {
+        return None;
+    }
     let mut has_null_arg = false;
     let mut all_const_arg = true;
+    let mut is_deferred_const = false;
     for arg in &func.args {
         match arg {
-            Expression::Constant(constant) if constant.value.is_null() => has_null_arg = true,
-            Expression::Constant(_) => {}
+            Expression::Constant(constant) => {
+                has_null_arg |= constant.value.is_null();
+                is_deferred_const |= constant.literal_value().is_none();
+            }
             _ => all_const_arg = false,
         }
     }
-    if unfoldable || !all_const_arg {
+    if !all_const_arg {
         return None;
     }
     let value = crate::eval_expression_once(expr, ctx).ok()?;
@@ -116,10 +117,10 @@ fn fold_current_value_in(expr: &mut Expression, ctx: &impl crate::Columns) -> Op
             ret_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
         }
     }
-    let mut folded = crate::constant::Constant::new(value.clone(), ret_type);
-    folded.collation = original_collation;
-    *expr = Expression::Constant(folded);
-    Some(value)
+    let mut folded = crate::constant::Constant::new(value, ret_type);
+    // Go FoldConstant preserves the expression's collation on replacement.
+    folded.collation = func.collation.clone();
+    Some((folded, is_deferred_const))
 }
 
 /// One node of Go's `foldConstant`: folds bottom up, returning the constant
@@ -131,7 +132,7 @@ fn fold_current_value_in(expr: &mut Expression, ctx: &impl crate::Columns) -> Op
 /// before the folded `Constant` is built.
 fn fold_value(expr: &mut Expression) -> Option<Datum> {
     let func = match expr {
-        Expression::Constant(constant) => return Some(constant.value.clone()),
+        Expression::Constant(constant) => return constant.literal_value().cloned(),
         Expression::Column(_) | Expression::CorrelatedColumn(_) => return None,
         Expression::ScalarFunction(func) => func,
     };
@@ -220,7 +221,7 @@ pub(crate) fn folds_to_constant(expr: &Expression) -> bool {
 /// the `chunk.Row{}` Go's `foldConstant` passes.
 pub(crate) fn folded_value(expr: &Expression) -> Option<Datum> {
     if let Expression::Constant(constant) = expr {
-        return Some(constant.value.clone());
+        return constant.literal_value().cloned();
     }
     if !folds_to_constant(expr) {
         return None;
@@ -264,15 +265,5 @@ fn is_unfoldable(name: &str) -> bool {
             | "lastval"
             | "setval"
             | "any_value"
-    )
-}
-
-/// Whether the function evaluates only SOME of its arguments at run time.
-/// Folding inside one would evaluate branches or operands the executor can
-/// skip, changing warnings and errors (`IF(1, 1, 1/0)` divides).
-fn is_lazy_short_circuit(name: &str) -> bool {
-    matches!(
-        name,
-        "if" | "ifnull" | "case" | "case_when" | "and" | "or" | "xor" | "nullif" | "coalesce"
     )
 }

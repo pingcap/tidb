@@ -186,6 +186,8 @@ pub enum TransportShutdownError {
         /// Rendered string panic payload, or a stable non-string fallback.
         message: String,
     },
+    /// The runtime canceled the owner task before it could return.
+    WorkerCancelled,
     /// Ordered failures observed while still attempting every shutdown step.
     Multiple(Vec<TransportShutdownError>),
 }
@@ -204,6 +206,9 @@ impl std::fmt::Display for TransportShutdownError {
                     formatter,
                     "TiKV transport worker panicked during shutdown: {message}"
                 )
+            }
+            Self::WorkerCancelled => {
+                formatter.write_str("TiKV transport worker canceled during shutdown")
             }
             Self::Multiple(errors) => {
                 formatter.write_str("multiple TiKV transport shutdown failures")?;

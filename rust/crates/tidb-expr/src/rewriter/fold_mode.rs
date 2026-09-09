@@ -45,6 +45,10 @@ impl<'a> FoldModeResolver<'a> {
 }
 
 impl ColumnResolver for FoldModeResolver<'_> {
+    fn param_value(&self, order: usize) -> Result<tidb_datatype::Datum, crate::EvalError> {
+        self.base.param_value(order)
+    }
+
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
         self.base.resolve(path)
     }
@@ -113,5 +117,9 @@ impl ColumnResolver for FoldModeResolver<'_> {
 
     fn fold_constant(&self, expression: &mut Expression, mode: ConstantFoldMode) {
         self.base.fold_constant(expression, mode);
+    }
+
+    fn eval_constant(&self, expression: &Expression) -> Result<tidb_datatype::Datum, crate::EvalError> {
+        self.base.eval_constant(expression)
     }
 }

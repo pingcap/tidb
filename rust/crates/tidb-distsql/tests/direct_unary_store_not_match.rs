@@ -469,7 +469,7 @@ fn stale_forwarded_store_not_match_preserves_replacement_proxy_channel() {
         }),
         DirectUnaryRuntimeConfig {
             enable_forwarding: true,
-            region_retry_waiter: Rc::new(RecordingRetryControl::default()),
+            region_retry_waiter: Arc::new(RecordingRetryControl::default()),
             ..DirectUnaryRuntimeConfig::default()
         },
         tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
@@ -565,7 +565,7 @@ fn shared_proxy_store_not_match_refreshes_only_affected_logical_target() {
         }),
         DirectUnaryRuntimeConfig {
             enable_forwarding: true,
-            region_retry_waiter: Rc::new(RecordingRetryControl::default()),
+            region_retry_waiter: Arc::new(RecordingRetryControl::default()),
             ..DirectUnaryRuntimeConfig::default()
         },
         tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
@@ -634,7 +634,7 @@ fn forwarded_store_not_match_invalidates_target_without_closing_proxy_channel() 
         [location.clone(), location],
         DirectUnaryRuntimeConfig {
             enable_forwarding: true,
-            region_retry_waiter: Rc::new(RecordingRetryControl::default()),
+            region_retry_waiter: Arc::new(RecordingRetryControl::default()),
             ..DirectUnaryRuntimeConfig::default()
         },
     ));

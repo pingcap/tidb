@@ -23,6 +23,8 @@
 //! the shape it recognises, what it REFUSES to touch, and that it survives a
 //! tree far deeper than a recursive walk would.
 
+use crate::physical_property::ColumnSortItem;
+
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
@@ -57,7 +59,7 @@ use super::sequence::LogicalSequence;
 use super::sort::LogicalSort;
 use super::table_dual::LogicalTableDual;
 use super::union_all::LogicalUnionAll;
-use super::window::{BoundType, FrameBound, FrameType, LogicalWindow, WindowFrame, WindowSortItem};
+use super::window::{BoundType, FrameBound, FrameType, LogicalWindow, WindowFrame};
 use super::{BaseLogicalPlan, LogicalPlan};
 
 /// A tree this deep would abort a recursive walk; see [`super::fold`].
@@ -718,7 +720,7 @@ fn row_number_window(allocator: &PlanIdAllocator, name: &str, child: LogicalPlan
             },
         }],
     );
-    window.order_by = vec![WindowSortItem::new(column(1), true)];
+    window.order_by = vec![ColumnSortItem::new(column(1), true)];
     window.frame = Some(WindowFrame {
         frame_type: FrameType::Rows,
         start: Some(FrameBound {

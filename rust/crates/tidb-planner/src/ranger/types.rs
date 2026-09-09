@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/util/ranger/types.go`, COMPLETE: the `Range` value — a
+//! Go `pkg/util/ranger/types.go`: the `Range` value — a
 //! per-column `[low, high]` datum tuple pair with exclusion flags and
 //! collators — and the `Ranges` list with its subset/intersection algebra.
 //!
@@ -20,13 +20,9 @@
 //! values: the datum comparison consumes them directly, and Go's
 //! `checkCollators` identity test becomes value equality.
 //!
-//! `MutableRanges` (the plan-cache rebuild seam) has exactly one
-//! non-trivial implementor in Go outside plan-cache internals — `Ranges`
-//! itself, whose `Rebuild` is a no-op — so the trait arrives with the
-//! plan-cache surface; nothing here consumes it. `MemUsage` pins Go's
-//! `unsafe.Sizeof` struct layout — a Go-runtime detail, not observable
-//! semantics — and arrives with the memory-tracking surface that will
-//! consume it, sized to THIS port's layouts.
+//! Static ranges need no rebuilding; IndexJoin's retained definition lives in
+//! `find_best_task::index_join::path`. Quota accounting uses Go's 64-bit sizes
+//! because the fallback threshold affects access selection and cache admission.
 
 use tidb_datatype::{Collation, Datum};
 
@@ -414,13 +410,16 @@ pub const EMPTY_RANGE_SIZE: i64 = 80;
 /// Go `types.EmptyDatumSize`: `unsafe.Sizeof(Datum{})` on 64-bit.
 pub const EMPTY_DATUM_SIZE: i64 = 72;
 
-/// Go `Datum.MemUsage`: the struct size plus the byte payload's capacity
-/// and the collation name's length -- interface-held payloads (decimals,
-/// times) are deliberately not counted, exactly as Go does not count `d.x`.
+/// Go `Datum.MemUsage`: the struct size, byte payload and collation name.
+/// Payload length is used without emulating Go allocation capacity. Byte
+/// datums retain the `binary` collation in Go's `SetBytes` and string conversion.
+/// Interface-held payloads (decimals, times) are not counted, like Go's `d.x`.
 #[must_use]
 pub fn datum_mem_usage(datum: &Datum) -> i64 {
     match datum {
-        Datum::Bytes(bytes) => EMPTY_DATUM_SIZE + bytes.len() as i64,
+        Datum::Bytes(bytes) => {
+            EMPTY_DATUM_SIZE + bytes.len() as i64 + Collation::Binary.name().len() as i64
+        }
         Datum::String(s) => {
             EMPTY_DATUM_SIZE + s.bytes().len() as i64 + s.collation().name().len() as i64
         }

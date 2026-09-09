@@ -33,6 +33,8 @@
 //! [`apply_derived_collation`] does here; the collation-aware signatures then
 //! read it back with [`collation_of_node`].
 
+use std::borrow::Cow;
+
 use crate::expr_collation::{
     get_bin_collation, is_bin_collation, is_unicode_collation, Coercibility, CollationInfo,
     ExprCollation, Repertoire,
@@ -60,11 +62,11 @@ pub const fn connection_charset_info() -> (&'static str, &'static str) {
     (CHARSET_UTF8MB4, COLLATION_UTF8MB4)
 }
 
-/// The static result type of an expression, or a `Null` type placeholder.
-fn ret_type_of(expr: &Expression) -> FieldType {
+/// Borrows the node's static result type, owning only a missing-type placeholder.
+fn ret_type_of(expr: &Expression) -> Cow<'_, FieldType> {
     expr.static_type()
-        .cloned()
-        .unwrap_or_else(|| FieldType::new(FieldTypeCode::Null))
+        .map(Cow::Borrowed)
+        .unwrap_or_else(|| Cow::Owned(FieldType::new(FieldTypeCode::Null)))
 }
 
 /// Go `types.IsTypeBit`.

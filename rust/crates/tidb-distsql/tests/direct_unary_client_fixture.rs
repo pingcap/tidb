@@ -29,10 +29,11 @@
 
 #![allow(missing_docs)]
 
-pub use std::cell::{Cell, RefCell};
+pub use std::cell::RefCell;
 pub use std::collections::VecDeque;
 pub use std::rc::Rc;
 pub use std::sync::{Arc, Mutex};
+pub use std::sync::atomic::{AtomicBool, Ordering};
 pub use std::time::Duration;
 
 pub use prost::Message;
@@ -78,14 +79,14 @@ pub fn observation_time() -> Duration {
 
 #[derive(Debug, Default)]
 pub struct RecordingRetryControl {
-    pub sleeps: RefCell<Vec<Duration>>,
-    pub fail_next_sleep: Cell<bool>,
+    pub sleeps: Mutex<Vec<Duration>>,
+    pub fail_next_sleep: AtomicBool,
 }
 
 impl RegionRetryWaiter for RecordingRetryControl {
     fn wait(&self, cancellation: &tidb_txnkv::UnaryCancellation, delay: Duration) -> bool {
-        self.sleeps.borrow_mut().push(delay);
-        if self.fail_next_sleep.replace(false) {
+        self.sleeps.lock().unwrap().push(delay);
+        if self.fail_next_sleep.swap(false, Ordering::SeqCst) {
             cancellation.cancel();
         }
         cancellation.is_cancelled()
@@ -142,6 +143,7 @@ impl RegionRecoveryLoader for ScriptedLoader {
         &mut self,
         metadata: &RegionMetadata,
         _leader_store_id: u64,
+        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
     ) -> Result<RegionLocation, RegionLoadError> {
         self.load_region(&metadata.encoded_start_key)
     }
@@ -154,7 +156,7 @@ pub struct ScriptedClient {
     pub liveness: RefCell<VecDeque<Result<StoreLiveness, DirectUnaryClientError>>>,
     pub batch_errors: RefCell<VecDeque<DirectUnaryClientError>>,
     pub batch_ready_immediately: RefCell<VecDeque<bool>>,
-    pub batch_completion_gate: Option<Rc<Cell<bool>>>,
+    pub batch_completion_gate: Option<Arc<AtomicBool>>,
 }
 
 pub struct ScriptedPending {
@@ -164,15 +166,25 @@ pub struct ScriptedPending {
         Result<DirectUnaryResponse, DirectUnaryClientError>,
     )>,
     pub publication: Option<AsyncRequestPublication>,
-    pub completion_gate: Option<Rc<Cell<bool>>>,
+    pub completion_gate: Option<Arc<AtomicBool>>,
 }
 
 impl PendingRequest for ScriptedPending {
+    fn try_publication(&self) -> Option<AsyncRequestPublication> {
+        // Deferred fixtures expose identity only when driven to completion,
+        // exercising admission that races ahead of receipt observation.
+        self.deferred.is_none().then(|| self.publication.clone()).flatten()
+    }
+
     fn set_notifier(&mut self, notifier: CompletionNotifier, token: u64) {
         self.completion.set_notifier(notifier, token);
     }
 
     fn publication(&self) -> Option<AsyncRequestPublication> {
+        assert!(
+            self.deferred.is_none() || self.completion_gate.is_some(),
+            "an unobserved deferred attempt must not wait for admission"
+        );
         self.publication.clone()
     }
 
@@ -188,7 +200,7 @@ impl PendingRequest for ScriptedPending {
     ) -> Result<Result<DirectUnaryResponse, DirectUnaryClientError>, CompletionError> {
         if let Some(gate) = &self.completion_gate {
             assert!(
-                gate.get(),
+                gate.load(Ordering::SeqCst),
                 "publication observer must run before pending completion"
             );
         }
@@ -841,7 +853,7 @@ pub fn select_result(
     runtime: &mut InjectedQueryRuntime<DirectUnaryQueryTransport<ScriptedClient, ScriptedLoader>>,
     request: &TransportRequest,
 ) -> tidb_distsql::query_runtime::QuerySelectResult<
-    tidb_distsql::DirectUnaryQueryResponse<ScriptedClient, ScriptedLoader>,
+    tidb_distsql::CopIterator<tidb_distsql::DirectUnaryQueryResponse<ScriptedClient, ScriptedLoader>>,
 > {
     runtime
         .select_with_runtime_stats(

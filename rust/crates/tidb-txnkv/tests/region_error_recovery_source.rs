@@ -53,6 +53,7 @@ impl RegionRecoveryLoader for Loader {
         &mut self,
         metadata: &RegionMetadata,
         leader_store_id: u64,
+        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
     ) -> Result<RegionLocation, RegionLoadError> {
         self.metadata
             .borrow_mut()

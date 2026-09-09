@@ -20,6 +20,7 @@
 //! cache, retry loop, endpoint, or RPC transport.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -383,14 +384,14 @@ impl From<CopPagingError> for CopReadTaskError {
 
 /// Deterministic coordinator that stops immediately before RPC transport.
 pub struct CopReadTaskRuntime {
-    metadata: KvRequestMetadata,
+    metadata: Arc<KvRequestMetadata>,
     tasks: Vec<LogicalCopReadTask>,
     in_flight: BTreeMap<u64, InFlightCopReadTask>,
     prepared: Vec<Arc<PreparedCopReadTask>>,
     completed_attempts: BTreeSet<u64>,
     next_attempt_id: u64,
     next_logical_task_id: u64,
-    next_paging_task_index: u32,
+    next_paging_task_index: Arc<AtomicU32>,
     cache: Option<CoprCache>,
     ema: Arc<ReadBytesEma>,
 }
@@ -450,14 +451,14 @@ impl CopReadTaskRuntime {
             .unwrap_or(u64::MAX)
             .saturating_add(1);
         let mut runtime = Self {
-            metadata: metadata.clone(),
+            metadata: Arc::new(metadata.clone()),
             tasks,
             in_flight: BTreeMap::new(),
             prepared: Vec::new(),
             completed_attempts: BTreeSet::new(),
             next_attempt_id: 1,
             next_logical_task_id,
-            next_paging_task_index: 0,
+            next_paging_task_index: Arc::default(),
             cache,
             ema,
         };
@@ -472,6 +473,54 @@ impl CopReadTaskRuntime {
     /// Returns all immutable attempts in source preparation order.
     pub fn prepared_attempts(&self) -> impl Iterator<Item = &PreparedCopReadTask> {
         self.prepared.iter().map(AsRef::as_ref)
+    }
+
+    /// Transfers each initial task and its queued response to one worker.
+    /// Future splits stay in that worker; cache, EMA and the paging counter
+    /// retain their iterator-wide ownership like Go's copIterator.
+    pub(super) fn take_tasks(&mut self) -> Vec<(u64, Self)> {
+        let tasks = std::mem::take(&mut self.tasks);
+        let mut flights: Vec<BTreeMap<u64, InFlightCopReadTask>> =
+            (0..tasks.len()).map(|_| BTreeMap::new()).collect();
+        for (id, mut flight) in std::mem::take(&mut self.in_flight) {
+            let index = flight.logical_task_index;
+            flight.logical_task_index = 0;
+            flights[index].insert(id, flight);
+        }
+        tasks
+            .into_iter()
+            .zip(flights)
+            .filter(|(task, _)| !task.paging.complete || task.paging.queued_responses != 0)
+            .map(|(task, in_flight)| {
+                let id = task.task.task_id;
+                let prepared: Vec<_> = self
+                    .prepared
+                    .iter()
+                    .filter(|attempt| attempt.logical_task_id == id)
+                    .cloned()
+                    .collect();
+                let completed_attempts = prepared
+                    .iter()
+                    .filter(|attempt| self.completed_attempts.contains(&attempt.attempt_id))
+                    .map(|attempt| attempt.attempt_id)
+                    .collect();
+                (
+                    id,
+                    Self {
+                        metadata: Arc::clone(&self.metadata),
+                        tasks: vec![task],
+                        in_flight,
+                        prepared,
+                        completed_attempts,
+                        next_attempt_id: self.next_attempt_id,
+                        next_logical_task_id: self.next_logical_task_id,
+                        next_paging_task_index: Arc::clone(&self.next_paging_task_index),
+                        cache: self.cache.clone(),
+                        ema: Arc::clone(&self.ema),
+                    },
+                )
+            })
+            .collect()
     }
 
     /// Returns one immutable prepared attempt by its response-matching ID.
@@ -852,7 +901,7 @@ impl CopReadTaskRuntime {
         task.ranges.clone_from(&ranges);
         task.paging_size = paging_size;
         let page_index = allocate_paging_task_index(
-            &mut self.next_paging_task_index,
+            &self.next_paging_task_index,
             task.paging || self.metadata.paging.size_bytes > 0,
         );
         let mut request = CoprocessorRequestEnvelope::from_metadata(&self.metadata, ranges)
@@ -895,7 +944,7 @@ impl CopReadTaskRuntime {
         ranges: Vec<RequestKeyRange>,
         topology: &[RegionTaskTopology],
     ) -> Result<Vec<RegionTaskEnvelope>, CopReadTaskError> {
-        let mut metadata = self.metadata.clone();
+        let mut metadata = self.metadata.as_ref().clone();
         metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(ranges));
         let tasks =
             build_region_tasks(&metadata, topology).ok_or(CopReadTaskError::InvalidTopology)?;
@@ -906,12 +955,11 @@ impl CopReadTaskRuntime {
     }
 }
 
-fn allocate_paging_task_index(counter: &mut u32, paging_active: bool) -> u32 {
+fn allocate_paging_task_index(counter: &AtomicU32, paging_active: bool) -> u32 {
     if !paging_active {
         return 0;
     }
-    *counter = counter.wrapping_add(1);
-    *counter
+    counter.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
 }
 
 pub(super) fn validate_request(metadata: &KvRequestMetadata) -> Result<(), CopReadTaskError> {
@@ -1019,15 +1067,16 @@ mod tests {
 
     #[test]
     fn paging_task_index_is_one_based_iterator_wide_and_wrapping() {
-        let mut counter = 0;
-        assert_eq!(allocate_paging_task_index(&mut counter, true), 1);
-        assert_eq!(allocate_paging_task_index(&mut counter, true), 2);
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let counter = AtomicU32::new(0);
+        assert_eq!(allocate_paging_task_index(&counter, true), 1);
+        assert_eq!(allocate_paging_task_index(&counter, true), 2);
 
-        counter = u32::MAX;
-        assert_eq!(allocate_paging_task_index(&mut counter, true), 0);
+        counter.store(u32::MAX, Ordering::Relaxed);
+        assert_eq!(allocate_paging_task_index(&counter, true), 0);
 
-        let before = counter;
-        assert_eq!(allocate_paging_task_index(&mut counter, false), 0);
-        assert_eq!(counter, before);
+        let before = counter.load(Ordering::Relaxed);
+        assert_eq!(allocate_paging_task_index(&counter, false), 0);
+        assert_eq!(counter.load(Ordering::Relaxed), before);
     }
 }

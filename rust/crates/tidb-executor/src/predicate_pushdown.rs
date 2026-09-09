@@ -174,7 +174,7 @@ impl ScanComparisonOp {
 /// expression agree" true by construction instead of by repetition.
 ///
 /// The value a constructor supplies is the column's, which is right whenever
-/// no argument is explicit; [`adopt_refined_literals`] replaces it with the
+/// no argument is explicit; [`adopt_compiled_arguments`] replaces it with the
 /// built expression's for every conjunct that goes through
 /// `split_scan_predicates`.
 #[derive(Clone, Debug, PartialEq)]
@@ -360,6 +360,31 @@ enum FastScanFilter {
 }
 
 impl PushedScanFilter {
+/// Offers an already-compiled conjunction without rebuilding or evaluating
+    /// it. This description has immutable literals; context-dependent values
+    /// stay with the caller until protobuf lowering owns their execution context.
+    pub(crate) fn from_compiled_conditions(
+        filters: &[Expression],
+        ctx: &crate::StmtContext,
+    ) -> Option<Self> {
+        let predicates = filters
+            .iter()
+            .map(|filter| {
+                if !immutable_scan_constants(filter)
+                    || !crate::pushdown_blacklist::compiled_blacklist_admits(
+                        filter,
+                        ctx,
+                        tidb_expr::infer_pushdown::PushDownStore::TiKv,
+                    )
+                {
+                    return None;
+                }
+                describe_compiled_condition(filter)
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self::new(predicates, filters.to_vec()))
+    }
+
     /// Pairs each described comparison with the expression that evaluates it.
     ///
     /// # Panics
@@ -372,9 +397,9 @@ impl PushedScanFilter {
             filters.len(),
             "every pushed conjunct has one description and one expression"
         );
-        let fast_paths = predicates
+        let fast_paths = filters
             .iter()
-            .map(FastScanFilter::from_predicate)
+            .map(FastScanFilter::from_expression)
             .collect();
         Self {
             predicates,
@@ -390,7 +415,6 @@ impl PushedScanFilter {
     }
 
     /// The built expressions the accepting source evaluates.
-    #[cfg(test)]
     #[must_use]
     pub(crate) fn filters(&self) -> &[Expression] {
         &self.filters
@@ -398,41 +422,36 @@ impl PushedScanFilter {
 
     /// Go's physical Selection conditions after expression rewriting.
     ///
-    /// Execution keeps the source conjuncts above, but EXPLAIN needs the
-    /// expression rewriter's CNF shape: a top-level `BETWEEN` is two
-    /// conditions, and comparison constants carry the domain casts already
-    /// proven by the paired scan descriptions. Deriving this view from those
-    /// descriptions avoids evaluating constants a second time or raising a
-    /// second copy of their statement warnings.
+    /// Go SplitCNFItems exposes the compiled conditions, including BETWEEN's
+    /// two bounds and the casts already inserted by expression construction.
+    /// Scan descriptions are not an authority for executable expressions.
     pub(crate) fn selection_conditions(&self) -> Vec<Expression> {
-        self.predicates
+        self.filters
             .iter()
-            .zip(&self.filters)
-            .flat_map(|(predicate, filter)| match predicate {
-                ScanPredicate::And(branches) => normalized_and_conditions(branches, filter)
-                    .unwrap_or_else(|| vec![filter.clone()]),
-                ScanPredicate::Compare(comparison) => {
-                    vec![normalized_comparison(comparison, filter)]
-                }
-                ScanPredicate::ColumnCompare(_) => vec![filter.clone()],
-                _ => vec![filter.clone()],
-            })
+            .flat_map(tidb_expr::expr_util::split_cnf_items)
             .collect()
     }
 
-    /// Adds predicates from a later offer without dropping any conjunct this
-    /// source already accepted. Identical descriptions are retained once: the
-    /// paired expression has the same semantics, and evaluating it twice can
-    /// duplicate statement warnings.
+    /// Adds predicates from a later offer using Go `RemoveDupExprs` identity
+    /// and mutable-effect rules. Descriptions contain planning values, which
+    /// cannot distinguish parameters or deferred expressions.
     fn conjoin(&mut self, additional: &Self) {
+        let mut existing: HashSet<Vec<u8>> = self
+            .filters
+            .iter_mut()
+            .map(|filter| filter.hash_code().to_vec())
+            .collect();
         for (predicate, filter) in additional.predicates.iter().zip(&additional.filters) {
-            if self.predicates.contains(predicate) {
+            let mut filter = filter.clone();
+            if !existing.insert(filter.hash_code().to_vec())
+                && !tidb_expr::expr_util::is_mutable_effects_expr(&filter)
+            {
                 continue;
             }
             self.fast_paths
-                .push(FastScanFilter::from_predicate(predicate));
+                .push(FastScanFilter::from_expression(&filter));
             self.predicates.push(predicate.clone());
-            self.filters.push(filter.clone());
+            self.filters.push(filter);
         }
     }
 
@@ -476,9 +495,9 @@ impl PushedScanFilter {
             remap_expression(filter, keep)?;
         }
         Some(Self {
-            fast_paths: predicates
+            fast_paths: filters
                 .iter()
-                .map(FastScanFilter::from_predicate)
+                .map(FastScanFilter::from_expression)
                 .collect(),
             predicates,
             filters,
@@ -486,64 +505,267 @@ impl PushedScanFilter {
     }
 }
 
-impl FastScanFilter {
-    fn from_predicate(predicate: &ScanPredicate) -> Option<Self> {
-        let (like, negated) = match predicate {
-            ScanPredicate::Like { .. } => (predicate, false),
-            ScanPredicate::Not(inner) if matches!(&**inner, ScanPredicate::Like { .. }) => {
-                (&**inner, true)
+fn immutable_scan_constants(expression: &Expression) -> bool {
+    match expression {
+        Expression::Constant(constant) => constant.literal_value().is_some(),
+        Expression::ScalarFunction(function) => function.args.iter().all(immutable_scan_constants),
+        Expression::Column(_) => true,
+        Expression::CorrelatedColumn(_) => false,
+    }
+}
+
+/// Go `ExprToPB` reads the compiled function and its arguments. This immutable
+/// description adapter copies strict literals without rewriting or folding SQL.
+fn describe_compiled_condition(expression: &Expression) -> Option<ScanPredicate> {
+    describe_condition(expression, None).ok()
+}
+
+/// Go PbConverter owns the current statement context. Lower the retained
+/// expression directly; do not rewrite a clone to replace its leaves.
+pub(crate) fn describe_execution_condition(
+    expression: &Expression,
+    context: &crate::StmtContext,
+) -> Result<ScanPredicate, ExecError> {
+    if !crate::pushdown_blacklist::compiled_blacklist_admits(
+        expression,
+        context,
+        tidb_expr::infer_pushdown::PushDownStore::TiKv,
+    ) {
+        return Err(ExecError::unsupported("cop predicate is disabled for TiKV"));
+    }
+    describe_condition(expression, Some(context))
+}
+
+fn describe_condition(
+    expression: &Expression,
+    context: Option<&crate::StmtContext>,
+) -> Result<ScanPredicate, ExecError> {
+    use tidb_expr::pushdown_catalog::{from_expression, from_expression_in, PbScalar};
+
+    fn unsupported() -> ExecError {
+        ExecError::unsupported("cop predicate lowering")
+    }
+
+    fn scalar(
+        expression: &Expression,
+        context: Option<&crate::StmtContext>,
+    ) -> Result<PbScalar, ExecError> {
+        match context {
+            Some(context) => from_expression_in(expression, context)?,
+            None => from_expression(expression),
+        }
+        .ok_or_else(unsupported)
+    }
+
+    fn column(expression: &Expression) -> Option<(u32, FieldType)> {
+        let column = expression.as_column()?;
+        Some((
+            u32::try_from(column.index).ok()?,
+            column.get_static_type()?.clone(),
+        ))
+    }
+    fn literal(
+        expression: &Expression,
+        context: Option<&crate::StmtContext>,
+    ) -> Result<(Datum, FieldType), ExecError> {
+        let (value, field_type) = match expression {
+            Expression::Constant(constant) => {
+                let value = match context {
+                    Some(context) => constant.eval_in(context)?,
+                    None => constant.literal_value().ok_or_else(unsupported)?.clone(),
+                };
+                (value, constant.ret_type.as_ref())
             }
-            _ => (predicate, false),
+            Expression::CorrelatedColumn(column) if context.is_some() => {
+                (column.eval(), column.column.ret_type.as_ref())
+            }
+            _ => return Err(unsupported()),
         };
-        if let ScanPredicate::Like {
-            column_offset,
-            pattern,
-            escape,
-            collation,
-            ..
-        } = like
-        {
+        Ok((value, field_type.ok_or_else(unsupported)?.clone()))
+    }
+
+    let Expression::ScalarFunction(function) = expression else {
+        return Err(unsupported());
+    };
+    let name = function.func_name.lowercase();
+    let args = function.args.as_slice();
+    let collation = function.derived_collation();
+    match (name, args) {
+        ("not", [inner]) => Ok(ScanPredicate::Not(Box::new(describe_condition(
+            inner, context,
+        )?))),
+        ("and" | "or", _) => {
+            let branches = args
+                .iter()
+                .map(|branch| describe_condition(branch, context))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(if name == "and" {
+                ScanPredicate::And(branches)
+            } else {
+                ScanPredicate::Or(branches)
+            })
+        }
+        ("isnull", [argument]) => {
+            let (column_offset, column_type) = column(argument).ok_or_else(unsupported)?;
+            Ok(ScanPredicate::IsNull {
+                column_offset,
+                column_type,
+                negated: false,
+            })
+        }
+        ("like", [tested, pattern, escape]) => {
+            let (column_offset, column_type) = column(tested).ok_or_else(unsupported)?;
+            if !column_type.is_string() {
+                return Err(unsupported());
+            }
+            let (pattern, _) = literal(pattern, context)?;
+            let (Datum::Int(escape), _) = literal(escape, context)? else {
+                return Err(unsupported());
+            };
+            Ok(ScanPredicate::Like {
+                column_offset,
+                column_type,
+                pattern: pattern.as_raw_bytes().ok_or_else(unsupported)?.to_vec(),
+                escape: escape as u8,
+                collation,
+            })
+        }
+        ("in", [tested, members @ ..]) if !members.is_empty() => {
+            let literals = members
+                .iter()
+                .map(|member| literal(member, context))
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some((column_offset, column_type)) = column(tested) {
+                return Ok(ScanPredicate::In {
+                    column_offset,
+                    column_type,
+                    collation,
+                    literals: literals.into_iter().map(|(value, _)| value).collect(),
+                    negated: false,
+                });
+            }
+            let tested = scalar(tested, context)?;
+            if tested.eval_type() != tidb_datatype::EvalType::String
+                || literals.iter().any(|(value, field_type)| {
+                    field_type.eval_type() != tidb_datatype::EvalType::String
+                        || value.as_raw_bytes().is_none()
+                })
+            {
+                return Err(unsupported());
+            }
+            Ok(ScanPredicate::ScalarIn {
+                tested,
+                literals: literals.into_iter().map(|(value, _)| value).collect(),
+                negated: false,
+                collation,
+            })
+        }
+        ("eq" | "ne" | "lt" | "le" | "gt" | "ge", [left, right]) => {
+            let op = match name {
+                "eq" => ScanComparisonOp::Eq,
+                "ne" => ScanComparisonOp::Ne,
+                "lt" => ScanComparisonOp::Lt,
+                "le" => ScanComparisonOp::Le,
+                "gt" => ScanComparisonOp::Gt,
+                _ => ScanComparisonOp::Ge,
+            };
+            if let (Some((left_offset, left_type)), Some((right_offset, right_type))) =
+                (column(left), column(right))
+            {
+                return Ok(ScanPredicate::ColumnCompare(ScanColumnComparison {
+                    left_offset,
+                    left_type,
+                    right_offset,
+                    right_type,
+                    op,
+                }));
+            }
+            let (column_offset, column_type, constant, column_on_left) =
+                if let Some((offset, field_type)) = column(left) {
+                    (offset, field_type, right, true)
+                } else {
+                    let (offset, field_type) = column(right).ok_or_else(unsupported)?;
+                    (offset, field_type, left, false)
+                };
+            let (literal, literal_type) = literal(constant, context)?;
+            Ok(ScanPredicate::Compare(ScanComparison {
+                column_offset,
+                column_type,
+                literal_type,
+                op,
+                literal,
+                column_on_left,
+                collation,
+            }))
+        }
+        _ => match scalar(expression, context)? {
+            call @ PbScalar::Call { .. } => Ok(ScanPredicate::Builtin(call)),
+            _ => Err(unsupported()),
+        },
+    }
+}
+
+impl FastScanFilter {
+    fn from_expression(expression: &Expression) -> Option<Self> {
+        let Expression::ScalarFunction(function) = expression else {
+            return None;
+        };
+        let (function, negated) = if function.func_name.lowercase() == "not" {
+            let [Expression::ScalarFunction(inner)] = function.args.as_slice() else {
+                return None;
+            };
+            (inner, true)
+        } else {
+            (function, false)
+        };
+        let name = function.func_name.lowercase();
+        if !matches!(name, "in" | "like") {
+            return None;
+        }
+        let column = function.args.first()?.as_column()?;
+        if !column.get_static_type()?.is_string() {
+            return None;
+        }
+        let column_offset = usize::try_from(column.index).ok()?;
+        let collation = function.derived_collation();
+        // Go's IN hash set retains ConstStrict arguments only. LIKE's cache
+        // for context-dependent arguments belongs to the execution context,
+        // not this retained filter. Derive immutable specializations from
+        // the compiled expression, never the description's saved values.
+        if name == "like" {
+            let [_, Expression::Constant(pattern), Expression::Constant(escape)] =
+                function.args.as_slice()
+            else {
+                return None;
+            };
+            let Datum::Int(escape) = escape.literal_value()? else {
+                return None;
+            };
             return Some(Self::Like {
-                column_offset: usize::try_from(*column_offset).ok()?,
-                pattern: pattern.clone(),
-                escape: *escape,
-                collation: *collation,
+                column_offset,
+                pattern: pattern.literal_value()?.as_raw_bytes()?.to_vec(),
+                escape: *escape as u8,
+                collation,
                 negated,
             });
         }
-        let (column_offset, column_type, literals, negated, collation) = match predicate {
-            ScanPredicate::In {
-                column_offset,
-                column_type,
-                literals,
-                negated,
-                collation,
-            } => (*column_offset, column_type, literals, *negated, *collation),
-            ScanPredicate::ScalarIn {
-                tested: tidb_expr::pushdown_catalog::PbScalar::Column { offset, field_type },
-                literals,
-                negated,
-                collation,
-            } => (*offset, field_type, literals, *negated, *collation),
-            _ => return None,
-        };
-        if !column_type.is_string() || literals.is_empty() {
+        if function.args.len() < 2 {
             return None;
         }
-        let collation = collation.name().to_owned();
-        let keys = literals
+        let collator = tidb_datatype::get_collator(collation.name());
+        let keys = function.args[1..]
             .iter()
-            .map(|literal| literal.as_raw_bytes().map(|bytes| (literal, bytes)))
-            .collect::<Option<Vec<_>>>()?
-            .into_iter()
-            .map(|(_, bytes)| tidb_datatype::get_collator(&collation).key(bytes))
-            .collect::<HashSet<_>>();
+            .map(|argument| match argument {
+                Expression::Constant(constant) => constant
+                    .literal_value()?
+                    .as_raw_bytes()
+                    .map(|bytes| collator.key(bytes)),
+                _ => None,
+            })
+            .collect::<Option<HashSet<_>>>()?;
         Some(Self::StringIn {
-            column_offset: usize::try_from(column_offset).ok()?,
-            // The PROBE has to use the same collator the keys were built
-            // with, or the set is searched in a collation nothing was
-            // inserted under.
-            collator: tidb_datatype::get_collator(&collation),
+            column_offset,
+            collator,
             keys,
             negated,
         })
@@ -596,159 +818,54 @@ impl FastScanFilter {
     }
 }
 
-fn normalized_and_conditions(
-    branches: &[ScanPredicate],
-    filter: &Expression,
-) -> Option<Vec<Expression>> {
+/// Copies the compiled condition's literal and collation metadata into the
+/// legacy scan description. Expression construction owns conversion and
+/// refinement; this adapter must never evaluate or repair an argument.
+pub(crate) fn adopt_compiled_arguments(predicate: &mut ScanPredicate, filter: &Expression) {
     let Expression::ScalarFunction(function) = filter else {
-        return None;
-    };
-    if function.func_name.lowercase() != "and" || function.args.len() != branches.len() {
-        return None;
-    }
-    branches
-        .iter()
-        .zip(&function.args)
-        .map(|(branch, argument)| match branch {
-            ScanPredicate::Compare(comparison) => Some(normalized_comparison(comparison, argument)),
-            _ => None,
-        })
-        .collect()
-}
-
-/// Replaces a described comparison's constant with the one Go's `refineArgs`
-/// produced, wherever that refinement CHANGED the operand.
-///
-/// The two halves of a pushed conjunct are built apart: the description is
-/// read off the conjunct as written, with the comparison-domain folding Go's
-/// `GetAccurateCmpType`/`WrapWithCastAs*` do (`comparison_constant`), while
-/// the expression beside it is rewritten and then refined by
-/// [`tidb_expr::builtin_compare::refine_comparisons`]. The description models
-/// the second half of Go's `getFunction` and not the first, so `int_col >
-/// '10ab'` described the STRING where Go sends -- and prints -- the refined
-/// `10`.
-///
-/// `before` is the same expression as `after` from just before that
-/// refinement ran, and only an operand the two disagree on is adopted. That
-/// is what keeps this to `refineArgs` alone: a constant refinement left
-/// untouched is one the description's own folding already put in the
-/// comparison's domain, and re-reading it from the expression would UNDO that
-/// -- `decimal_col < 24` would go back to the integer `24` Go casts to
-/// `24.00` before it ever reaches TiKV.
-pub(crate) fn adopt_refined_literals(
-    predicate: &mut ScanPredicate,
-    before: &Expression,
-    after: &Expression,
-) {
-    let (Expression::ScalarFunction(before), Expression::ScalarFunction(after)) = (before, after)
-    else {
         return;
     };
-    // The collation a string comparison RUNS IN travels with the description
-    // for the reason [`ScanPredicate`] states: five consumers had each
-    // re-derived it from `column_type` and each disagreed with the expression
-    // beside them. This is where the one answer is copied across.
-    //
-    // `after` is the built function, so its own derived collation is the
-    // answer Go writes onto the function's `FieldType` -- what `ExprToPB`
-    // sends and what every in-process evaluator here already uses.
     match predicate {
         ScanPredicate::Like { collation, .. }
         | ScanPredicate::In { collation, .. }
         | ScanPredicate::ScalarIn { collation, .. } => {
-            *collation = after.derived_collation();
+            *collation = function.derived_collation();
         }
         ScanPredicate::Compare(comparison) => {
-            comparison.collation = after.derived_collation();
+            comparison.collation = function.derived_collation();
+            let Some(Expression::Constant(constant)) =
+                function.args.get(usize::from(comparison.column_on_left))
+            else {
+                return;
+            };
+            let Some(value) = constant.literal_value().filter(|value| !value.is_null()) else {
+                return;
+            };
+            let Some(field_type) = constant.ret_type.as_ref() else {
+                return;
+            };
+            comparison.literal = value.clone();
+            comparison.literal_type = field_type.clone();
         }
-        ScanPredicate::Not(inner) => {
-            if after.func_name.lowercase() == "not" && after.args.len() == 1 {
-                if let Expression::ScalarFunction(negated) = &after.args[0] {
-                    if let ScanPredicate::Like { collation, .. }
-                    | ScanPredicate::In { collation, .. }
-                    | ScanPredicate::ScalarIn { collation, .. } = &mut **inner
-                    {
-                        *collation = negated.derived_collation();
-                    }
+        ScanPredicate::And(branches) | ScanPredicate::Or(branches) => {
+            let arguments = match function.func_name.lowercase() {
+                "and" => tidb_expr::expr_util::split_cnf_items(filter),
+                "or" => tidb_expr::expr_util::split_dnf_items(filter),
+                _ => return,
+            };
+            if arguments.len() == branches.len() {
+                for (branch, argument) in branches.iter_mut().zip(&arguments) {
+                    adopt_compiled_arguments(branch, argument);
                 }
             }
         }
-        _ => {}
-    }
-    match predicate {
-        ScanPredicate::Compare(comparison) => {
-            let literal_offset = usize::from(comparison.column_on_left);
-            let Some(Expression::Constant(refined)) = after.args.get(literal_offset) else {
-                return;
-            };
-            let unchanged = matches!(
-                before.args.get(literal_offset),
-                Some(Expression::Constant(original))
-                    if original.value == refined.value && original.ret_type == refined.ret_type
-            );
-            if unchanged
-                || refined.deferred_expr.is_some()
-                || refined.param_marker.is_some()
-                // A NULL literal is not a shape this description carries; the
-                // caller declines such a conjunct before it gets here.
-                || refined.value.is_null()
-            {
-                return;
-            }
-            let Some(field_type) = refined.ret_type.as_ref() else {
-                return;
-            };
-            comparison.literal = refined.value.clone();
-            comparison.literal_type = field_type.clone();
-        }
-        ScanPredicate::And(branches) => adopt_refined_branches(branches, before, after, "and"),
-        ScanPredicate::Or(branches) => adopt_refined_branches(branches, before, after, "or"),
         ScanPredicate::Not(inner) => {
-            if after.func_name.lowercase() != "not"
-                || after.args.len() != 1
-                || before.args.len() != 1
-            {
-                return;
+            if function.func_name.lowercase() == "not" && function.args.len() == 1 {
+                adopt_compiled_arguments(inner, &function.args[0]);
             }
-            adopt_refined_literals(inner, &before.args[0], &after.args[0]);
         }
         _ => {}
     }
-}
-
-/// The `AND`/`OR` half of [`adopt_refined_literals`]: each described branch
-/// against the matching argument, when every shape agrees.
-fn adopt_refined_branches(
-    branches: &mut [ScanPredicate],
-    before: &tidb_expr::scalar_function::ScalarFunction,
-    after: &tidb_expr::scalar_function::ScalarFunction,
-    expected: &str,
-) {
-    if after.func_name.lowercase() != expected
-        || after.args.len() != branches.len()
-        || before.args.len() != branches.len()
-    {
-        return;
-    }
-    for ((branch, original), refined) in branches.iter_mut().zip(&before.args).zip(&after.args) {
-        adopt_refined_literals(branch, original, refined);
-    }
-}
-
-fn normalized_comparison(comparison: &ScanComparison, filter: &Expression) -> Expression {
-    let mut normalized = filter.clone();
-    let Expression::ScalarFunction(function) = &mut normalized else {
-        return normalized;
-    };
-    if function.args.len() != 2 {
-        return normalized;
-    }
-    let literal_offset = usize::from(comparison.column_on_left);
-    function.args[literal_offset] = Expression::Constant(tidb_expr::constant::Constant::new(
-        comparison.literal.clone(),
-        comparison.literal_type.clone(),
-    ));
-    normalized
 }
 
 fn remapped_offset(offset: u32, keep: &[usize]) -> Option<u32> {
@@ -833,6 +950,13 @@ pub struct ScanFilterProbe {
 }
 
 impl ScanFilterProbe {
+    /// Refresh wire literals without cloning executable expressions or
+    /// replacing their immutable fast paths and row scratch allocation.
+    pub(crate) fn replace_predicates(&mut self, predicates: Vec<ScanPredicate>) {
+        assert_eq!(predicates.len(), self.filter.filters.len());
+        self.filter.predicates = predicates;
+    }
+
     pub(crate) fn new(filter: PushedScanFilter, ctx: crate::StmtContext, scratch: Chunk) -> Self {
         Self {
             filter,
@@ -841,7 +965,7 @@ impl ScanFilterProbe {
         }
     }
 
-    /// Adds a later accepted offer to the existing conjunction.
+/// Adds a later accepted offer to the existing conjunction.
     ///
     /// The additional filter is compiled against the source's current row
     /// space, which is also the row space described by `scratch`.
@@ -919,6 +1043,250 @@ mod tests {
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::LongLong)
+    }
+
+    #[test]
+    fn retained_scan_filters_read_current_values_after_column_remapping() {
+        use tidb_ast::CiString;
+        use tidb_expr::column::Column;
+        use tidb_expr::constant::{Constant, ParamMarker};
+        use tidb_expr::expression::Expression;
+        use tidb_expr::scalar_function::ScalarFunction;
+
+        let string_type = FieldType::new(FieldTypeCode::VarString);
+        for like in [false, true] {
+            for negated in [false, true] {
+                for deferred in [false, true] {
+                    let saved = if like { "old%" } else { "old" };
+                    let mut parameter =
+                        Constant::new(Datum::Bytes(saved.as_bytes().to_vec()), string_type.clone());
+                    parameter.param_marker = Some(ParamMarker { order: 0 });
+                    if deferred {
+                        let expression = Expression::Constant(parameter.clone());
+                        parameter.param_marker = None;
+                        parameter.deferred_expr = Some(Box::new(expression));
+                    }
+                    let mut column = Column::new(2, string_type.clone());
+                    column.index = 1;
+                    let mut arguments =
+                        vec![Expression::Column(column), Expression::Constant(parameter)];
+                    if like {
+                        arguments.push(Expression::Constant(Constant::new(Datum::Int(92), long())));
+                    }
+                    let mut expression = Expression::ScalarFunction(ScalarFunction::new(
+                        CiString::new(if like { "like" } else { "in" }),
+                        long(),
+                        arguments,
+                    ));
+                    let mut description = if like {
+                        super::ScanPredicate::Like {
+                            column_offset: 1,
+                            column_type: string_type.clone(),
+                            pattern: saved.as_bytes().to_vec(),
+                            escape: b'\\',
+                            collation: string_type.collation(),
+                        }
+                    } else {
+                        super::ScanPredicate::In {
+                            column_offset: 1,
+                            column_type: string_type.clone(),
+                            literals: vec![Datum::Bytes(saved.as_bytes().to_vec())],
+                            negated,
+                            collation: string_type.collation(),
+                        }
+                    };
+                    if negated {
+                        expression = Expression::ScalarFunction(ScalarFunction::new(
+                            CiString::new("not"),
+                            long(),
+                            vec![expression],
+                        ));
+                        if like {
+                            description = super::ScanPredicate::Not(Box::new(description));
+                        }
+                    }
+                    let filter = super::PushedScanFilter::new(vec![description], vec![expression]);
+                    assert!(
+                        super::PushedScanFilter::from_compiled_conditions(
+                            filter.filters(),
+                            &crate::StmtContext::for_query(),
+                        )
+                        .is_none(),
+                        "immutable descriptions must not capture current parameter values"
+                    );
+                    for remapped in [false, true] {
+                        let filter = if remapped {
+                            filter.remapped_columns(&[1]).unwrap()
+                        } else {
+                            filter.clone()
+                        };
+                        let column = usize::from(!remapped);
+                        let mut chunk =
+                            tidb_chunk::chunk::Chunk::new(&vec![string_type.clone(); column + 1], 1, 1);
+                        if !remapped {
+                            chunk.append_datum(0, &Datum::Bytes(b"unused".to_vec()));
+                        }
+                        chunk.append_datum(column, &Datum::Bytes(b"new".to_vec()));
+                        for (current, matches) in [
+                            (Some(if like { "new%" } else { "new" }), !negated),
+                            (Some(saved), negated),
+                            (None, false),
+                        ] {
+                            let value =
+                                current.map_or(Datum::Null, |v| Datum::Bytes(v.as_bytes().to_vec()));
+                            let ctx = crate::StmtContext::for_query()
+                                .with_prepared_params(vec![value].into());
+                            assert_eq!(filter.matches(&ctx, chunk.get_row(0)).unwrap(), matches,
+                                        "like={like}, negated={negated}, deferred={deferred}, remapped={remapped}, current={current:?}");
+                        }
+                        assert!(filter
+                            .matches(&crate::StmtContext::for_query(), chunk.get_row(0))
+                            .is_err());
+                        if like {
+                            // Go's scalar LIKE returns before reading the
+                            // pattern when the tested value is NULL.
+                            chunk.reset();
+                            for offset in 0..=column {
+                                chunk.append_datum(offset, &Datum::Null);
+                            }
+                            assert!(!filter
+                                .matches(&crate::StmtContext::for_query(), chunk.get_row(0))
+                                .unwrap());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn retained_like_escape_uses_current_value_and_go_null_semantics() {
+        use tidb_ast::CiString;
+        use tidb_expr::column::Column;
+        use tidb_expr::constant::{Constant, ParamMarker};
+        use tidb_expr::expression::Expression;
+        use tidb_expr::scalar_function::ScalarFunction;
+
+        let string_type = FieldType::new(FieldTypeCode::VarString);
+        let mut column = Column::new(1, string_type.clone());
+        column.index = 0;
+        let mut escape = Constant::new(Datum::Int(92), long());
+        escape.param_marker = Some(ParamMarker { order: 0 });
+        let expression = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("like"),
+            long(),
+            vec![
+                Expression::Column(column),
+                Expression::Constant(Constant::new(
+                    Datum::Bytes(b"new!_%".to_vec()),
+                    string_type.clone(),
+                )),
+                Expression::Constant(escape),
+            ],
+        ));
+        let Expression::ScalarFunction(like) = &expression else {
+            unreachable!()
+        };
+        let ilike = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("ilike"),
+            long(),
+            like.args.clone(),
+        ));
+        let filter = super::PushedScanFilter::new(
+            vec![super::ScanPredicate::Like {
+                column_offset: 0,
+                column_type: string_type.clone(),
+                pattern: b"new!_%".to_vec(),
+                escape: b'\\',
+                collation: string_type.collation(),
+            }],
+            vec![expression],
+        );
+        let mut chunk = tidb_chunk::chunk::Chunk::new(&[string_type], 1, 1);
+        chunk.append_datum(0, &Datum::Bytes(b"new_value".to_vec()));
+        // Go builtinLikeSig evaluates the current escape with EvalInt and
+        // uses byte(escape), including signed wrapping; NULL stays NULL.
+        for (escape, expected) in [
+            (Datum::Int(33), true),
+            (Datum::Int(289), true),
+            (Datum::Int(-223), true),
+            (Datum::UInt(289), true),
+            (Datum::Int(92), false),
+            (Datum::Null, false),
+        ] {
+            let ctx = crate::StmtContext::for_query().with_prepared_params(vec![escape.clone()].into());
+            let expected_value = if escape.is_null() {
+                Datum::Null
+            } else {
+                Datum::Int(i64::from(expected))
+            };
+            assert_eq!(
+                filter.filters()[0].eval(&ctx, chunk.get_row(0)).unwrap(),
+                expected_value,
+                "escape={escape:?}"
+            );
+            assert_eq!(
+                ilike.eval(&ctx, chunk.get_row(0)).unwrap(),
+                expected_value,
+                "ILIKE escape={escape:?}"
+            );
+            assert_eq!(
+                filter.matches(&ctx, chunk.get_row(0)).unwrap(),
+                expected,
+                "escape={escape:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn scan_filter_conjunction_preserves_distinct_parameter_identities() {
+        use tidb_ast::CiString;
+        use tidb_expr::column::Column;
+        use tidb_expr::constant::{Constant, ParamMarker};
+        use tidb_expr::expression::Expression;
+        use tidb_expr::scalar_function::ScalarFunction;
+
+        let string_type = FieldType::new(FieldTypeCode::VarString);
+        let filter = |order| {
+            let mut column = Column::new(1, string_type.clone());
+            column.index = 0;
+            let mut parameter = Constant::new(Datum::Bytes(b"old".to_vec()), string_type.clone());
+            parameter.param_marker = Some(ParamMarker { order });
+            super::PushedScanFilter::new(
+                vec![super::ScanPredicate::In {
+                    column_offset: 0,
+                    column_type: string_type.clone(),
+                    literals: vec![Datum::Bytes(b"old".to_vec())],
+                    negated: false,
+                    collation: string_type.collation(),
+                }],
+                vec![Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new("in"),
+                    long(),
+                    vec![Expression::Column(column), Expression::Constant(parameter)],
+                ))],
+            )
+        };
+        let first = filter(0);
+        let second = filter(1);
+        let mut combined = first.clone();
+        combined.conjoin(&second);
+        combined.conjoin(&first);
+        // Same saved values do not mean the same compiled condition. The
+        // repeated first offer is identical, but the second parameter is not.
+        assert_eq!(combined.filters.len(), 2);
+        let mut chunk = tidb_chunk::chunk::Chunk::new(&[string_type], 1, 1);
+        chunk.append_datum(0, &Datum::Bytes(b"new".to_vec()));
+        for (second, expected) in [("new", true), ("different", false)] {
+            let ctx = crate::StmtContext::for_query().with_prepared_params(
+                vec![
+                    Datum::Bytes(b"new".to_vec()),
+                    Datum::Bytes(second.as_bytes().to_vec()),
+                ]
+                .into(),
+            );
+            assert_eq!(combined.matches(&ctx, chunk.get_row(0)).unwrap(), expected);
+        }
     }
 
     fn column(name: &str, id: i64) -> KvColumn {
@@ -1738,6 +2106,138 @@ mod tests_push_down_verdict {
             Some(false),
             "TiKV has LikeSig but no ILIKE signature"
         );
+    }
+
+    #[test]
+    fn literal_scan_fast_paths_keep_the_compiled_filter_semantics() {
+        let scope = scope();
+        let ctx = crate::StmtContext::for_query();
+        let fields = scope
+            .column_list()
+            .into_iter()
+            .map(|(_, field)| field)
+            .collect::<Vec<_>>();
+        for predicate in [
+            "s IN ('new', 'other')",
+            "s NOT IN ('new', 'other')",
+            "s LIKE 'n_w%'",
+            "s NOT LIKE 'n_w%'",
+            "s LIKE 'new#_%' ESCAPE '#'",
+        ] {
+            let statement = tidb_parser::parse(&format!("SELECT 1 FROM t WHERE {predicate}")).unwrap();
+            let tidb_ast::Stmt::Query(query) = statement else {
+                panic!("query")
+            };
+            let tidb_ast::QueryStmt::Select(select) = &*query else {
+                panic!("SELECT")
+            };
+            let (filter, residual) = split_scan_predicates(
+                select.where_clause.as_ref().unwrap(),
+                &ScopeResolver { scope: &scope },
+                &ctx,
+            );
+            assert!(residual.is_none(), "{predicate}");
+            assert!(
+                matches!(filter.fast_paths.as_slice(), [Some(_)]),
+                "{predicate}"
+            );
+            let compiled_offer =
+                super::PushedScanFilter::from_compiled_conditions(filter.filters(), &ctx)
+                    .expect("compiled literal conditions are pushable");
+            for value in [
+                Some("new"),
+                Some("NEW"),
+                Some("new_value"),
+                Some("other"),
+                None,
+            ] {
+                let mut chunk = tidb_chunk::chunk::Chunk::new(&fields, 1, 1);
+                for offset in 0..fields.len() {
+                    let datum = if offset == 4 {
+                        value.map_or(tidb_datatype::Datum::Null, |value| {
+                            tidb_datatype::Datum::Bytes(value.as_bytes().to_vec())
+                        })
+                    } else {
+                        tidb_datatype::Datum::Null
+                    };
+                    chunk.append_datum(offset, &datum);
+                }
+                let row = chunk.get_row(0);
+                let expected = tidb_expr::truthy_of(&filter.filters()[0].eval(&ctx, row).unwrap())
+                    .unwrap()
+                    == Some(true);
+                assert_eq!(
+                    filter.matches(&ctx, row).unwrap(),
+                    expected,
+                    "{predicate}; value={value:?}"
+                );
+                assert_eq!(
+                    compiled_offer.matches(&ctx, row).unwrap(),
+                    expected,
+                    "compiled offer: {predicate}; value={value:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compiled_comparisons_own_literals_through_nested_boolean_conditions() {
+        use super::{PushedScanFilter, ScanPredicate};
+        use tidb_datatype::{Datum, Decimal};
+        fn literals(predicates: &[ScanPredicate], values: &mut Vec<Datum>) {
+            for predicate in predicates {
+                match predicate {
+                    ScanPredicate::Compare(comparison) => {
+                        assert_eq!(
+                            comparison.literal_type.eval_type(),
+                            match comparison.literal {
+                                Datum::Decimal(_) => tidb_datatype::EvalType::Decimal,
+                                Datum::Int(_) => tidb_datatype::EvalType::Int,
+                                _ => panic!("comparison literal has not been refined"),
+                            }
+                        );
+                        values.push(comparison.literal.clone());
+                    }
+                    ScanPredicate::And(branches) | ScanPredicate::Or(branches) => {
+                        literals(branches, values)
+                    }
+                    _ => panic!("expected comparisons"),
+                }
+            }
+        }
+        let statement =
+            tidb_parser::parse("SELECT 1 FROM t WHERE (dec > 24 AND i > '2x' AND i < 9) OR i = 1")
+                .unwrap();
+        let tidb_ast::Stmt::Query(query) = statement else {
+            panic!("query")
+        };
+        let tidb_ast::QueryStmt::Select(select) = &*query else {
+            panic!("SELECT")
+        };
+        let scope = scope();
+        let ctx = crate::StmtContext::for_query();
+        let (legacy, residual) = split_scan_predicates(
+            select.where_clause.as_ref().unwrap(),
+            &ScopeResolver { scope: &scope },
+            &ctx,
+        );
+        assert!(residual.is_none());
+        let _ = ctx.take_warnings();
+        let compiled = PushedScanFilter::from_compiled_conditions(legacy.filters(), &ctx).unwrap();
+        assert!(ctx.take_warnings().is_empty());
+        for offer in [&legacy, &compiled] {
+            let mut values = Vec::new();
+            literals(offer.predicates(), &mut values);
+            assert_eq!(
+                values,
+                vec![
+                    Datum::Decimal(Decimal::from_int(24)),
+                    Datum::Int(2),
+                    Datum::Int(9),
+                    Datum::Int(1)
+                ]
+            );
+        }
     }
 
     /// PERFORMANCE, the part already reached: every row of Go's pushed table

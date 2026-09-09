@@ -228,12 +228,25 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
     write_binary_payloads(sink, &metadata_refs, false)?;
 
     let mut rows_written = 0;
-    let mut pending_rows = Vec::new();
+    // Go writeChunks reuses its row buffer; the connection's packet writer
+    // owns coalescing, so neither a row queue nor a lookahead batch is needed.
+    let mut payload = Vec::new();
     loop {
         if batch.is_empty() {
             break;
         }
         for row in batch {
+            if row.len() != columns.len() {
+                return Err(binary_failure(
+                    tidb_protocol::PreparedStatementError::RowColumnCount {
+                        expected: columns.len(),
+                        actual: row.len(),
+                    }
+                    .to_string(),
+                    sink,
+                    false,
+                ));
+            }
             // One Datum -> one binary cell, dispatched by the column type exactly
             // as Go's DumpBinaryRow switches on `columns[i].Type`: an integer
             // column picks the matching fixed width, a string column takes its
@@ -252,52 +265,24 @@ fn write_binary_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
                 })
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|message| binary_failure(message, sink, false))?;
-            let payload = stream
-                .row_packet_owned(cells)
+            stream
+                .row_packet_owned_into(cells, &mut payload)
                 .map_err(|error| binary_failure(error.to_string(), sink, false))?;
-            pending_rows.push(payload);
+            write_binary_payloads(sink, &[&payload], false)?;
             rows_written += 1;
         }
-        let next_batch = match source.next_batch(batch_size.max(1)) {
-            Ok(next_batch) => next_batch,
-            Err(message) => {
-                let pending_refs = pending_rows
-                    .iter()
-                    .map(Vec::as_slice)
-                    .collect::<Vec<_>>();
-                write_binary_payloads(sink, &pending_refs, false)?;
-                return Err(binary_failure(message, sink, false));
-            }
-        };
-        if next_batch.is_empty() {
-            break;
-        }
-        let pending_refs = pending_rows
-            .iter()
-            .map(Vec::as_slice)
-            .collect::<Vec<_>>();
-        write_binary_payloads(sink, &pending_refs, false)?;
-        pending_rows.clear();
-        batch = next_batch;
+        batch = source
+            .next_batch(batch_size.max(1))
+            .map_err(|message| binary_failure(message, sink, false))?;
     }
 
-    if let Err(message) = source.finish() {
-        let pending_refs = pending_rows
-            .iter()
-            .map(Vec::as_slice)
-            .collect::<Vec<_>>();
-        write_binary_payloads(sink, &pending_refs, false)?;
-        return Err(binary_failure(message, sink, true));
-    }
+    source
+        .finish()
+        .map_err(|message| binary_failure(message, sink, true))?;
     let terminal = stream
         .finish_packet()
         .map_err(|error| binary_failure(error.to_string(), sink, true))?;
-    let mut final_refs = pending_rows
-        .iter()
-        .map(Vec::as_slice)
-        .collect::<Vec<_>>();
-    final_refs.push(&terminal);
-    write_binary_payloads(sink, &final_refs, true)?;
+    write_binary_payloads(sink, &[&terminal], true)?;
     flush_binary_payload(sink, true)?;
     Ok(ResultSetWriteOutcome {
         rows_written,
@@ -381,7 +366,21 @@ mod tests {
 
     fn row(datum: Datum, type_code: u8) -> Vec<u8> {
         let cell = datum_to_binary_cell(datum, type_code).expect("column type admits this datum");
-        encode_binary_result_row(&[cell])
+        let expected = encode_binary_result_row(std::slice::from_ref(&cell));
+        let mut stream = tidb_protocol::BinaryResultSetStream::new(
+            vec![tidb_protocol::ColumnInfo {
+                type_code,
+                charset: 63,
+                ..tidb_protocol::ColumnInfo::default()
+            }],
+            tidb_protocol::ResultSetOptions::default(),
+        )
+        .unwrap();
+        stream.metadata_packets().unwrap();
+        let mut buffer = Vec::new();
+        stream.row_packet_owned_into(vec![cell], &mut buffer).unwrap();
+        assert_eq!(buffer, expected);
+        buffer
     }
 
     #[test]

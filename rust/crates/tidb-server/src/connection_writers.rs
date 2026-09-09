@@ -280,17 +280,6 @@ pub(crate) fn write_payload<O: ConnectionPacketOutput + ?Sized>(
 /// framing and negotiated compression cannot diverge by command type.
 pub(crate) trait ConnectionPacketOutput {
     fn write_packet(&mut self, sequence: u8, payload: &[u8]) -> Result<u8, MysqlConnectionError>;
-
-    fn write_packets(
-        &mut self,
-        mut sequence: u8,
-        payloads: &[&[u8]],
-    ) -> Result<u8, MysqlConnectionError> {
-        for payload in payloads {
-            sequence = self.write_packet(sequence, payload)?;
-        }
-        Ok(sequence)
-    }
 }
 
 impl ConnectionPacketOutput for ClientStream {
@@ -301,18 +290,6 @@ impl ConnectionPacketOutput for ClientStream {
         Ok(writer.sequence())
     }
 
-    fn write_packets(
-        &mut self,
-        sequence: u8,
-        payloads: &[&[u8]],
-    ) -> Result<u8, MysqlConnectionError> {
-        let mut writer = PacketWriter::with_sequence(self, sequence);
-        for payload in payloads {
-            writer.write_packet(payload)?;
-        }
-        writer.flush()?;
-        Ok(writer.sequence())
-    }
 }
 
 impl<W: Write> ConnectionPacketOutput for PacketIoWriter<W> {
@@ -324,31 +301,14 @@ impl<W: Write> ConnectionPacketOutput for PacketIoWriter<W> {
         Ok(next_sequence)
     }
 
-    fn write_packets(
-        &mut self,
-        sequence: u8,
-        payloads: &[&[u8]],
-    ) -> Result<u8, MysqlConnectionError> {
-        self.set_sequence(sequence);
-        PacketIoWriter::write_packets(self, payloads)?;
-        let next_sequence = self.sequence();
-        self.flush()?;
-        Ok(next_sequence)
-    }
 }
 
-pub(crate) struct TcpResultSetSink<'a, O: ConnectionPacketOutput + ?Sized> {
-    output: &'a mut O,
+pub(crate) struct TcpResultSetSink<'a, W: Write> {
+    output: &'a mut PacketIoWriter<W>,
     sequence: u8,
     packets: usize,
-    /// Payloads accepted but not yet handed to the transport. Go's
-    /// `clientConn` buffers each command's response through one
-    /// `bufio.Writer` flushed once (`pkt.flush`), so a column-definition /
-    /// row / EOF sequence leaves the server as ONE stream write. Flushing
-    /// per packet instead makes every small frame race the client's delayed
-    /// ACK through any Nagle-enabled hop between the peers (~40ms stalls per
-    /// statement over real networks).
-    pending: Vec<Vec<u8>>,
+    /// PacketIoWriter owns the bytes; the result sink only bounds admission.
+    /// Count headers too so even empty logical packets eventually flush.
     pending_bytes: usize,
 }
 
@@ -356,13 +316,12 @@ pub(crate) struct TcpResultSetSink<'a, O: ConnectionPacketOutput + ?Sized> {
 /// huge result set streams instead of accumulating without bound.
 const SINK_COALESCE_FLUSH_BYTES: usize = 256 * 1024;
 
-impl<'a, O: ConnectionPacketOutput + ?Sized> TcpResultSetSink<'a, O> {
-    pub(crate) const fn new(output: &'a mut O, sequence: u8) -> Self {
+impl<'a, W: Write> TcpResultSetSink<'a, W> {
+    pub(crate) const fn new(output: &'a mut PacketIoWriter<W>, sequence: u8) -> Self {
         Self {
             output,
             sequence,
             packets: 0,
-            pending: Vec::new(),
             pending_bytes: 0,
         }
     }
@@ -376,49 +335,31 @@ impl<'a, O: ConnectionPacketOutput + ?Sized> TcpResultSetSink<'a, O> {
 
     /// Hands every queued frame to the transport in ONE coalesced write.
     fn flush_pending(&mut self) -> Result<(), SinkWriteError> {
-        if self.pending.is_empty() {
+        if self.pending_bytes == 0 {
             return Ok(());
         }
-        let refs: Vec<&[u8]> = self.pending.iter().map(|payload| payload.as_slice()).collect();
-        let result = self.output.write_packets(self.sequence, &refs);
-        self.pending.clear();
+        let result = self.output.flush();
         self.pending_bytes = 0;
-        result.map(|sequence| {
-            self.sequence = sequence;
-        }).map_err(|error| SinkWriteError {
+        result.map_err(|error| SinkWriteError {
             message: error.to_string(),
             bytes_escaped: true,
         })
     }
 }
 
-impl<O: ConnectionPacketOutput + ?Sized> ResultSetSink for TcpResultSetSink<'_, O> {
+impl<W: Write> ResultSetSink for TcpResultSetSink<'_, W> {
     fn write_payload(&mut self, payload: &[u8]) -> Result<(), SinkWriteError> {
         self.packets += 1;
-        self.pending_bytes += payload.len();
-        self.pending.push(payload.to_vec());
-        if self.pending_bytes >= SINK_COALESCE_FLUSH_BYTES {
-            self.flush_pending()?;
-        }
-        Ok(())
-    }
-
-    fn write_payloads(&mut self, payloads: &[&[u8]]) -> Result<(), SinkWriteError> {
-        if payloads.is_empty() {
-            return Ok(());
-        }
-        for payload in payloads {
-            self.write_payload(payload)?;
-        }
-        Ok(())
-    }
-
-    fn write_payload_owned(&mut self, payload: Vec<u8>) -> Result<(), SinkWriteError> {
-        self.packets += 1;
-        self.pending_bytes += payload.len();
-        // The result-set writer has already built this payload for the wire;
-        // transfer it into the coalescing queue instead of cloning it again.
-        self.pending.push(payload);
+        // A compressed flush synchronizes PacketIoWriter's inner/outer
+        // counters. Preserve this response's logical sequence across bounded
+        // flushes, just as the former connection-output adapter did.
+        self.output.set_sequence(self.sequence);
+        self.output.buffer_packet(payload).map_err(|error| SinkWriteError {
+            message: error.to_string(),
+            bytes_escaped: true,
+        })?;
+        self.sequence = self.output.sequence();
+        self.pending_bytes += payload.len().saturating_add(4);
         if self.pending_bytes >= SINK_COALESCE_FLUSH_BYTES {
             self.flush_pending()?;
         }
@@ -440,6 +381,37 @@ mod tests {
     use crate::mysql_connection::MysqlConnectionError;
     use tidb_config::config_tree::config::{get_global_config, store_global_config};
     use tidb_config::config_tree::{Config, ErrorMessageExtension};
+
+    #[test]
+    fn result_sink_keeps_sequences_across_bounded_compressed_flushes() {
+        use super::{TcpResultSetSink, SINK_COALESCE_FLUSH_BYTES};
+        use crate::resultset_writer::ResultSetSink;
+        use std::io::Cursor;
+        use tidb_protocol::{CompressionAlgorithm, PacketIoReader, PacketIoWriter};
+
+        let large = vec![b'x'; SINK_COALESCE_FLUSH_BYTES];
+        for algorithm in [CompressionAlgorithm::None, CompressionAlgorithm::Zlib, CompressionAlgorithm::Zstd] {
+            let mut output = PacketIoWriter::new(Vec::new(), algorithm).unwrap();
+            let mut sink = TcpResultSetSink::new(&mut output, 254);
+            sink.write_payload(b"metadata").unwrap();
+            assert!(sink.output.get_ref().is_empty());
+            sink.write_payload(&large).unwrap();
+            assert!(!sink.output.get_ref().is_empty());
+            assert_eq!(sink.next_sequence(), 0);
+            sink.write_payload(b"").unwrap();
+            sink.write_payload(b"terminal").unwrap();
+            sink.flush().unwrap();
+            assert_eq!(sink.next_sequence(), 2);
+            assert_eq!(sink.packets_written(), 4);
+            drop(sink);
+            let mut reader = PacketIoReader::new(Cursor::new(output.into_inner()), algorithm).unwrap();
+            reader.set_sequence(254);
+            for expected in [b"metadata".as_slice(), large.as_slice(), b"", b"terminal"] {
+                assert_eq!(reader.read_packet().unwrap(), expected);
+            }
+            assert_eq!(reader.sequence(), 2);
+        }
+    }
 
     #[derive(Default)]
     struct CapturingOutput {

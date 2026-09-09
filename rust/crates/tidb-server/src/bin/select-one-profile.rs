@@ -30,7 +30,6 @@ use sha1::{Digest, Sha1};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::time::Instant;
-use tidb_exec::pinned_thread_pool::PinnedThreadPool;
 use tidb_protocol::{PacketReader, PacketWriter, COM_QUERY, COM_QUIT, DEFAULT_MAX_ALLOWED_PACKET};
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionTracker,
@@ -241,114 +240,6 @@ fn session_stages(iterations: usize) {
     report("(cluster only) stored_state_change (parse)", stored);
 }
 
-/// The per-statement thread the cluster path pays for its read snapshot.
-///
-/// `StatementSnapshot::open` spawns a named thread, waits for it to report the
-/// timestamp it opened at, and `finish` sends a request and joins it. PD is not
-/// involved here: this measures only the thread and channel scaffolding, which
-/// is the part of that cost a cluster-free run can pin.
-fn statement_thread_scaffolding(iterations: usize) {
-    use std::sync::mpsc;
-    let mut samples = Vec::with_capacity(iterations);
-    for index in 0..iterations + iterations / 10 {
-        let start = Instant::now();
-        let (requests, incoming) = mpsc::channel::<mpsc::Sender<u64>>();
-        let (opened, opened_reply) = mpsc::channel::<u64>();
-        let worker = std::thread::Builder::new()
-            .name("cluster-statement-snapshot".to_owned())
-            .spawn(move || {
-                if opened.send(7).is_err() {
-                    return;
-                }
-                while let Ok(reply) = incoming.recv() {
-                    let _ = reply.send(0);
-                }
-            })
-            .unwrap();
-        let _start_ts = opened_reply.recv().unwrap();
-        let (reply, answer) = mpsc::channel();
-        requests.send(reply).unwrap();
-        answer.recv().unwrap();
-        drop(requests);
-        worker.join().unwrap();
-        if index >= iterations / 10 {
-            samples.push(start.elapsed().as_nanos());
-        }
-    }
-    report("per-statement snapshot thread (no PD)", samples);
-}
-
-/// The same open/serve/finish handshake on the real pool the cluster path now
-/// uses.
-///
-/// This runs `PinnedThreadPool::run` itself, with a job that stands in for the
-/// transaction: it reports a start timestamp, serves requests until its channel
-/// closes, and returns -- which is exactly the job
-/// `StatementSnapshot::open` submits, minus PD and TiKV. What it measures is
-/// therefore the scaffolding the production path actually pays, not a model of
-/// it.
-fn pooled_thread_scaffolding(iterations: usize) {
-    use std::sync::mpsc;
-    let pool = PinnedThreadPool::shared();
-    let mut samples = Vec::with_capacity(iterations);
-    for index in 0..iterations + iterations / 10 {
-        let start = Instant::now();
-        let (requests, incoming) = mpsc::channel::<mpsc::Sender<u64>>();
-        let (opened, opened_reply) = mpsc::channel::<u64>();
-        pool.run(
-            "cluster-statement-snapshot",
-            Box::new(move || {
-                if opened.send(7).is_err() {
-                    return;
-                }
-                while let Ok(reply) = incoming.recv() {
-                    let _ = reply.send(0);
-                }
-            }),
-        )
-        .unwrap();
-        let _start_ts = opened_reply.recv().unwrap();
-        let (reply, answer) = mpsc::channel();
-        requests.send(reply).unwrap();
-        answer.recv().unwrap();
-        drop(requests);
-        if index >= iterations / 10 {
-            samples.push(start.elapsed().as_nanos());
-        }
-    }
-    report("the same work on the pinned pool", samples);
-}
-
-/// What the same scaffolding costs on a thread that outlives the statement.
-///
-/// The difference against [`statement_thread_scaffolding`] is what a
-/// connection-lifetime transaction worker would save per statement; it is the
-/// ceiling on that change, since the PD timestamp would still be spent.
-fn persistent_thread_scaffolding(iterations: usize) {
-    use std::sync::mpsc;
-    let (requests, incoming) = mpsc::channel::<mpsc::Sender<u64>>();
-    let worker = std::thread::Builder::new()
-        .name("persistent-statement-worker".to_owned())
-        .spawn(move || {
-            while let Ok(reply) = incoming.recv() {
-                let _ = reply.send(0);
-            }
-        })
-        .unwrap();
-    let mut samples = Vec::with_capacity(iterations);
-    for index in 0..iterations + iterations / 10 {
-        let start = Instant::now();
-        let (reply, answer) = mpsc::channel();
-        requests.send(reply).unwrap();
-        answer.recv().unwrap();
-        if index >= iterations / 10 {
-            samples.push(start.elapsed().as_nanos());
-        }
-    }
-    drop(requests);
-    worker.join().unwrap();
-    report("same work on a persistent thread", samples);
-}
 
 fn main() {
     let iterations: usize = std::env::args()
@@ -357,10 +248,6 @@ fn main() {
         .unwrap_or(20_000);
     println!("SELECT 1 floor, {iterations} iterations, no cluster\n");
     session_stages(iterations);
-    println!();
-    statement_thread_scaffolding(iterations);
-    pooled_thread_scaffolding(iterations);
-    persistent_thread_scaffolding(iterations);
     println!();
     wire_floor(iterations);
 }

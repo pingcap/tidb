@@ -516,10 +516,9 @@ fn construct_dag_req_assembled(
                 .as_slice(),
         ),
     };
-    if aggregate_functions.is_some_and(<[Expr]>::is_empty) {
-        return Err(DagRequestBuildError::EmptyAggregation);
-    }
-    if aggregate_group_by.is_some_and(<[Expr]>::is_empty) {
+    if aggregate_functions.is_some_and(<[Expr]>::is_empty)
+        && aggregate_group_by.is_none_or(<[Expr]>::is_empty)
+    {
         return Err(DagRequestBuildError::EmptyAggregation);
     }
     let output_width = match &aggregation {
@@ -647,7 +646,7 @@ fn aggregation_to_pb(
     group_by: &[Expr],
     streamed: bool,
 ) -> Result<Executor, DagRequestBuildError> {
-    if functions.is_empty() {
+    if functions.is_empty() && group_by.is_empty() {
         return Err(DagRequestBuildError::EmptyAggregation);
     }
     Ok(Executor {
@@ -664,10 +663,8 @@ fn aggregation_to_pb(
             agg_func: functions.to_vec(),
             // Go's PhysicalHashAgg/PhysicalStreamAgg list-form protobuf does
             // not set Aggregation.streamed; the executor type is the mode
-            // discriminator. Preserve that wire shape and only use the flag
-            // when a caller explicitly needs the tree-form compatibility
-            // field (the list-form path never does).
-            streamed: streamed.then_some(true),
+            // discriminator in this list-form request.
+            streamed: None,
         }),
         top_n: None,
         limit: None,

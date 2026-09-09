@@ -2375,16 +2375,7 @@ pub(crate) fn run_update_traced(
         update.limit.as_ref(),
     );
     let read_path = super::access::write_read_path(catalog, &database, &name, &point_plan, ctx)?;
-    let predicate_consumed = match catalog.get_in(&database, &name) {
-        Some(TableEntry::Kv(table)) => super::access::write_read_path_consumes_predicate(
-            read_path.as_ref(),
-            &point_plan,
-            table,
-            &column_list,
-            &zone,
-        ),
-        _ => false,
-    };
+    let predicate_consumed = read_path.as_ref().is_some_and(|path| path.predicate_consumed);
     // Go `buildLimit` (`pkg/planner/core/logical_plan_builder.go`): `LIMIT 0`
     // replaces the whole read subtree with `LogicalTableDual{RowCount: 0}` at
     // logical build, before any access path exists -- the write reads NOTHING
@@ -2549,7 +2540,9 @@ pub(crate) fn run_update_traced(
                 if row_limit.is_some_and(|cap| matched >= cap) {
                     break;
                 }
-                if let Some(new_row) = row_evaluator.compute(row, None, &mut matched)? {
+                if let UpdateRowOutcome::Changed(new_row) =
+                    row_evaluator.compute(row, None, &mut matched)?
+                {
                     updates.push((index, new_row));
                 }
             }
@@ -2576,27 +2569,38 @@ pub(crate) fn run_update_traced(
                 if row_limit.is_some_and(|cap| matched >= cap) {
                     break;
                 }
-                if let Some(mut new_row) =
-                    row_evaluator.compute(&row, extra_handle_value(&handle), &mut matched)?
-                {
-                    kv.materialize_generated(&mut new_row, ctx)
-                        .map_err(kv_write_error)?;
-                    if let Some(partitions) = &partition_ids {
-                        if let Err(error) =
-                            kv.validate_update_partitions(&row, &new_row, partitions, ctx)
-                        {
-                            handle_partition_write_error(
-                                kv_write_error(error),
-                                update.ignore,
-                                ctx,
-                            )?;
-                            continue;
+                match row_evaluator.compute(&row, extra_handle_value(&handle), &mut matched)? {
+                    UpdateRowOutcome::Filtered => {}
+                    UpdateRowOutcome::Unchanged => {
+                        // Go updateRecord adds the record to UnchangedKeysForLock.
+                        // A matched no-op UPDATE owns a lock, not a row mutation.
+                        if let Some(keys) = ctx.selected_lock_keys() {
+                            keys.insert(
+                                kv.row_lock_key(&handle, &row, ctx)
+                                    .map_err(kv_write_error)?,
+                            );
                         }
                     }
-                    accountant
-                        .account_row(&new_row)
-                        .map_err(DriverError::from)?;
-                    rewrites.push((handle, row, new_row));
+                    UpdateRowOutcome::Changed(mut new_row) => {
+                        kv.materialize_generated(&mut new_row, ctx)
+                            .map_err(kv_write_error)?;
+                        if let Some(partitions) = &partition_ids {
+                            if let Err(error) =
+                                kv.validate_update_partitions(&row, &new_row, partitions, ctx)
+                            {
+                                handle_partition_write_error(
+                                    kv_write_error(error),
+                                    update.ignore,
+                                    ctx,
+                                )?;
+                                continue;
+                            }
+                        }
+                        accountant
+                            .account_row(&new_row)
+                            .map_err(DriverError::from)?;
+                        rewrites.push((handle, row, new_row));
+                    }
                 }
             }
         }
@@ -2705,6 +2709,12 @@ pub(crate) fn run_update_traced(
     Ok(changed)
 }
 
+enum UpdateRowOutcome {
+    Filtered,
+    Unchanged,
+    Changed(Vec<Datum>),
+}
+
 struct UpdateRowEvaluator<'a> {
     field_types: &'a [FieldType],
     column_names: &'a [String],
@@ -2720,15 +2730,14 @@ struct UpdateRowEvaluator<'a> {
 }
 
 impl UpdateRowEvaluator<'_> {
-    /// Applies the `SET` assignments to one row, returning the new row only
-    /// when the `WHERE` selected it AND a column actually changed (Go's
-    /// `changed` flag).
+    /// Distinguishes a rejected row, a matched no-op, and a row mutation.
+    /// Matched no-ops still participate in pessimistic locking.
     fn compute(
         &self,
         row: &[Datum],
         handle: Option<i64>,
         matched: &mut u64,
-    ) -> Result<Option<Vec<Datum>>, DriverError> {
+    ) -> Result<UpdateRowOutcome, DriverError> {
         // `_tidb_rowid` is the record HANDLE, so it joins the row only for
         // the reading half of this statement. The row that gets STAGED is
         // still `row` -- Go's write composes its new row from the
@@ -2748,7 +2757,7 @@ impl UpdateRowEvaluator<'_> {
         if let Some(predicate) = self.predicate {
             let selected = predicate.eval(row, self.catalog, self.current_db, self.ctx)?;
             if !datum_is_true(&selected) {
-                return Ok(None);
+                return Ok(UpdateRowOutcome::Filtered);
             }
         }
         // The `WHERE` selected this row. That is what a `Selection`'s `actRows`
@@ -2787,7 +2796,7 @@ impl UpdateRowEvaluator<'_> {
             .apply(row, &mut new_row, self.ctx, chunk.get_row(0))?
         {
             // Go counts a no-op row as touched, not affected.
-            return Ok(None);
+            return Ok(UpdateRowOutcome::Unchanged);
         }
         // Go `updateRecord` step 5 runs only after the changed comparison and
         // implicit clock assignment. Zipped rather than indexed because an
@@ -2801,7 +2810,7 @@ impl UpdateRowEvaluator<'_> {
         {
             crate::bad_null::handle_bad_null(value, field_type, name, level, self.ctx)?;
         }
-        Ok(Some(new_row))
+        Ok(UpdateRowOutcome::Changed(new_row))
     }
 }
 
@@ -2953,16 +2962,7 @@ pub(crate) fn run_delete_traced(
         delete.limit.as_ref(),
     );
     let read_path = super::access::write_read_path(catalog, &database, &name, &point_plan, ctx)?;
-    let predicate_consumed = match catalog.get_in(&database, &name) {
-        Some(TableEntry::Kv(table)) => super::access::write_read_path_consumes_predicate(
-            read_path.as_ref(),
-            &point_plan,
-            table,
-            &column_list,
-            &zone,
-        ),
-        _ => false,
-    };
+    let predicate_consumed = read_path.as_ref().is_some_and(|path| path.predicate_consumed);
     // Go `buildLimit`'s zero short-circuit; see the `Update` twin above.
     if row_limit == Some(0) {
         // As in UPDATE: Go resolves the whole plan before `buildLimit`'s zero
@@ -3183,8 +3183,8 @@ fn fetch_write_rows(
     // rendering it as 1064 told a sysbench client its `UPDATE ... WHERE
     // id=?` had a SYNTAX error.
     let decode_failed = |e| kv_read_error("row decode failed", e);
-    match read_path {
-        Some(super::access::WriteReadPath::Point(pin)) => {
+    match read_path.map(|path| &path.reader) {
+        Some(super::access::WriteReader::Point(pin)) => {
             let Some(handle) = pin.handle.as_ref() else {
                 return Ok(Vec::new());
             };
@@ -3194,19 +3194,29 @@ fn fetch_write_rows(
                 .map(|row| vec![(handle.clone(), row)])
                 .unwrap_or_default())
         }
-        Some(super::access::WriteReadPath::Ranges(ranges, _)) => kv
+        Some(super::access::WriteReader::Ranges(ranges, _)) => kv
             .scan_rows_with_handles_in(Some(ranges), zone)
             .map_err(decode_failed),
-        Some(super::access::WriteReadPath::Batch(handles)) => {
-            let mut rows = Vec::with_capacity(handles.len());
-            for handle in handles {
-                if let Some(row) = kv.get_row_by_handle(handle, zone).map_err(decode_failed)? {
-                    rows.push((handle.clone(), row));
-                }
-            }
-            Ok(rows)
+        Some(super::access::WriteReader::Batch(handles)) => {
+            // Go's UPDATE/DELETE fast plans use BatchPointGetExec too: its
+            // initialize fetches all record values with BatchGet. Reuse the
+            // SELECT reader, retaining handle order, absent-row slots, and
+            // the same DML decode context without serial point requests.
+            let rows = kv
+                .stored_records_batched(
+                    handles,
+                    None,
+                    &crate::kv_table::RowDecodeContext::legacy_default(zone),
+                )
+                .map_err(decode_failed)?;
+            Ok(handles
+                .iter()
+                .cloned()
+                .zip(rows)
+                .filter_map(|(handle, row)| row.map(|row| (handle, row)))
+                .collect())
         }
-        Some(super::access::WriteReadPath::IndexRanges(index_id, ranges, _)) => {
+        Some(super::access::WriteReader::IndexRanges(index_id, ranges, _)) => {
             // The index range narrows WHICH records are fetched, in index
             // order; the row is then read by its handle, and the `WHERE` above
             // still filters. Ranges over one index cover disjoint key intervals,
@@ -3309,51 +3319,16 @@ fn trace_dml_source(
     // range scan RENAMES the scan just recorded, because the write really
     // does run that scan over only those ranges; a point get REPLACES it,
     // because the write reads by key and runs no scan at all.
-    match read_path {
-        Some(super::access::WriteReadPath::Ranges(ranges, range_estimate)) => {
-            // Go's `isPointGetPath` converts a table path whose one range is
-            // a single non-null point on the integer handle to a `Point_Get`
-            // (`find_best_task.go`'s `convertToPointGet`) -- the write plan
-            // reaches it through the same ordinary `DataSource` as a read, so
-            // `UPDATE t SET ... WHERE i = 1 AND j = 1` prints `Point_Get`
-            // with the `j` conjunct as its root filter, exactly as the read
-            // side's HandleRange arm does.
-            let point = (!ctx
-                .optimizer_fix_control()
-                .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false))
-            .then(|| {
-                let Some(super::catalog::TableEntry::Kv(table)) = catalog.get_in(database, name)
-                else {
-                    return None;
-                };
-                if table.pk_handle_offset().is_some() {
-                    return super::access::single_point_handle(ranges)
-                        .map(|handle| (table, Some(handle)));
-                }
-                // Go converts a COMMON-handle table path the same way
-                // (`find_best_task.go:2202`); the write reaches it through
-                // the same ordinary `DataSource` as a read, so this is the
-                // read side's HandleRange arm mirrored -- one range pinning
-                // every clustered key column as a non-nullable point.
-                (!table.common_handle_offsets().is_empty()
-                    && ranges.len() == 1
-                    && ranges[0].is_point(false)
-                    && ranges[0].low.len() == table.common_handle_offsets().len())
-                .then_some((table, None))
-            })
-            .flatten();
-            if let Some((table, handle)) = point {
-                // A `Point_Get` is a root task: no `TableReader` wraps it,
-                // whether or not the ranger consumed the whole `WHERE`.
-                trace.point_get(&visible, table, handle.as_ref(), None);
-            } else {
-                trace.table_range_scan(&visible, ranges, *range_estimate);
-                if predicate_consumed {
-                    trace.scan_reader();
-                }
+    match read_path.map(|path| &path.reader) {
+        Some(super::access::WriteReader::Ranges(ranges, range_estimate)) => {
+            // The selected reader owns the plan kind. A range that was not
+            // converted must remain a scan in both execution and EXPLAIN.
+            trace.table_range_scan(&visible, ranges, *range_estimate);
+            if predicate_consumed {
+                trace.scan_reader();
             }
         }
-        Some(super::access::WriteReadPath::IndexRanges(index_id, ranges, range_estimate)) => {
+        Some(super::access::WriteReader::IndexRanges(index_id, ranges, range_estimate)) => {
             trace_write_index_scan(
                 trace,
                 catalog,
@@ -3365,13 +3340,13 @@ fn trace_dml_source(
                 *range_estimate,
             );
         }
-        Some(super::access::WriteReadPath::Batch(handles)) => {
+        Some(super::access::WriteReader::Batch(handles)) => {
             if let Some(super::catalog::TableEntry::Kv(table)) = catalog.get_in(database, name) {
                 let partitions = table.handle_partition_names(handles, zone, ctx);
                 trace.batch_point_get(&visible, table, handles, handles.len(), &partitions);
             }
         }
-        Some(super::access::WriteReadPath::Point(pin)) => {
+        Some(super::access::WriteReader::Point(pin)) => {
             if let Some(super::catalog::TableEntry::Kv(table)) = catalog.get_in(database, name) {
                 trace.point_get(&visible, table, pin.handle.as_ref(), pin.index.as_ref());
             }

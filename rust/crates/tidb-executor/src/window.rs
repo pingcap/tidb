@@ -742,11 +742,21 @@ fn check_range_key(frame: &Frame, key_type: Option<&FieldType>) -> Result<(), Dr
 
 /// Collects every `Expr::Window` node inside `expr`, in written order.
 pub(crate) fn windows_in(expr: &Expr) -> Vec<Expr> {
+    // Go's AST flag excludes subquery bodies. Most callers inspect ordinary
+    // expressions, which need neither a cloned tree nor a mutable traversal.
+    if !expr.has_window_flag() {
+        return Vec::new();
+    }
     struct Collector {
         found: Vec<Expr>,
     }
     impl tidb_ast::Visitor for Collector {
         fn enter(&mut self, node: &mut dyn Any) -> bool {
+            // Go WindowFuncExtractor stops at the next query block: its
+            // window calls are evaluated by that query's own operator.
+            if node.is::<SelectStmt>() || node.is::<tidb_ast::SetOprStmt>() {
+                return true;
+            }
             if let Some(Expr::Window { .. }) = node.downcast_ref::<Expr>() {
                 let window = node.downcast_ref::<Expr>().expect("checked above").clone();
                 self.found.push(window);
@@ -797,7 +807,7 @@ fn window_bearing_exprs(select: &SelectStmt) -> impl Iterator<Item = &Expr> {
 /// this stage -- the value lands in a synthetic column the projection simply
 /// does not read.
 pub(crate) fn select_has_window(select: &SelectStmt) -> bool {
-    window_bearing_exprs(select).any(|expr| !windows_in(expr).is_empty())
+    window_bearing_exprs(select).any(Expr::has_window_flag)
 }
 
 /// Go rejects a window function outside the select list / `ORDER BY` with
@@ -2170,6 +2180,38 @@ pub(crate) fn rewrite_windows(select: &SelectStmt, calls: &[WindowCall]) -> Sele
 #[cfg(test)]
 mod constant_uint_tests {
     use super::*;
+
+    #[test]
+    fn window_detection_and_collection_stay_in_the_current_query_block() {
+        for (sql, expected) in [
+            ("SELECT (SELECT ROW_NUMBER() OVER ())", 0),
+            ("SELECT 1 WHERE EXISTS (SELECT ROW_NUMBER() OVER ())", 0),
+            (
+                "SELECT ROW_NUMBER() OVER () + (SELECT ROW_NUMBER() OVER ())",
+                1,
+            ),
+            ("SELECT CASE WHEN 1 THEN ROW_NUMBER() OVER () ELSE 0 END", 1),
+            ("SELECT 1 ORDER BY ROW_NUMBER() OVER ()", 1),
+            ("SELECT ROW_NUMBER() OVER w WINDOW w AS ()", 1),
+            ("SELECT 1 WINDOW unused AS ()", 0),
+        ] {
+            let tidb_ast::Stmt::Query(query) = tidb_parser::parse(sql).unwrap() else {
+                panic!("query fixture");
+            };
+            let tidb_ast::QueryStmt::Select(select) = &*query else {
+                panic!("select fixture");
+            };
+            assert_eq!(select_has_window(select), expected != 0, "{sql}");
+            assert_eq!(
+                window_bearing_exprs(select)
+                    .map(|expr| windows_in(expr).len())
+                    .sum::<usize>(),
+                expected,
+                "{sql}"
+            );
+            reject_windows_outside_select_list(select).unwrap();
+        }
+    }
 
     /// `constant_uint` must resolve `TRUE`/`FALSE` to `1`/`0` exactly like
     /// Go's `GetUint64FromConstant` resolves an `Int64` constant -- proving

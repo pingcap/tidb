@@ -92,6 +92,8 @@ const TOP_N_COMPACTION_FACTOR: usize = 4;
 
 /// Go `sortexec.TopNExec` (unparallel, in memory).
 pub struct TopNExec<C: Columns> {
+    /// Go `ColumnIdxsUsedByChild`: output projection after ranking full input rows.
+    output_columns: Option<Vec<usize>>,
     meta: ExecutorMeta,
     /// Go `ByItems`.
     by_items: Vec<SortByItem>,
@@ -157,7 +159,14 @@ impl<C: Columns> TopNExec<C> {
         let tracker = memory.operator_tracker(meta.id());
         let disk_tracker = memory.operator_disk_tracker(meta.id());
         let enable_tmp_storage_on_oom = memory.tmp_storage_on_oom();
+        // Go retrieveColumnIdxsUsedByChild: generated-column identities may
+        // be absent after cloning, in which case inline projection is disabled.
+        let output_columns = child
+            .schema()
+            .columns_indices(&meta.schema().columns)
+            .filter(|indexes| !indexes.iter().copied().eq(0..child.schema().len()));
         TopNExec {
+            output_columns,
             meta,
             by_items,
             child,
@@ -426,7 +435,7 @@ impl<C: Columns> TopNExec<C> {
                 }
                 let Some(i) = best else { break };
                 if self.merged >= self.offset {
-                    runs[i].take_head_into(req);
+                    runs[i].take_head_into(req, self.output_columns.as_deref());
                 } else {
                     runs[i].drop_head();
                 }
@@ -485,7 +494,10 @@ impl<C: Columns> Executor for TopNExec<C> {
         let remaining = self.heap.len().saturating_sub(self.heap.idx());
         let batch = req.required_rows().min(remaining);
         for _ in 0..batch {
-            req.append_row(self.heap.row_at(self.heap.idx()));
+            req.append_row_by_col_idxs(
+                self.heap.row_at(self.heap.idx()),
+                self.output_columns.as_deref(),
+            );
             self.heap.advance_idx();
         }
         Ok(())

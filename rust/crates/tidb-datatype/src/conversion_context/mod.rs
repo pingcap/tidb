@@ -41,6 +41,21 @@ impl ConversionLocation {
         Self(Cow::Owned(name.into()))
     }
 
+    /// The identity of the evaluated session zone, without another lookup or
+    /// allocation for standard fixed, local, or named IANA zones.
+    #[must_use]
+    pub fn from_time_zone(zone: &crate::SessionTimeZone) -> Self {
+        match zone {
+            crate::SessionTimeZone::Local => Self(Cow::Borrowed("Local")),
+            crate::SessionTimeZone::Named(zone) => Self(Cow::Borrowed(zone.name())),
+            crate::SessionTimeZone::Fixed { name, .. } if name == "UTC" => Self::UTC,
+            crate::SessionTimeZone::Fixed { name, .. } if name.is_empty() => {
+                Self(Cow::Borrowed(""))
+            }
+            crate::SessionTimeZone::Fixed { name, .. } => Self::named(name.clone()),
+        }
+    }
+
     /// Returns the source location name.
     #[must_use]
     pub fn name(&self) -> &str {

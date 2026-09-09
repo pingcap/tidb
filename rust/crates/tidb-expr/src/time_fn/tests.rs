@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The time family's unit tests, split out of `time_fn/mod.rs` purely for
-//! file size (the `source_size_ratchet` gate). Every assertion, Go citation
-//! and doc comment is unchanged from its prior home in that file's
-//! `#[cfg(test)] mod tests`.
+//! Time-function tests and their Go source cases.
 
 use super::*;
 

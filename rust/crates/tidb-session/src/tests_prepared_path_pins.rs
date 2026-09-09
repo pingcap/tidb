@@ -80,6 +80,25 @@ fn a_join_capture_then_replay_keeps_one_stable_entry() {
     }
 }
 
+#[test]
+fn prepared_owner_keeps_probes_out_of_the_access_path_cache() {
+    let mut session = join_session();
+    let prepared = session.prepare_ast(JOIN_SQL).unwrap();
+    session.probe_prepared(&prepared).unwrap();
+    assert!(session.prepared_plan_pins.borrow().is_empty());
+    for value in [1, 3] {
+        let bound = prepared
+            .bind_for_execution(&session, &[Datum::Int(value), Datum::Int(value)])
+            .unwrap();
+        let crate::StmtOutput::Rows { rows, .. } = session.run_bound_prepared(bound).unwrap() else {
+            panic!("expected rows");
+        };
+        assert_eq!(rows, vec![vec![Datum::Int(value); 4]]);
+        assert!(!session.active_prepared_pin_is_open());
+        assert!(!session.prepared_plan_pins.borrow()[JOIN_SQL].pins.is_empty());
+    }
+}
+
 /// DDL between two executions MOVES the key: the next execution replans
 /// freely and re-captures, which is what keeps a pinned index from surviving
 /// its own drop.

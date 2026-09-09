@@ -33,38 +33,39 @@
 //!
 //! # Narrowings, each naming its Go symbol
 //!
-//! * Hints: `hintWorksWithProp`/`hintCanWork` and
-//!   `applyLogicalHintVarEigen` — an unhinted plan answers `true`, so the
-//!   only enforcer trigger left is `prop.CanAddEnforcer`, which is what
-//!   this port implements. A hinted enumeration is planner-hint work.
-//! * `prop.IndexJoinProp` and `admitIndexJoinInnerChildPattern`: the
-//!   index-join runtime property is unported ([`crate::task`] header).
+//! * Hash build/probe hints and their sort-enforcer retry follow Go.
+//!   Index/MPP family enumeration and `applyLogicalHintVarEigen`
+//!   remain unported here.
+//! * IndexJoinProp participates in memo keys, pattern admission and integer/common
+//!   handle inner scans; secondary statistics/selection and full family enumeration
+//!   remain unported ([`super::index_join`]).
 //! * `checkOpSelfSatisfyPropTaskTypeRequirement` and the MPP property
 //!   fields the enforcer branch resets: no TiFlash tier.
 //! * `optimizeByShuffle`: the TiDB-side parallel shuffle rewrite is an
 //!   executor-parallelism optimization, absent here.
-//! * The task map is keyed by the property's ESSENTIAL fields
-//!   ([`prop_key`]) per plan id, standing in for Go's `prop.HashCode()`
-//!   over fields this port does not carry.
+//! * The task map uses Go's represented hash-code fields via [`prop_key`],
+//!   including CTE status and exact floating-point expected counts.
 //!
 //! # Operator routing
 //!
 //! Go gives some operators their own `findBestTask` override instead of an
 //! exhaust: the dual, the CTE table, and the two shows are born directly in
 //! root tasks. [`find_best_task`] routes them to those ported bodies first,
-//! exactly as Go's function-pointer wiring does. `DataSource` and
-//! `LogicalMemTable` refuse by name (`findBestTask4LogicalDataSource` is
-//! the access-path chooser this crate carries separately;
-//! `findBestTask4LogicalMemTable` recurses through the enforcer re-entry).
-//! Joins refuse toward [`crate::find_best_task`]'s own specialized search,
-//! which owns candidate enumeration for them.
+//! exactly as Go's function-pointer wiring does. DataSource chooses its
+//! range-bearing scans; MemTable's enforcer re-entry remains unported.
+//! Forced hash/merge joins and null-aware joins use native candidates. Unhinted
+//! joins still require native index alternatives before this dispatcher
+//! can replace the live reduced-tree search without changing its search space.
 
 use std::collections::HashMap;
 
 use crate::enforce::enforce_property;
+use crate::logical::functional_dependencies::FdContext;
 use crate::logical::LogicalPlan;
+use crate::physical::hash_join::{get_hash_joins, HashJoinSettings};
+use crate::physical::merge_join::{get_merge_joins, MergeJoinSettings};
 use crate::physical::{self, PhysicalPlan};
-use crate::physical_property::PhysicalProperty;
+use crate::physical_property::{CteProducerStatus, PhysicalProperty, SortItem};
 use crate::plan_base::{PlanError, PlanIdAllocator};
 use crate::task::{attach2_task, Task};
 use crate::task_type::TaskType;
@@ -101,6 +102,19 @@ pub fn compare_task_cost(
 /// from, the coster, the NDV skew ratio the stats scaling reads, and Go's
 /// per-operator task map.
 pub struct DispatchContext<'a> {
+    /// Go EnableINLJoinInnerMultiPattern (default true).
+    pub index_join_inner_multi_pattern: bool,
+    /// Go cardinality.Selectivity over the inner datasource's current table
+    /// histograms, applied to residual conditions only, before access predicates
+    /// are restored as explicit inner selections.
+    pub index_join_selectivity: Option<
+        &'a dyn Fn(
+            &crate::logical::DataSource,
+            &[tidb_expr::expression::Expression],
+        ) -> Result<f64, PlanError>,
+    >,
+    /// Current parameters, range quota and cache admission for inner paths.
+    pub index_join_ranger: super::index_join::IndexJoinRangerSettings<'a>,
     /// The plan id allocator for built physical operators.
     pub allocator: &'a PlanIdAllocator,
     /// The pricing seam.
@@ -108,7 +122,23 @@ pub struct DispatchContext<'a> {
     /// The `tidb_opt_skew_ratio` the NDV scaling reads; 1.0 is Go's default.
     pub skew_ratio: f64,
     /// Go `BaseLogicalPlan.taskMap`, keyed here by `(plan id, prop key)`.
-    task_map: HashMap<(i32, String), Task>,
+    task_map: HashMap<(i32, PropertyKey), Task>,
+    /// Current session/runtime configuration for physical hash joins.
+    pub hash_join: HashJoinSettings,
+    /// Current merge costing setting and its plan-cache relevance.
+    pub merge_join: MergeJoinSettings,
+    /// Current Apply cache quota and group-NDV risk setting.
+    pub apply: physical::apply::ApplySettings,
+    /// Whether merge child costing read the ordering selectivity setting.
+    pub uses_ordering_index_selectivity: bool,
+    /// Go Fix46177: compare an enforced scan even when an ordered scan exists.
+    pub explore_enforced_data_source: bool,
+    /// Statement-owned column IDs and metadata for logical FD extraction.
+    pub functional_dependencies: Option<FdContext<'a>>,
+    /// Go statement hint warnings, in emission order.
+    pub hint_warnings: Vec<String>,
+    /// Go SetSkipPlanCache when correlated index access is promoted.
+    pub skip_plan_cache_reason: Option<&'static str>,
     /// Go `SessionVars.AllocPlanColumnID`: the column-id allocator the
     /// aggregate partial/final split draws fresh columns from. `None` keeps
     /// pre-split searches working; a search that can push aggregates sets it
@@ -125,11 +155,22 @@ impl<'a> DispatchContext<'a> {
         skew_ratio: f64,
     ) -> Self {
         Self {
+            index_join_inner_multi_pattern: true,
+            index_join_selectivity: None,
+            index_join_ranger: Default::default(),
             allocator,
             coster,
             skew_ratio,
             task_map: HashMap::new(),
             column_ids: None,
+            hash_join: HashJoinSettings::default(),
+            merge_join: MergeJoinSettings::default(),
+            apply: physical::apply::ApplySettings::default(),
+            uses_ordering_index_selectivity: false,
+            explore_enforced_data_source: true,
+            functional_dependencies: None,
+            hint_warnings: Vec::new(),
+            skip_plan_cache_reason: None,
         }
     }
 
@@ -140,22 +181,35 @@ impl<'a> DispatchContext<'a> {
         column_ids: &'a crate::expression_rewriter::ColumnIdAllocator,
     ) -> Self {
         self.column_ids = Some(column_ids);
+        self.functional_dependencies = Some(FdContext::new(column_ids));
         self
     }
 }
 
-/// The task-map key: the property's essential fields, standing in for Go's
-/// `PhysicalProperty.HashCode()` over the ported field set.
-fn prop_key(prop: &PhysicalProperty) -> String {
-    use std::fmt::Write as _;
-    let mut key = format!(
-        "{:?}|{}|{}",
-        prop.task_tp, prop.expected_cnt, prop.can_add_enforcer
-    );
-    for item in &prop.sort_items {
-        let _ = write!(key, "|{}:{}", item.col, item.desc);
+/// Go PhysicalProperty.HashCode over the represented fields. Use the exact
+/// floating-point representation, not formatted text; CTE status is part of
+/// Go's key even for a root task. SortItemsForPartition is not hashed by Go.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct PropertyKey {
+    index_join: Option<Vec<u8>>,
+    task_type: TaskType,
+    expected_count: u64,
+    can_add_enforcer: bool,
+    no_cop_push_down: bool,
+    sort_items: Vec<SortItem>,
+    cte_producer_status: CteProducerStatus,
+}
+
+fn prop_key(prop: &PhysicalProperty) -> PropertyKey {
+    PropertyKey {
+        index_join: prop.index_join.as_ref().map(|lookup| lookup.hash_code().to_vec()),
+        task_type: prop.task_tp,
+        expected_count: prop.expected_cnt.to_bits(),
+        can_add_enforcer: prop.can_add_enforcer,
+        no_cop_push_down: prop.no_cop_push_down,
+        sort_items: prop.sort_items.clone(),
+        cte_producer_status: prop.cte_producer_status,
     }
-    key
 }
 
 /// Go `exhaustPhysicalPlans` over the enum's ported operator set: the
@@ -164,8 +218,8 @@ fn prop_key(prop: &PhysicalProperty) -> String {
 fn exhaust_physical_plans(
     plan: &LogicalPlan,
     prop: &PhysicalProperty,
-    ctx: &DispatchContext<'_>,
-) -> Result<Vec<Vec<PhysicalPlan>>, PlanError> {
+    ctx: &mut DispatchContext<'_>,
+) -> Result<(Vec<Vec<PhysicalPlan>>, bool), PlanError> {
     let one = |plans: Vec<PhysicalPlan>| -> Vec<Vec<PhysicalPlan>> {
         if plans.is_empty() {
             Vec::new()
@@ -173,7 +227,54 @@ fn exhaust_physical_plans(
             vec![plans]
         }
     };
-    match plan {
+    if let LogicalPlan::Join(join) = plan {
+        let candidates = get_hash_joins(
+            join,
+            prop,
+            ctx.hash_join,
+            ctx.allocator,
+            ctx.skew_ratio,
+            &mut ctx.hint_warnings,
+        )?;
+        let hint_works = join.prefer_join_type == 0 || candidates.forced;
+        if prop.index_join.is_some() {
+            return Ok((one(candidates.plans), hint_works));
+        }
+        if candidates.forced && !candidates.plans.is_empty() {
+            return Ok((one(candidates.plans), true));
+        }
+        if join.na_eq_conditions.is_empty()
+            && join.prefer_join_type & crate::plan_builder::from::join_hint_flags::MERGE_JOIN != 0
+        {
+            let fd = ctx.functional_dependencies.as_ref().ok_or_else(|| {
+                PlanError::internal("native merge search requires the statement column allocator")
+            })?;
+            let merges = get_merge_joins(
+                join,
+                prop,
+                fd,
+                ctx.merge_join,
+                ctx.hash_join.disable_hash_join,
+                ctx.allocator,
+                ctx.skew_ratio,
+                &mut ctx.hint_warnings,
+            )?;
+            ctx.uses_ordering_index_selectivity |= merges.uses_ordering_index_selectivity;
+            if !merges.plans.is_empty() {
+                return Ok((one(merges.plans), true));
+            }
+        }
+        // Go returns a forced hash family before enumerating merge/index,
+        // and a null-aware anti join never enumerates those families.
+        // Do not silently choose hash when their native alternatives are absent.
+        if !candidates.forced && join.na_eq_conditions.is_empty() && prop.is_sort_item_empty() {
+            return Err(PlanError::internal(
+                "native index join candidate enumeration is not implemented",
+            ));
+        }
+        return Ok((one(candidates.plans), hint_works));
+    }
+    let plans = match plan {
         LogicalPlan::Selection(op) => {
             Ok(one(physical::exhaust_physical_plans_4_logical_selection(
                 op,
@@ -194,7 +295,7 @@ fn exhaust_physical_plans(
             op,
             prop,
             ctx.allocator,
-        ))),
+        )?)),
         LogicalPlan::Lock(op) => Ok(one(physical::exhaust_physical_plans_4_logical_lock(
             op,
             prop,
@@ -232,16 +333,16 @@ fn exhaust_physical_plans(
             // refuses as an EMPTY slice here, named; the LIMIT half rides
             // the keep-order paths (`getPhysLimits`).
             if !physical::match_items(prop, &op.by_items) {
-                return Ok(Vec::new());
+                return Ok((Vec::new(), true));
             }
             // Go's two preference slices, in order: the TopN operators
             // (`getPhysTopN`), then the LIMIT half (`getPhysLimits`).
             let mut slices = Vec::with_capacity(2);
-            let topns = physical::get_phys_topn(op, ctx.allocator);
+            let topns = physical::get_phys_topn(op, prop, ctx.allocator)?;
             if !topns.is_empty() {
                 slices.push(topns);
             }
-            let limits = physical::get_phys_limits(op, ctx.allocator);
+            let limits = physical::get_phys_limits(op, prop, ctx.allocator)?;
             if !limits.is_empty() {
                 slices.push(limits);
             }
@@ -268,15 +369,26 @@ fn exhaust_physical_plans(
                 vec![aggs]
             })
         }
-        LogicalPlan::Join(_) | LogicalPlan::Apply(_) => Err(PlanError::internal(
-            "exhaustPhysicalPlans4LogicalJoin: joins are enumerated by \
-             crate::find_best_task's specialized search, not this dispatcher",
-        )),
+        LogicalPlan::Join(_) => unreachable!("joins dispatched above"),
+        LogicalPlan::Apply(op) => {
+            let candidates = physical::apply::get_apply(
+                op,
+                prop,
+                ctx.apply,
+                ctx.merge_join.ordering_index_selectivity_ratio,
+                ctx.hash_join.concurrency,
+                ctx.allocator,
+                ctx.skew_ratio,
+            )?;
+            ctx.uses_ordering_index_selectivity |= candidates.uses_ordering_index_selectivity;
+            Ok(one(candidates.plans))
+        }
         other => Err(PlanError::internal(format!(
             "exhaustPhysicalPlans over {} is not ported to the dispatcher",
             other.tp()
         ))),
-    }
+    }?;
+    Ok((plans, true))
 }
 
 /// Go `findBestTask` (`find_best_task.go:605`) over the enum world.
@@ -291,6 +403,11 @@ pub fn find_best_task(
     let key = (plan.id(), prop_key(prop));
     if let Some(cached) = ctx.task_map.get(&key) {
         return Ok(cached.copy());
+    }
+    if prop.index_join.as_ref().is_some_and(|lookup| {
+        !super::index_join::admits_inner(plan, lookup, ctx.index_join_inner_multi_pattern)
+    }) {
+        return Ok(Task::invalid_task());
     }
     let best = find_best_task_uncached(plan, prop, ctx)?;
     ctx.task_map.insert(key, best.copy());
@@ -350,24 +467,29 @@ fn find_best_task_uncached(
         return Ok(Task::invalid_task());
     }
 
-    let mut can_add_enforcer = prop.can_add_enforcer;
-    // An unhinted enumeration always answers hintWorksWithProp = true, so
-    // Go's !hintWorksWithProp trigger cannot fire; the narrowed condition
-    // is exactly the caller's CanAddEnforcer.
-    let _ = &mut can_add_enforcer;
-
-    let new_prop = prop.clone_essential_fields();
-    let plans_fits_prop = exhaust_physical_plans(plan, &new_prop, ctx)?;
-
-    let plans_need_enforce = if can_add_enforcer {
+    let mut new_prop = prop.clone_essential_fields();
+    new_prop.index_join = prop.index_join.clone();
+    let (mut plans_fits_prop, hint_works) = exhaust_physical_plans(plan, &new_prop, ctx)?;
+    let can_add_enforcer = prop.can_add_enforcer
+        || (!hint_works && !new_prop.is_sort_item_empty() && new_prop.index_join.is_none());
+    let mut plans_need_enforce = Vec::new();
+    if can_add_enforcer {
         let mut empty = new_prop.clone_essential_fields();
-        empty.sort_items = Vec::new();
-        empty.sort_items_for_partition = Vec::new();
+        empty.index_join = new_prop.index_join.clone();
+        empty.sort_items.clear();
+        empty.sort_items_for_partition.clear();
         empty.expected_cnt = f64::MAX;
-        exhaust_physical_plans(plan, &empty, ctx)?
-    } else {
-        Vec::new()
-    };
+        let (enforced, hint_can_work) = exhaust_physical_plans(plan, &empty, ctx)?;
+        plans_need_enforce = enforced;
+        // The native tree has no index-join candidates yet. This is Go's
+        // non-index branch: honor a hint rescued by removing the order.
+        if hint_can_work && !hint_works {
+            plans_fits_prop.clear();
+        }
+        if !hint_can_work && !hint_works && !prop.can_add_enforcer {
+            plans_need_enforce.clear();
+        }
+    }
 
     let best_task = enumerate_physical_plans_4_task(plan, &plans_fits_prop, prop, false, ctx)?;
     let cur_task = enumerate_physical_plans_4_task(plan, &plans_need_enforce, prop, true, ctx)?;
@@ -442,7 +564,7 @@ fn try_to_get_dual_task(
 /// TiFlash-desc refusal narrows with the tier). Cluster tables, vector
 /// properties, and the index-column prefix walk (`:1095`) are later slices,
 /// named here.
-fn table_path_matches_order(ds: &crate::logical::DataSource, prop: &PhysicalProperty) -> bool {
+pub(super) fn table_path_matches_order(ds: &crate::logical::DataSource, prop: &PhysicalProperty) -> bool {
     if !ds.pk_is_handle || !ds.handle_is_int {
         return false;
     }
@@ -458,9 +580,8 @@ fn table_path_matches_order(ds: &crate::logical::DataSource, prop: &PhysicalProp
 /// The basic index-prefix arm of Go `matchProperty` (`find_best_task.go:1095`):
 /// the required order matches an index when every sort item is the same
 /// direction (`AllSameOrder`) and the items are a PREFIX of the index's
-/// columns, mapped to unique ids through the source's schema (an index
-/// column's `Offset` addresses the TABLE column list, which is the scan's
-/// schema order). Constant-column skipping and the common-handle suffix
+/// columns, mapped to unique ids through retained table-order columns, not
+/// the pruned output schema. Constant-column skipping and the common-handle suffix
 /// extension are ranger-fed refinements, named as later slices.
 /// Go `DataSource.IsSingleScan` (`logical_datasource.go:677`) over the
 /// catalog's offset/name model, in the `ColsRequiringFullLen == nil`
@@ -497,9 +618,6 @@ fn index_path_matches_order(
     if prop.is_sort_item_empty() || !all_same {
         return false;
     }
-    let Some(schema) = ds.base.base.schema() else {
-        return false;
-    };
     if index.columns.len() < prop.sort_items.len() {
         return false;
     }
@@ -510,14 +628,91 @@ fn index_path_matches_order(
             // Go's `isMatchProp` walks `FullIdxCols`, where a prefix-length
             // column has no entry: it cannot carry an order.
             col.length < 0
-                && schema
-                    .columns
+                && ds
+                    .table_columns
                     .get(col.offset)
                     .is_some_and(|schema_col| schema_col.unique_id == item.col)
         })
 }
 
+fn scan_selection(
+    child: PhysicalPlan,
+    conditions: Vec<tidb_expr::expression::Expression>,
+    ds: &crate::logical::DataSource,
+    ctx: &DispatchContext<'_>,
+) -> PhysicalPlan {
+    if conditions.is_empty() {
+        return child;
+    }
+    let mut base = crate::physical::BasePhysicalPlan::new(
+        ctx.allocator,
+        "Selection",
+        ds.base.base.query_block_offset(),
+    );
+    base.base.set_schema(child.schema().cloned());
+    base.base.set_stats(ds.base.base.stats_info().cloned());
+    base.set_children(vec![child]);
+    PhysicalPlan::Selection(crate::physical::PhysicalSelection {
+        base,
+        conditions,
+        from_data_source: true,
+    })
+}
+
+fn promote_correlated_index_access(
+    result: &mut crate::ranger::detacher::DetachRangeResult,
+    columns: &[tidb_expr::column::Column],
+    lengths: &[i64],
+    ctx: &mut DispatchContext<'_>,
+) -> bool {
+    if result.eq_or_in_count != result.access_conds.len() {
+        return false;
+    }
+    let (access, remained) = crate::access_path::split_correlated_access_conditions(
+        &result.remained_conds,
+        columns,
+        lengths,
+        result.eq_or_in_count,
+    );
+    let promoted = !access.is_empty();
+    if promoted {
+        ctx.skip_plan_cache_reason = Some("Correlated subquery is not cached currently");
+    }
+    result.access_conds.extend(access);
+    result.remained_conds = remained;
+    promoted
+}
+
 fn find_best_task_4_logical_data_source(
+    ds: &crate::logical::DataSource,
+    prop: &PhysicalProperty,
+    ctx: &mut DispatchContext<'_>,
+) -> Result<Task, PlanError> {
+    if prop.index_join.is_some() {
+        return super::index_join::find_inner_task(ds, prop, ctx);
+    }
+    // Go findBestTask4LogicalDataSource owns its enforcer branch; this
+    // operator bypasses the general logical-plan search above.
+    if prop.can_add_enforcer {
+        let mut ordered = prop.clone_essential_fields();
+        ordered.can_add_enforcer = false;
+        let natural = find_best_task_4_logical_data_source(ds, &ordered, ctx)?;
+        if !natural.invalid() && !ctx.explore_enforced_data_source {
+            return Ok(natural);
+        }
+        let mut unordered = prop.clone_essential_fields();
+        unordered.sort_items.clear();
+        let scan = find_data_source_scan(ds, &unordered, ctx)?;
+        let enforced = enforce_property(prop, scan, ctx.allocator)?;
+        if !natural.invalid() && compare_task_cost(ctx.coster, &natural, &enforced)? {
+            return Ok(natural);
+        }
+        return Ok(enforced);
+    }
+    find_data_source_scan(ds, prop, ctx)
+}
+
+fn find_data_source_scan(
     ds: &crate::logical::DataSource,
     prop: &PhysicalProperty,
     ctx: &mut DispatchContext<'_>,
@@ -559,25 +754,87 @@ fn find_best_task_4_logical_data_source(
                 base.base.set_schema(ds.base.base.schema().cloned());
                 // Go `buildTableRange` over the pushed conditions: the
                 // int-handle scan's key ranges (full when nothing pushed).
-                let handle_type = ds
-                    .base
-                    .base
-                    .schema()
-                    .and_then(|schema| ds.get_pk_is_handle_col(schema))
+                let pk_column = ds
+                    .pk_is_handle
+                    .then(|| {
+                        ds.table_columns.iter().find(|col| {
+                            col.ret_type.as_ref().is_some_and(|tp| {
+                                tp.flags() & tidb_datatype::FieldTypeFlags::PRI_KEY != 0
+                            })
+                        })
+                    })
+                    .flatten()
+                    .cloned();
+                let handle_type = pk_column
+                    .as_ref()
                     .and_then(|col| col.ret_type.clone())
                     .unwrap_or_else(|| {
                         tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
                     });
-                let ranges = if ds.pushed_down_conds.is_empty() {
-                    crate::ranger::points::full_int_range(handle_type.is_unsigned())
+                let mut correlated_access = false;
+                let (ranges, access_conditions, filters) = if !ds.common_handle_cols.is_empty() {
+                    let mut result =
+                        crate::ranger::detacher::detach_cond_and_build_range_for_index(
+                            &ds.pushed_down_conds,
+                            &ds.common_handle_cols,
+                            &ds.common_handle_lens,
+                            0,
+                        )
+                        .map_err(|error| {
+                            PlanError::internal(format!(
+                                "cannot build common-handle ranges: {error:?}"
+                            ))
+                        })?;
+                    correlated_access = promote_correlated_index_access(
+                        &mut result,
+                        &ds.common_handle_cols,
+                        &ds.common_handle_lens,
+                        ctx,
+                    );
+                    (result.ranges, result.access_conds, result.remained_conds)
                 } else {
-                    match crate::ranger::ranger::build_table_range(
-                        &ds.pushed_down_conds,
-                        &handle_type,
-                        0,
-                    ) {
-                        Ok(result) => result.ranges,
-                        Err(_) => crate::ranger::points::full_int_range(handle_type.is_unsigned()),
+                    let (mut access, mut filters) = pk_column.as_ref().map_or_else(
+                        || (Vec::new(), ds.pushed_down_conds.clone()),
+                        |col| {
+                            crate::ranger::detacher::detach_conds_for_column(
+                                &ds.pushed_down_conds,
+                                col,
+                                true,
+                            )
+                        },
+                    );
+                    if access.is_empty() {
+                        if let Some(pk) = &pk_column {
+                            use tidb_expr::expression::Expression;
+                            if let Some(index) = filters.iter().position(|expr| {
+                                let Expression::ScalarFunction(fun) = expr else { return false; };
+                                if fun.func_name.lowercase() != "eq" { return false; }
+                                matches!(fun.args.as_slice(), [Expression::Column(col), Expression::CorrelatedColumn(_)]
+                                    | [Expression::CorrelatedColumn(_), Expression::Column(col)] if col.unique_id == pk.unique_id)
+                            }) { access.push(filters.remove(index)); correlated_access = true; }
+                        }
+                    }
+                    if correlated_access {
+                        (
+                            crate::ranger::points::full_int_range(handle_type.is_unsigned()),
+                            access,
+                            filters,
+                        )
+                    } else {
+                        let result =
+                            crate::ranger::ranger::build_table_range(&access, &handle_type, 0)
+                                .map_err(|error| {
+                                    PlanError::internal(format!(
+                                        "cannot build table ranges: {error:?}"
+                                    ))
+                                })?;
+                        if result.remained_conds.is_empty() {
+                            (result.ranges, access, filters)
+                        } else {
+                            let ranges = result.ranges;
+                            filters.extend(access);
+                            (ranges, Vec::new(), filters)
+                        }
                     }
                 };
                 // Go `CountAfterAccess`: the pseudo row count over the
@@ -586,11 +843,26 @@ fn find_best_task_4_logical_data_source(
                 let mut stats = ds.base.base.stats_info().cloned();
                 if !ds.pushed_down_conds.is_empty() {
                     if let Some(base_stats) = &stats {
-                        let count = crate::ranger::stats_bridge::pseudo_count_by_int_ranges(
-                            &ranges,
-                            base_stats.row_count(),
-                            handle_type.is_unsigned(),
-                        );
+                        let count = if correlated_access {
+                            if ds.common_handle_cols.is_empty() {
+                                1.0
+                            } else {
+                                crate::cardinality::pseudo::pseudo_avg_count_per_value(
+                                    base_stats.row_count(),
+                                )
+                            }
+                        } else if !ds.common_handle_cols.is_empty() {
+                            crate::ranger::stats_bridge::pseudo_count_by_ranges(
+                                &ranges,
+                                base_stats.row_count(),
+                            )
+                        } else {
+                            crate::ranger::stats_bridge::pseudo_count_by_int_ranges(
+                                &ranges,
+                                base_stats.row_count(),
+                                handle_type.is_unsigned(),
+                            )
+                        };
                         stats = Some(crate::stats_info::StatsInfo::new(
                             count.min(base_stats.row_count()),
                             [],
@@ -605,7 +877,13 @@ fn find_best_task_4_logical_data_source(
                     keep_order,
                     desc,
                     ranges,
+                    access_conditions,
+                    pk_column,
+                    common_handle_cols: ds.common_handle_cols.clone(),
+                    common_handle_lens: ds.common_handle_lens.clone(),
+                    ..Default::default()
                 });
+                let scan = scan_selection(scan, filters, ds, ctx);
                 Task::Cop(crate::task::CopTask {
                     table_plan: Some(Box::new(scan)),
                     index_plan_finished: true,
@@ -638,46 +916,64 @@ fn find_best_task_4_logical_data_source(
                 );
                 base.base.set_schema(ds.base.base.schema().cloned());
                 // Go `detachCondAndBuildRangeForPath`: the index columns
-                // (schema columns at the index's offsets) detach the pushed
+                // (table columns at the index's offsets) detach the pushed
                 // conditions into this path's ranges.
                 let index_cols: Vec<tidb_expr::column::Column> = source_index
                     .columns
                     .iter()
-                    .filter_map(|index_column| {
-                        ds.base
-                            .base
-                            .schema()
-                            .and_then(|schema| schema.columns.get(index_column.offset))
+                    .map(|index_column| {
+                        ds.table_columns
+                            .get(index_column.offset)
                             .cloned()
+                            .ok_or_else(|| {
+                                PlanError::internal("index offset is outside table columns")
+                            })
                     })
-                    .collect();
+                    .collect::<Result<_, _>>()?;
                 let index_lengths: Vec<i64> = source_index
                     .columns
                     .iter()
                     .map(|index_column| index_column.length)
                     .collect();
-                let ranges = if ds.pushed_down_conds.is_empty()
-                    || index_cols.len() != source_index.columns.len()
-                {
-                    crate::ranger::points::full_range()
-                } else {
-                    match crate::ranger::detacher::detach_cond_and_build_range_for_index(
-                        &ds.pushed_down_conds,
-                        &index_cols,
-                        &index_lengths,
-                        0,
-                    ) {
-                        Ok(result) => result.ranges,
-                        Err(_) => crate::ranger::points::full_range(),
-                    }
-                };
+                let mut result = crate::ranger::detacher::detach_cond_and_build_range_for_index(
+                    &ds.pushed_down_conds,
+                    &index_cols,
+                    &index_lengths,
+                    0,
+                )
+                .map_err(|error| {
+                    PlanError::internal(format!("cannot build index ranges: {error:?}"))
+                })?;
+                let correlated_access =
+                    promote_correlated_index_access(&mut result, &index_cols, &index_lengths, ctx);
+                let ranges = result.ranges;
+                let (index_filters, table_filters): (Vec<_>, Vec<_>) =
+                    result.remained_conds.into_iter().partition(|condition| {
+                        tidb_expr::simple_expr::extract_columns(condition)
+                            .iter()
+                            .all(|column| {
+                                ds.handle_cols.iter().any(|handle| {
+                                    ds.pk_is_handle && handle.unique_id == column.unique_id
+                                }) || index_cols.iter().zip(&index_lengths).any(
+                                    |(index_column, length)| {
+                                        *length < 0 && index_column.unique_id == column.unique_id
+                                    },
+                                )
+                            })
+                    });
                 let mut stats = ds.base.base.stats_info().cloned();
                 if !ds.pushed_down_conds.is_empty() {
                     if let Some(base_stats) = &stats {
-                        let count = crate::ranger::stats_bridge::pseudo_count_by_ranges(
-                            &ranges,
-                            base_stats.row_count(),
-                        );
+                        let count = if correlated_access {
+                            crate::cardinality::pseudo::pseudo_avg_count_per_value(
+                                base_stats.row_count(),
+                            )
+                        } else {
+                            crate::ranger::stats_bridge::pseudo_count_by_ranges(
+                                &ranges,
+                                base_stats.row_count(),
+                            )
+                        };
                         stats = Some(crate::stats_info::StatsInfo::new(
                             count.min(base_stats.row_count()),
                             [],
@@ -687,14 +983,22 @@ fn find_best_task_4_logical_data_source(
                 base.base.set_stats(stats);
                 let scan = PhysicalPlan::IndexScan(crate::physical::PhysicalIndexScan {
                     base,
+                    data_source_schema: ds.base.base.schema().cloned().map(std::sync::Arc::new),
                     table_id: ds.physical_table_id,
                     index_id: source_index.id,
                     index_name: source_index.name.clone(),
                     keep_order,
                     desc,
                     ranges,
+                    access_conditions: result.access_conds,
+                    idx_cols: index_cols,
+                    idx_col_lens: index_lengths,
                 });
+                let scan = scan_selection(scan, index_filters, ds, ctx);
                 let table_side = if single_scan {
+                    if !table_filters.is_empty() {
+                        return Err(PlanError::internal("covering index has uncovered filters"));
+                    }
                     None
                 } else {
                     // Go `convertToIndexScan` builds the lookup's table side
@@ -708,18 +1012,18 @@ fn find_best_task_4_logical_data_source(
                         .base
                         .set_stats(ds.base.base.stats_info().cloned());
                     table_base.base.set_schema(ds.base.base.schema().cloned());
-                    Some(Box::new(PhysicalPlan::TableScan(
-                        crate::physical::PhysicalTableScan {
-                            base: table_base,
-                            table_id: ds.physical_table_id,
-                            store_type: crate::physical_table_reader::StoreType::TiKv,
-                            keep_order: false,
-                            desc: false,
-                            // The lookup's table side reads BY HANDLE from
-                            // the index rows, not by its own ranges.
-                            ranges: crate::ranger::types::Ranges::new(),
-                        },
-                    )))
+                    let table_scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+                        base: table_base,
+                        table_id: ds.physical_table_id,
+                        store_type: crate::physical_table_reader::StoreType::TiKv,
+                        keep_order: false,
+                        desc: false,
+                        // The lookup's table side reads BY HANDLE from
+                        // the index rows, not by its own ranges.
+                        ranges: crate::ranger::types::Ranges::new(),
+                        ..Default::default()
+                    });
+                    Some(Box::new(scan_selection(table_scan, table_filters, ds, ctx)))
                 };
                 Task::Cop(crate::task::CopTask {
                     index_plan: Some(Box::new(scan)),
@@ -733,7 +1037,7 @@ fn find_best_task_4_logical_data_source(
         let cur = if cop_answer {
             cop
         } else {
-            cop.convert_to_root_task()?
+            cop.into_root_task()?
         };
         if best.invalid() || compare_task_cost(ctx.coster, &cur, &best)? {
             best = cur;
@@ -787,7 +1091,7 @@ fn enumerate_physical_plans_4_task(
                 continue;
             }
             if !matches!(cur_task, Task::Root(_)) && prop.task_tp == TaskType::Root {
-                cur_task = cur_task.convert_to_root_task()?;
+                cur_task = cur_task.into_root_task()?;
             }
             if add_enforcer {
                 cur_task = enforce_property(prop, cur_task, ctx.allocator)?;
@@ -798,856 +1102,4 @@ fn enumerate_physical_plans_4_task(
         }
     }
     Ok(normal_task)
-}
-
-#[cfg(test)]
-mod tests {
-    // Go's coverage for this loop is planner-integration bound (casetest
-    // plans); these pin the transcreated control flow over a fixture coster.
-
-    use super::*;
-    use crate::logical::{BaseLogicalPlan, LogicalSelection, LogicalTableDual};
-    use crate::physical_property::SortItem;
-    use crate::stats_info::StatsInfo;
-
-    struct CountCoster;
-    impl TaskCoster for CountCoster {
-        fn task_cost(&self, task: &Task) -> Result<f64, PlanError> {
-            fn count(plan: &PhysicalPlan) -> f64 {
-                1.0 + plan.children().iter().map(count).sum::<f64>()
-            }
-            Ok(task.plan().map_or(f64::MAX, count))
-        }
-    }
-
-    fn dual(allocator: &PlanIdAllocator, rows: f64) -> LogicalPlan {
-        let mut base = BaseLogicalPlan::new(allocator, LogicalTableDual::TYPE, 0);
-        base.base.set_stats(Some(StatsInfo::new(rows, [])));
-        LogicalPlan::TableDual(LogicalTableDual::new(base, 1))
-    }
-
-    #[test]
-    fn a_selection_over_a_dual_plans_end_to_end() {
-        // The dispatcher's whole loop on the smallest real tree: exhaust the
-        // selection, recurse into the dual (its own findBestTask override),
-        // attach, and answer a root task.
-        let allocator = PlanIdAllocator::new();
-        let coster = CountCoster;
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
-        let mut base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 0);
-        base.base.set_stats(Some(StatsInfo::new(10.0, [])));
-        base.set_children(vec![dual(&allocator, 10.0)]);
-        let selection = LogicalPlan::Selection(LogicalSelection::new(base, Vec::new()));
-
-        let task =
-            find_best_task(&selection, &PhysicalProperty::default(), &mut ctx).expect("plans");
-        let plan = task.plan().expect("a plan");
-        assert!(matches!(plan, PhysicalPlan::Selection(_)));
-        assert!(matches!(
-            plan.children().first(),
-            Some(PhysicalPlan::TableDual(_))
-        ));
-    }
-
-    #[test]
-    fn a_one_row_dual_satisfies_the_order_without_a_sort() {
-        // The fits-prop pass wins WITHOUT an enforcer: a Selection passes
-        // the required order down (`CloneEssentialFields` keeps SortItems)
-        // and a 1-row dual satisfies any order vacuously
-        // (`findBestTask4LogicalTableDual`), so Go's cheaper sort-free plan
-        // is the answer even with `CanAddEnforcer` set.
-        let allocator = PlanIdAllocator::new();
-        let coster = CountCoster;
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
-        let mut base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 0);
-        base.base.set_stats(Some(StatsInfo::new(10.0, [])));
-        base.set_children(vec![dual(&allocator, 1.0)]);
-        let selection = LogicalPlan::Selection(LogicalSelection::new(base, Vec::new()));
-
-        let prop = PhysicalProperty {
-            sort_items: vec![SortItem::new(7, false)],
-            can_add_enforcer: true,
-            ..PhysicalProperty::default()
-        };
-        let task = find_best_task(&selection, &prop, &mut ctx).expect("plans");
-        let plan = task.plan().expect("a plan");
-        assert!(
-            matches!(plan, PhysicalPlan::Selection(_)),
-            "no Sort: the order rode down to the 1-row dual, got {plan:?}"
-        );
-    }
-
-    #[test]
-    fn an_unsatisfiable_order_is_enforced_with_a_sort_on_top() {
-        // A CTE table refuses EVERY required order
-        // (`findBestTask4LogicalCTETable`), so the fits-prop pass dies at
-        // the child and the ENFORCED branch — empty-property re-exhaust
-        // plus `EnforceProperty` — produces the Sort that wins by validity.
-        use crate::logical::LogicalCTETable;
-        let allocator = PlanIdAllocator::new();
-        let coster = CountCoster;
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
-        let cte = {
-            let mut base = BaseLogicalPlan::new(&allocator, LogicalCTETable::TYPE, 0);
-            base.base.set_stats(Some(StatsInfo::new(4.0, [])));
-            LogicalPlan::CTETable(LogicalCTETable {
-                base,
-                seed_stat: None,
-                name: "c".to_owned(),
-                id_for_storage: 1,
-                seed_schema: None,
-            })
-        };
-        let mut base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 0);
-        base.base.set_stats(Some(StatsInfo::new(4.0, [])));
-        base.set_children(vec![cte]);
-        let selection = LogicalPlan::Selection(LogicalSelection::new(base, Vec::new()));
-
-        let prop = PhysicalProperty {
-            sort_items: vec![SortItem::new(7, false)],
-            can_add_enforcer: true,
-            ..PhysicalProperty::default()
-        };
-        let task = find_best_task(&selection, &prop, &mut ctx).expect("plans");
-        let plan = task.plan().expect("a plan");
-        assert!(
-            matches!(plan, PhysicalPlan::Sort(_)),
-            "the enforcer Sort tops the plan, got {plan:?}"
-        );
-        assert!(matches!(
-            plan.children().first(),
-            Some(PhysicalPlan::Selection(_))
-        ));
-        assert!(matches!(
-            plan.children()[0].children().first(),
-            Some(PhysicalPlan::CTETable(_))
-        ));
-    }
-
-    #[test]
-    fn a_data_source_plans_a_table_reader_through_the_dispatcher() {
-        // The table-path slice end to end: DataSource -> TableScan in a cop
-        // task -> convertToRootTaskImpl's reader -> the Selection attaches
-        // above it. The first table query plannable start to finish.
-        use crate::access_path::PossiblePath;
-        use crate::logical::DataSource;
-
-        let allocator = PlanIdAllocator::new();
-        let coster = CountCoster;
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
-        let source = {
-            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
-            base.base.set_stats(Some(StatsInfo::new(50.0, [])));
-            base.base
-                .set_schema(Some(tidb_expr::schema::Schema::default()));
-            LogicalPlan::DataSource(DataSource {
-                base,
-                physical_table_id: 42,
-                enumerated_paths: vec![PossiblePath::Table {
-                    is_int_handle: true,
-                    primary_index: None,
-                }],
-                ..DataSource::default()
-            })
-        };
-        let mut base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 0);
-        base.base.set_stats(Some(StatsInfo::new(10.0, [])));
-        base.set_children(vec![source]);
-        let selection = LogicalPlan::Selection(LogicalSelection::new(base, Vec::new()));
-
-        let task =
-            find_best_task(&selection, &PhysicalProperty::default(), &mut ctx).expect("plans");
-        let plan = task.plan().expect("a plan");
-        assert!(matches!(plan, PhysicalPlan::Selection(_)));
-        let Some(PhysicalPlan::TableReader(reader)) = plan.children().first() else {
-            panic!(
-                "a TableReader under the selection, got {:?}",
-                plan.children()
-            );
-        };
-        let Some(PhysicalPlan::TableScan(scan)) = reader.table_plan.as_deref() else {
-            panic!("the scan hangs off TablePlan");
-        };
-        assert_eq!(scan.table_id, 42);
-    }
-
-    #[test]
-    fn a_false_pushed_constant_short_circuits_into_a_dual() {
-        // `tryToGetDualTask` (`find_best_task.go:749`): WHERE FALSE never
-        // touches a path.
-        use crate::logical::DataSource;
-        use tidb_datatype::Datum;
-        use tidb_expr::constant::Constant;
-        use tidb_expr::expression::Expression;
-
-        let allocator = PlanIdAllocator::new();
-        let coster = CountCoster;
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
-        let source = {
-            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
-            base.base.set_stats(Some(StatsInfo::new(50.0, [])));
-            LogicalPlan::DataSource(DataSource {
-                base,
-                pushed_down_conds: vec![Expression::Constant(Constant::new(
-                    Datum::Int(0),
-                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                ))],
-                ..DataSource::default()
-            })
-        };
-        let task =
-            find_best_task(&source, &PhysicalProperty::default(), &mut ctx).expect("answers");
-        assert!(
-            matches!(task.plan(), Some(PhysicalPlan::TableDual(_))),
-            "the dual short-circuit, got {:?}",
-            task.plan()
-        );
-    }
-
-    #[test]
-    fn a_handle_ordered_requirement_admits_a_keep_order_scan() {
-        // `matchProperty`'s int-handle arm (`find_best_task.go:1082`): ONE
-        // sort item on the pk-is-handle column admits the scan with
-        // KeepOrder (and Desc for a descending item); any other order
-        // refuses.
-        use crate::access_path::PossiblePath;
-        use crate::logical::DataSource;
-        use tidb_datatype::{FieldType, FieldTypeCode};
-        use tidb_expr::column::Column;
-
-        let allocator = PlanIdAllocator::new();
-        let coster = CountCoster;
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
-        let source = |ctx_alloc: &PlanIdAllocator| {
-            let mut base = BaseLogicalPlan::new(ctx_alloc, "DataSource", 0);
-            base.base.set_stats(Some(StatsInfo::new(50.0, [])));
-            LogicalPlan::DataSource(DataSource {
-                base,
-                pk_is_handle: true,
-                handle_is_int: true,
-                handle_cols: vec![Column::new(9, FieldType::new(FieldTypeCode::LongLong))],
-                enumerated_paths: vec![PossiblePath::Table {
-                    is_int_handle: true,
-                    primary_index: None,
-                }],
-                ..DataSource::default()
-            })
-        };
-
-        // ORDER BY pk DESC: admitted, KeepOrder + Desc.
-        let prop = PhysicalProperty::new(TaskType::Root, &[9], true, f64::MAX, false);
-        let task = find_best_task(&source(&allocator), &prop, &mut ctx).expect("plans");
-        let Some(PhysicalPlan::TableReader(reader)) = task.plan() else {
-            panic!("a TableReader, got {:?}", task.plan());
-        };
-        let Some(PhysicalPlan::TableScan(scan)) = reader.table_plan.as_deref() else {
-            panic!("the scan hangs off TablePlan");
-        };
-        assert!(scan.keep_order && scan.desc);
-
-        // ORDER BY a non-handle column: refused.
-        let prop = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
-        let task = find_best_task(&source(&allocator), &prop, &mut ctx).expect("answers");
-        assert!(task.invalid());
-    }
-
-    #[test]
-    #[test]
-    fn pushed_conditions_become_scan_ranges() {
-        // The ranger wire-in: `WHERE pk > 5` on the int handle fills the
-        // table scan's ranges with `(5, +inf]`; an indexed `b = 7` fills
-        // the index scan's ranges with the point.
-        use crate::access_path::PossiblePath;
-        use crate::logical::data_source::DataSourceColumn;
-        use crate::logical::DataSource;
-        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
-        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-        use tidb_expr::column::Column;
-        use tidb_expr::constant::Constant;
-        use tidb_expr::expression::Expression;
-        use tidb_expr::scalar_function::ScalarFunction;
-        use tidb_expr::schema::Schema;
-
-        let allocator = PlanIdAllocator::new();
-        let coster = crate::find_best_task::coster::Ver2Coster::default();
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
-        let pk = Column::new(11, {
-            let mut ft = FieldType::new(FieldTypeCode::LongLong);
-            ft.set_flags(ft.flags() | tidb_datatype::FieldTypeFlags::PRI_KEY);
-            ft
-        });
-        let b = Column::new(12, FieldType::new(FieldTypeCode::LongLong));
-        let cmp = |name: &str, col: &Column, v: i64| {
-            Expression::ScalarFunction(ScalarFunction::new(
-                tidb_ast::CiString::new(name),
-                FieldType::new(FieldTypeCode::LongLong),
-                vec![
-                    Expression::Column(col.clone()),
-                    Expression::Constant(Constant::new(
-                        Datum::Int(v),
-                        FieldType::new(FieldTypeCode::LongLong),
-                    )),
-                ],
-            ))
-        };
-        let build = |conds: Vec<Expression>, paths: Vec<PossiblePath>| {
-            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
-            base.base.set_stats(Some(StatsInfo::new(100.0, [])));
-            let mut schema = Schema::default();
-            schema.columns = vec![pk.clone(), b.clone()];
-            base.base.set_schema(Some(schema));
-            LogicalPlan::DataSource(DataSource {
-                base,
-                physical_table_id: 7,
-                pk_is_handle: true,
-                columns: vec![
-                    DataSourceColumn {
-                        id: 1,
-                        name: "pk".to_owned(),
-                        is_primary_key: true,
-                    },
-                    DataSourceColumn {
-                        id: 2,
-                        name: "b".to_owned(),
-                        is_primary_key: false,
-                    },
-                ],
-                pushed_down_conds: conds,
-                enumerated_paths: paths,
-                indexes: vec![SourceIndex {
-                    id: 3,
-                    name: "ib".to_owned(),
-                    columns: vec![SourceIndexColumn {
-                        name: "b".to_owned(),
-                        offset: 1,
-                        length: -1,
-                    }],
-                    ..SourceIndex::default()
-                }],
-                ..DataSource::default()
-            })
-        };
-
-        // Table path with pk > 5.
-        let source = build(
-            vec![cmp("gt", &pk, 5)],
-            vec![PossiblePath::Table {
-                is_int_handle: true,
-                primary_index: None,
-            }],
-        );
-        let task = find_best_task(&source, &PhysicalProperty::default(), &mut ctx).expect("plans");
-        let Some(PhysicalPlan::TableReader(reader)) = task.plan() else {
-            panic!("a TableReader, got {:?}", task.plan());
-        };
-        let Some(PhysicalPlan::TableScan(scan)) = reader.table_plan.as_deref() else {
-            panic!("the scan");
-        };
-        assert_eq!(scan.ranges.len(), 1);
-        assert_eq!(scan.ranges[0].to_display_string(), "(5,+inf]");
-        assert!(!crate::ranger::types::has_full_range(&scan.ranges, false));
-        // The pseudo CountAfterAccess: 100 rows / pseudoLessRate(3).
-        let scanned = scan.base.base.stats_info().expect("stats").row_count();
-        assert!((scanned - 100.0 / 3.0).abs() < 1e-9, "{scanned}");
-    }
-
-    #[test]
-    fn a_non_covering_index_plans_the_lookup_double_read() {
-        // `IsSingleScan` end to end: with the catalog's column list filled,
-        // an index that lacks a schema column is NOT a single scan, so its
-        // cop task carries BOTH halves and converts through
-        // `BuildIndexLookUpTask` — while a covering index still plans the
-        // plain IndexReader.
-        use crate::access_path::PossiblePath;
-        use crate::logical::data_source::DataSourceColumn;
-        use crate::logical::DataSource;
-        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
-        use tidb_datatype::{FieldType, FieldTypeCode};
-        use tidb_expr::column::Column;
-        use tidb_expr::schema::Schema;
-
-        let allocator = PlanIdAllocator::new();
-        let coster = crate::find_best_task::coster::Ver2Coster::default();
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
-        let build = |index_columns: Vec<SourceIndexColumn>| {
-            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
-            base.base.set_stats(Some(StatsInfo::new(50.0, [])));
-            let mut schema = Schema::default();
-            schema.columns = vec![
-                Column::new(11, FieldType::new(FieldTypeCode::LongLong)),
-                Column::new(12, FieldType::new(FieldTypeCode::LongLong)),
-            ];
-            base.base.set_schema(Some(schema));
-            LogicalPlan::DataSource(DataSource {
-                base,
-                physical_table_id: 7,
-                columns: vec![
-                    DataSourceColumn {
-                        id: 1,
-                        name: "a".to_owned(),
-                        is_primary_key: false,
-                    },
-                    DataSourceColumn {
-                        id: 2,
-                        name: "b".to_owned(),
-                        is_primary_key: false,
-                    },
-                ],
-                enumerated_paths: vec![
-                    PossiblePath::Table {
-                        is_int_handle: true,
-                        primary_index: None,
-                    },
-                    PossiblePath::Index { index: 0 },
-                ],
-                indexes: vec![SourceIndex {
-                    id: 3,
-                    name: "ib".to_owned(),
-                    columns: index_columns,
-                    ..SourceIndex::default()
-                }],
-                ..DataSource::default()
-            })
-        };
-        let order_by_b = PhysicalProperty::new(TaskType::Root, &[12], false, f64::MAX, false);
-
-        // Index on (b) alone: column `a` is uncovered — the double read
-        // plans, its index side keeping the order and its table side reading
-        // the rows back.
-        let narrow = build(vec![SourceIndexColumn {
-            name: "b".to_owned(),
-            offset: 1,
-            length: -1,
-        }]);
-        let task = find_best_task(&narrow, &order_by_b, &mut ctx).expect("plans");
-        let Some(PhysicalPlan::IndexLookUpReader(lookup)) = task.plan() else {
-            panic!("an IndexLookUpReader, got {:?}", task.plan());
-        };
-        assert!(lookup.keep_order, "the double read carries the order");
-        assert!(
-            matches!(lookup.index_plan.as_deref(), Some(PhysicalPlan::IndexScan(scan)) if scan.keep_order),
-            "the index side keeps order"
-        );
-        assert!(
-            matches!(
-                lookup.table_plan.as_deref(),
-                Some(PhysicalPlan::TableScan(_))
-            ),
-            "the table side reads rows back"
-        );
-
-        // Index on (b, a): covering, the reader plans as before.
-        let covering = build(vec![
-            SourceIndexColumn {
-                name: "b".to_owned(),
-                offset: 1,
-                length: -1,
-            },
-            SourceIndexColumn {
-                name: "a".to_owned(),
-                offset: 0,
-                length: -1,
-            },
-        ]);
-        let task = find_best_task(&covering, &order_by_b, &mut ctx).expect("plans");
-        assert!(
-            matches!(task.plan(), Some(PhysicalPlan::IndexReader(_))),
-            "got {:?}",
-            task.plan()
-        );
-
-        // A PREFIX index column neither covers its own column
-        // (`isIndexColsCoveringCol` requires full length) nor carries an
-        // order (`isMatchProp` walks `FullIdxCols`): the ordered property
-        // has no server at all.
-        let prefix = build(vec![
-            SourceIndexColumn {
-                name: "b".to_owned(),
-                offset: 1,
-                length: 10,
-            },
-            SourceIndexColumn {
-                name: "a".to_owned(),
-                offset: 0,
-                length: -1,
-            },
-        ]);
-        let task = find_best_task(&prefix, &order_by_b, &mut ctx).expect("answers");
-        assert!(task.invalid(), "a prefix column serves no order");
-    }
-
-    fn an_index_prefix_order_plans_an_index_reader() {
-        // The index-read column end to end: ORDER BY the index's first
-        // column admits the index path (`matchProperty:1095` basic prefix),
-        // the cop's index half converts through `convertToRootTaskImpl`'s
-        // index branch (`task_base.go:563`), and the reader carries the
-        // scan on its IndexPlan field.
-        use crate::access_path::PossiblePath;
-        use crate::logical::DataSource;
-        use crate::plan_builder::catalog::{SourceIndex, SourceIndexColumn};
-        use tidb_datatype::{FieldType, FieldTypeCode};
-        use tidb_expr::column::Column;
-        use tidb_expr::schema::Schema;
-
-        let allocator = PlanIdAllocator::new();
-        let coster = crate::find_best_task::coster::Ver2Coster::default();
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
-        let source = {
-            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
-            base.base.set_stats(Some(StatsInfo::new(50.0, [])));
-            let mut schema = Schema::default();
-            schema.columns = vec![
-                Column::new(11, FieldType::new(FieldTypeCode::LongLong)),
-                Column::new(12, FieldType::new(FieldTypeCode::LongLong)),
-            ];
-            base.base.set_schema(Some(schema));
-            LogicalPlan::DataSource(DataSource {
-                base,
-                physical_table_id: 7,
-                enumerated_paths: vec![
-                    PossiblePath::Table {
-                        is_int_handle: true,
-                        primary_index: None,
-                    },
-                    PossiblePath::Index { index: 0 },
-                ],
-                indexes: vec![SourceIndex {
-                    id: 3,
-                    name: "ib".to_owned(),
-                    columns: vec![SourceIndexColumn {
-                        name: "b".to_owned(),
-                        offset: 1,
-                        length: -1,
-                    }],
-                    ..SourceIndex::default()
-                }],
-                ..DataSource::default()
-            })
-        };
-
-        // ORDER BY the index's column (unique id 12): only the index path
-        // matches, and the plan is an IndexReader over a keep-order scan.
-        let prop = PhysicalProperty::new(TaskType::Root, &[12], false, f64::MAX, false);
-        let task = find_best_task(&source, &prop, &mut ctx).expect("plans");
-        let Some(PhysicalPlan::IndexReader(reader)) = task.plan() else {
-            panic!("an IndexReader, got {:?}", task.plan());
-        };
-        let Some(PhysicalPlan::IndexScan(scan)) = reader.index_plan.as_deref() else {
-            panic!("the scan hangs off IndexPlan");
-        };
-        assert_eq!(scan.index_id, 3);
-        assert!(scan.keep_order && !scan.desc);
-
-        // A two-item order the one-column index cannot cover refuses.
-        let prop = PhysicalProperty::new(TaskType::Root, &[12, 11], false, f64::MAX, false);
-        let task = find_best_task(&source, &prop, &mut ctx).expect("answers");
-        assert!(task.invalid());
-    }
-
-    #[test]
-    fn a_limit_pushes_its_partial_half_into_the_reader() {
-        // The single-read push-down chain end to end
-        // (`attach2Task4PhysicalLimit`, `task.go:619`): the Limit's cop
-        // child property reaches the DataSource, which answers the raw COP
-        // task; the attach pushes a partial limit — Count = Offset + Count,
-        // offset removed — under the reader, and the ROOT limit above keeps
-        // the offset. `derive_limit_stats`' recorded verdict ("awaiting
-        // core/task.go") is hereby closed: its Go caller arrived.
-        use crate::access_path::PossiblePath;
-        use crate::logical::{DataSource, LogicalLimit};
-
-        let allocator = PlanIdAllocator::new();
-        let coster = CountCoster;
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
-        let source = {
-            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
-            base.base.set_stats(Some(StatsInfo::new(100.0, [])));
-            base.base
-                .set_schema(Some(tidb_expr::schema::Schema::default()));
-            LogicalPlan::DataSource(DataSource {
-                base,
-                physical_table_id: 5,
-                enumerated_paths: vec![PossiblePath::Table {
-                    is_int_handle: true,
-                    primary_index: None,
-                }],
-                ..DataSource::default()
-            })
-        };
-        let mut base = BaseLogicalPlan::new(&allocator, LogicalLimit::TYPE, 0);
-        base.base.set_stats(Some(StatsInfo::new(7.0, [])));
-        base.set_children(vec![source]);
-        let limit = LogicalPlan::Limit(LogicalLimit::new(base, 2, 5));
-
-        let task = find_best_task(&limit, &PhysicalProperty::default(), &mut ctx).expect("plans");
-        let plan = task.plan().expect("a plan");
-        let PhysicalPlan::Limit(root_limit) = plan else {
-            panic!("the root Limit tops the plan, got {plan:?}");
-        };
-        assert_eq!((root_limit.offset, root_limit.count), (2, 5));
-        let Some(PhysicalPlan::TableReader(reader)) = plan.children().first() else {
-            panic!(
-                "a TableReader under the root limit, got {:?}",
-                plan.children()
-            );
-        };
-        let Some(PhysicalPlan::Limit(pushed)) = reader.table_plan.as_deref() else {
-            panic!("the pushed partial limit inside the reader");
-        };
-        assert_eq!(
-            (pushed.offset, pushed.count),
-            (0, 7),
-            "offset removed, Count = Offset + Count"
-        );
-        assert!(
-            (pushed.base.base.stats_info().expect("stats").row_count() - 7.0).abs() < f64::EPSILON,
-            "DeriveLimitStats caps the pushed profile at the new count"
-        );
-        assert!(matches!(
-            pushed.base.children().first(),
-            Some(PhysicalPlan::TableScan(_))
-        ));
-    }
-
-    #[test]
-    fn a_topn_over_the_handle_plans_as_a_keep_order_limit_chain() {
-        // TopN's LIMIT half end to end (`getPhysLimits`,
-        // `physical_limit.go:198`): ORDER BY pk LIMIT plans the keep-order
-        // scan through the child property's order, the pushed partial limit
-        // inside the reader, and the root limit above — no Sort anywhere.
-        use crate::access_path::PossiblePath;
-        use crate::logical::{DataSource, LogicalTopN};
-        use tidb_datatype::{FieldType, FieldTypeCode};
-        use tidb_expr::aggregation::ByItems;
-        use tidb_expr::column::Column;
-        use tidb_expr::expression::Expression;
-
-        let allocator = PlanIdAllocator::new();
-        let coster = crate::find_best_task::coster::Ver2Coster::default();
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
-        let source = {
-            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
-            base.base.set_stats(Some(StatsInfo::new(100.0, [])));
-            base.base
-                .set_schema(Some(tidb_expr::schema::Schema::default()));
-            LogicalPlan::DataSource(DataSource {
-                base,
-                physical_table_id: 5,
-                pk_is_handle: true,
-                handle_is_int: true,
-                handle_cols: vec![Column::new(9, FieldType::new(FieldTypeCode::LongLong))],
-                enumerated_paths: vec![PossiblePath::Table {
-                    is_int_handle: true,
-                    primary_index: None,
-                }],
-                ..DataSource::default()
-            })
-        };
-        let mut base = BaseLogicalPlan::new(&allocator, LogicalTopN::TYPE, 0);
-        base.base.set_stats(Some(StatsInfo::new(3.0, [])));
-        base.set_children(vec![source]);
-        let topn = LogicalPlan::TopN(LogicalTopN {
-            base,
-            by_items: vec![ByItems::new(
-                Expression::Column(Column::new(9, FieldType::new(FieldTypeCode::LongLong))),
-                false,
-            )],
-            offset: 1,
-            count: 2,
-            ..LogicalTopN::default()
-        });
-
-        let task = find_best_task(&topn, &PhysicalProperty::default(), &mut ctx).expect("plans");
-        let plan = task.plan().expect("a plan");
-        let PhysicalPlan::Limit(root_limit) = plan else {
-            panic!("the root Limit tops the plan, got {plan:?}");
-        };
-        assert_eq!((root_limit.offset, root_limit.count), (1, 2));
-        let Some(PhysicalPlan::TableReader(reader)) = plan.children().first() else {
-            panic!("a TableReader, got {:?}", plan.children());
-        };
-        let Some(PhysicalPlan::Limit(pushed)) = reader.table_plan.as_deref() else {
-            panic!("the pushed partial limit inside the reader");
-        };
-        assert_eq!((pushed.offset, pushed.count), (0, 3));
-        let Some(PhysicalPlan::TableScan(scan)) = pushed.base.children().first() else {
-            panic!("the scan under the pushed limit");
-        };
-        assert!(scan.keep_order, "the child property's order rode down");
-    }
-
-    #[test]
-    fn a_topn_pushes_its_partial_half_and_wins_over_the_limit_slice() {
-        // Batches 33-34 end to end: ORDER BY a non-handle column LIMIT n
-        // cannot ride keep-order (the LIMIT slice dies at the child), so
-        // the TOPN slice wins — the pushed partial TopN sits inside the
-        // reader (`getPushedDownTopN`'s simple half: Count = Offset +
-        // Count, offset removed, DeriveLimitStats) and the root TopN keeps
-        // the offset. Go's exact plan for this query shape.
-        use crate::access_path::PossiblePath;
-        use crate::logical::{DataSource, LogicalTopN};
-        use tidb_datatype::{FieldType, FieldTypeCode};
-        use tidb_expr::aggregation::ByItems;
-        use tidb_expr::column::Column;
-        use tidb_expr::expression::Expression;
-
-        let allocator = PlanIdAllocator::new();
-        let coster = crate::find_best_task::coster::Ver2Coster::default();
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
-        let source = {
-            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
-            base.base.set_stats(Some(StatsInfo::new(100.0, [])));
-            base.base
-                .set_schema(Some(tidb_expr::schema::Schema::default()));
-            LogicalPlan::DataSource(DataSource {
-                base,
-                physical_table_id: 5,
-                enumerated_paths: vec![PossiblePath::Table {
-                    is_int_handle: true,
-                    primary_index: None,
-                }],
-                ..DataSource::default()
-            })
-        };
-        let mut base = BaseLogicalPlan::new(&allocator, LogicalTopN::TYPE, 0);
-        base.base.set_stats(Some(StatsInfo::new(4.0, [])));
-        base.set_children(vec![source]);
-        let topn = LogicalPlan::TopN(LogicalTopN {
-            base,
-            by_items: vec![ByItems::new(
-                Expression::Column(Column::new(77, FieldType::new(FieldTypeCode::LongLong))),
-                true,
-            )],
-            offset: 1,
-            count: 3,
-            ..LogicalTopN::default()
-        });
-
-        let task = find_best_task(&topn, &PhysicalProperty::default(), &mut ctx).expect("plans");
-        let plan = task.plan().expect("a plan");
-        let PhysicalPlan::TopN(root_topn) = plan else {
-            panic!("the root TopN tops the plan, got {plan:?}");
-        };
-        assert_eq!((root_topn.offset, root_topn.count), (1, 3));
-        let Some(PhysicalPlan::TableReader(reader)) = plan.children().first() else {
-            panic!("a TableReader, got {:?}", plan.children());
-        };
-        let Some(PhysicalPlan::TopN(pushed)) = reader.table_plan.as_deref() else {
-            panic!("the pushed partial TopN inside the reader");
-        };
-        assert_eq!((pushed.offset, pushed.count), (0, 4));
-        assert!(
-            (pushed.base.base.stats_info().expect("stats").row_count() - 4.0).abs() < f64::EPSILON,
-            "DeriveLimitStats caps the pushed profile"
-        );
-    }
-
-    #[test]
-    fn an_aggregate_plans_above_the_reader() {
-        // GROUP BY over a table, end to end: the cop arm of
-        // `attach2Task4PhysicalHashAgg` now SPLITS — the partial half rides
-        // inside the TableReader next to the scan, and the final half
-        // merges above it.
-        use crate::access_path::PossiblePath;
-        use crate::logical::{DataSource, LogicalAggregation};
-
-        let allocator = PlanIdAllocator::new();
-        let coster = crate::find_best_task::coster::Ver2Coster::default();
-        let column_ids = crate::expression_rewriter::ColumnIdAllocator::new();
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0).with_column_ids(&column_ids);
-        let source = {
-            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
-            base.base.set_stats(Some(StatsInfo::new(100.0, [])));
-            base.base
-                .set_schema(Some(tidb_expr::schema::Schema::default()));
-            LogicalPlan::DataSource(DataSource {
-                base,
-                physical_table_id: 5,
-                enumerated_paths: vec![PossiblePath::Table {
-                    is_int_handle: true,
-                    primary_index: None,
-                }],
-                ..DataSource::default()
-            })
-        };
-        let mut base = BaseLogicalPlan::new(&allocator, "HashAgg", 0);
-        base.base.set_stats(Some(StatsInfo::new(10.0, [])));
-        base.set_children(vec![source]);
-        let agg = LogicalPlan::Aggregation(LogicalAggregation {
-            base,
-            ..LogicalAggregation::default()
-        });
-
-        let task = find_best_task(&agg, &PhysicalProperty::default(), &mut ctx).expect("plans");
-        let plan = task.plan().expect("a plan");
-        assert!(matches!(plan, PhysicalPlan::HashAgg(_)), "got {plan:?}");
-        let Some(PhysicalPlan::TableReader(reader)) = plan.children().first() else {
-            panic!("a TableReader, got {:?}", plan.children());
-        };
-        let Some(PhysicalPlan::HashAgg(_)) = reader.table_plan.as_deref() else {
-            panic!("the partial aggregate rides inside the reader");
-        };
-
-        // A required order enumerates nothing (getHashAggs' first gate);
-        // with CanAddEnforcer the enforcer branch sorts ABOVE the agg.
-        let prop = PhysicalProperty {
-            sort_items: vec![crate::physical_property::SortItem::new(1, false)],
-            can_add_enforcer: true,
-            ..PhysicalProperty::default()
-        };
-        let task = find_best_task(&agg, &prop, &mut ctx).expect("plans");
-        let plan = task.plan().expect("a plan");
-        assert!(matches!(plan, PhysicalPlan::Sort(_)), "got {plan:?}");
-        assert!(matches!(
-            plan.children().first(),
-            Some(PhysicalPlan::HashAgg(_))
-        ));
-    }
-
-    #[test]
-    fn a_non_root_requirement_is_the_invalid_task() {
-        // Go's early answer: "Currently all plan cannot totally push down
-        // to TiKV."
-        let allocator = PlanIdAllocator::new();
-        let coster = CountCoster;
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
-        let selection = {
-            let mut base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 0);
-            base.set_children(vec![dual(&allocator, 1.0)]);
-            LogicalPlan::Selection(LogicalSelection::new(base, Vec::new()))
-        };
-        let prop = PhysicalProperty {
-            task_tp: crate::task_type::TaskType::CopSingleRead,
-            ..PhysicalProperty::default()
-        };
-        let task = find_best_task(&selection, &prop, &mut ctx).expect("answers");
-        assert!(task.invalid());
-    }
-
-    #[test]
-    fn the_task_map_memoizes_per_plan_and_property() {
-        // Go's taskMap lookup: the second ask answers from the map. Pinned
-        // by planning twice and checking the map holds entries for both the
-        // selection and its child.
-        let allocator = PlanIdAllocator::new();
-        let coster = CountCoster;
-        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
-        let selection = {
-            let mut base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 0);
-            base.base.set_stats(Some(StatsInfo::new(10.0, [])));
-            base.set_children(vec![dual(&allocator, 1.0)]);
-            LogicalPlan::Selection(LogicalSelection::new(base, Vec::new()))
-        };
-        let first =
-            find_best_task(&selection, &PhysicalProperty::default(), &mut ctx).expect("plans");
-        let entries = ctx.task_map.len();
-        assert!(entries >= 2, "the selection and its child are both stored");
-        let second = find_best_task(&selection, &PhysicalProperty::default(), &mut ctx)
-            .expect("answers from the map");
-        assert_eq!(ctx.task_map.len(), entries, "no new entries on a hit");
-        assert_eq!(
-            format!("{:?}", first.plan().map(super::PhysicalPlan::tp)),
-            format!("{:?}", second.plan().map(super::PhysicalPlan::tp)),
-        );
-    }
 }

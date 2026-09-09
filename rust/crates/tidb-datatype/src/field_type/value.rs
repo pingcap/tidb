@@ -2,6 +2,95 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 
 use super::{FieldType, FieldTypeCode, FieldTypeFlags, UNSPECIFIED_LENGTH};
+use crate::{Datum, TimeType};
+
+/// Go `types.InferParamTypeFromDatum`: execute-time parameter metadata, not
+/// literal display widths. The datum remains byte-preserving and unchanged.
+pub fn infer_param_type_from_datum(datum: &Datum) -> FieldType {
+    // String/ENUM/SET payloads can contain non-UTF-8 bytes. Their parameter
+    // width is unspecified, so inference needs no decoding or replacement.
+    let mut field_type = match datum {
+        Datum::Null | Datum::MinNotNull | Datum::MaxValue | Datum::Raw(_) => {
+            // Internal range sentinels and raw encoded storage cells are
+            // not SQL EXECUTE values and carry no typed parameter payload
+            // in this representation.
+            return FieldType::parser(FieldTypeCode::Null)
+                .with_flen(0)
+                .with_decimal(0)
+                .with_charset_name("utf8mb4")
+                .with_collation_name("utf8mb4_bin");
+        }
+        Datum::String(value) => FieldType::parser(FieldTypeCode::VarString)
+            .with_added_flags(FieldTypeFlags::NOT_NULL)
+            .with_charset_name(value.charset().name())
+            .with_collation_name(value.collation().name()),
+        Datum::Enum(..) | Datum::Set(..) => {
+            FieldType::parser(if matches!(datum, Datum::Enum(..)) {
+                FieldTypeCode::Enum
+            } else {
+                FieldTypeCode::Set
+            })
+            .with_added_flags(FieldTypeFlags::NOT_NULL | FieldTypeFlags::BINARY)
+            .with_charset_name("binary")
+            .with_collation_name("binary")
+        }
+        _ => {
+            let value = match datum {
+                Datum::Int(value) => FieldTypeValue::Signed(*value),
+                Datum::UInt(value) => FieldTypeValue::Unsigned(*value),
+                Datum::Real(value) => FieldTypeValue::Float64(*value),
+                Datum::Float32(value) => FieldTypeValue::Float32(*value as f32),
+                Datum::Bytes(value) => FieldTypeValue::Bytes(value),
+                Datum::BinaryLiteral(value) | Datum::Bit(value) => {
+                    FieldTypeValue::BinaryLiteral(value.as_bytes())
+                }
+                Datum::Decimal(value) => FieldTypeValue::Decimal {
+                    display_len: value.to_string().len() as i64,
+                    fraction_digits: i64::from(value.precision_and_frac().1),
+                },
+                Datum::Duration(value) => FieldTypeValue::Duration {
+                    display_len: value.to_string().len() as i64,
+                    fsp: value.fsp(),
+                },
+                Datum::Time(value) => match value.kind() {
+                    TimeType::Date => FieldTypeValue::Date,
+                    TimeType::DateTime => FieldTypeValue::Datetime {
+                        fsp: i64::from(value.fsp()),
+                    },
+                    TimeType::Timestamp => FieldTypeValue::Timestamp {
+                        fsp: i64::from(value.fsp()),
+                    },
+                },
+                Datum::Json(_) => FieldTypeValue::Json,
+                Datum::VectorFloat32(_) => FieldTypeValue::VectorFloat32,
+                Datum::Null
+                | Datum::MinNotNull
+                | Datum::MaxValue
+                | Datum::Raw(_)
+                | Datum::String(_)
+                | Datum::Enum(..)
+                | Datum::Set(..) => {
+                    unreachable!("handled non-scalar datum above")
+                }
+            };
+            default_field_type_for_value(value, "utf8mb4", "utf8mb4_bin")
+        }
+    };
+    if matches!(
+        field_type.code(),
+        FieldTypeCode::LongLong
+            | FieldTypeCode::VarString
+            | FieldTypeCode::Double
+            | FieldTypeCode::Blob
+            | FieldTypeCode::Bit
+            | FieldTypeCode::Duration
+            | FieldTypeCode::Enum
+            | FieldTypeCode::Set
+    ) {
+        field_type.set_flen(UNSPECIFIED_LENGTH);
+    }
+    field_type
+}
 
 /// Source value shapes accepted by `DefaultTypeForValue`.
 #[derive(Debug, Clone, PartialEq)]
@@ -119,13 +208,13 @@ pub fn default_field_type_for_value(
         FieldTypeValue::Float32(value) => binary(
             field_type
                 .with_code(FieldTypeCode::Float)
-                .with_flen(value.to_string().len() as i64)
+                .with_flen(go_fixed_shortest_f32(value).len() as i64)
                 .with_decimal(UNSPECIFIED_LENGTH),
         ),
         FieldTypeValue::Float64(value) => binary(
             field_type
                 .with_code(FieldTypeCode::Double)
-                .with_flen(value.to_string().len() as i64)
+                .with_flen(go_fixed_shortest_f64(value).len() as i64)
                 .with_decimal(UNSPECIFIED_LENGTH),
         ),
         FieldTypeValue::Bytes(value) => binary(

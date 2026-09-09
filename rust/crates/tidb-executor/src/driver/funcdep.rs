@@ -87,7 +87,9 @@ pub(crate) fn scope_fd_set(
 fn flat_scope_fds(scope: &FromScope) -> FdSet {
     let mut fds = FdSet::new();
     for table in &scope.tables {
-        fds.make_cartesian_product(&table_fd_set(table));
+        let table_fds = table_fd_set(table);
+        fds.make_cartesian_product(&table_fds);
+        fds.not_null_cols.union_with(&table_fds.not_null_cols);
     }
     fds
 }
@@ -169,6 +171,7 @@ fn build_join_fds(
                 apply_selection(&mut fds, scope, on);
             }
             apply_column_equalities(&mut fds, &common);
+            fds.not_null_cols.union_with(&right.fds.not_null_cols);
             Some(RelationFds {
                 fds,
                 cols: left.cols.union(&right.cols),

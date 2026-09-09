@@ -55,57 +55,23 @@ pub struct ProjectionExpr {
     pub direct_input: Option<ColumnId>,
 }
 
-/// The logical node kinds a derived-table join group is built from.
+/// The private statistics tree still used by the executor's join reorderer.
 ///
-/// # This is a SECOND logical tree, and deleting it is a two-crate change
+/// DataSource leaves own the shared `StatsInfo` table profile; predicate
+/// selectivity is supplied by the executor's catalog-aware estimator.
+/// Arithmetic is delegated to `tidb_planner`, not reimplemented here.
 ///
-/// [`crate::logical::LogicalPlan`] is the crate's one source of truth for a
-/// logical plan: a closed enum of 27 operators that [`crate::plan_builder`]
-/// produces and [`crate::logical::rule`] rewrites. This type is a reduced,
-/// five-variant invention of this port; Go has one `base.LogicalPlan` and
-/// `DeriveStats` is a method on it. It SHOULD go away, and this pass should
-/// consume `&LogicalPlan`.
-///
-/// That retarget was attempted and stopped at a blocker outside this crate.
-/// `crates/tidb-executor/src/driver/join_reorder.rs` imports [`derive_stats`],
-/// `LogicalNode`, [`ProjectionExpr`], [`JoinKind`], [`ColumnId`] and
-/// [`DISTINCT_FACTOR`] from here, naming `LogicalNode` at 29 points of which
-/// 14 BUILD one out of its own `Rel`/`RowSource` catalog model — `emit` (its
-/// `LogicalNode::DataSource` builder), `emit_tree` (its `Join` spine), and the
-/// test models below them. That driver holds no `LogicalPlan` and has no
-/// `expression::Expression` values with which to build one, so it cannot be
-/// repointed at `LogicalPlan` from inside `tidb-planner`.
-///
-/// What a real retarget needs, in order:
-///
-/// 1. An owner for `tidb-executor`, because its 14 construction sites move or
-///    die with this type.
-/// 2. A decision on which way the dependency runs: either that driver learns
-///    to build `LogicalPlan` values (it needs a `PlanIdAllocator`, a `Schema`
-///    per relation, and equi-join conditions as `Expression`s, none of which
-///    it currently has), or `LogicalNode` moves DOWN into `tidb-executor` as
-///    that driver's private cost model and leaves this crate entirely.
-/// 3. A caller-supplied statistics source keyed by `table_id` /
-///    `physical_table_id`. `logical::DataSource` carries `table_stats:
-///    Option<StatsInfo>` (Go `DataSource.TableStats`) but NOT `selectivity`
-///    (Go's `Selectivity(ds.PushedDownConds)`) and not `group_ndvs`, and this
-///    crate has no selectivity implementation — `selectivity` has always been
-///    a precomputed input here and must stay one.
-/// 4. The 27-vs-5 decision, with no `_ =>` arm: only operators whose Go
-///    `DeriveStats` provably leaves the row count unchanged may pass through,
-///    everything else must REFUSE. Silently treating a `Limit` or `TopN` as
-///    its child inflates the estimate, which is a silent wrong-answer bug in
-///    cost-based planning.
+/// This is not a reusable logical plan. The driver must eventually retain
+/// `tidb_planner::logical::LogicalPlan`, its schema identities and compiled
+/// conditions across physical alternatives. Until then, unmodeled operators
+/// must be rejected rather than treated as row-count-preserving children.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LogicalNode {
     /// A base table after predicate pushdown.
     DataSource {
-        /// `StatisticTable.RealtimeCount`; `10000` for a pseudo table.
-        realtime_count: f64,
-        /// Go `DataSource.TableStats.ColNDVs`, keyed by column unique ID.
-        column_ndvs: BTreeMap<ColumnId, f64>,
-        /// Exact composite-index NDVs from `DataSource.TableStats.GroupNDVs`.
-        group_ndvs: Vec<GroupNdv>,
+        /// Go DataSource.TableStats, including the original row count,
+        /// column UniqueIDs and composite-index NDVs.
+        table_stats: StatsInfo,
         /// `Selectivity(ds.PushedDownConds)`, already computed.
         selectivity: f64,
     },
@@ -283,12 +249,12 @@ fn derive_stats_with_groups(
 ) -> DerivedNode {
     match node {
         LogicalNode::DataSource {
-            realtime_count,
-            column_ndvs,
-            group_ndvs,
+            table_stats,
             selectivity,
         } => {
-            let group_ndvs = group_ndvs
+            let mut stats = table_stats.scale(*selectivity, ctx.scale_ndv_skew_ratio);
+            let group_ndvs = stats
+                .group_ndvs()
                 .iter()
                 .filter(|group| {
                     let mut group_columns = group.columns.clone();
@@ -311,13 +277,9 @@ fn derive_stats_with_groups(
                 })
                 .cloned()
                 .collect();
-            let table_stats = StatsInfo::new(
-                *realtime_count,
-                column_ndvs.iter().map(|(id, ndv)| (*id, *ndv)),
-            )
-            .with_group_ndvs(group_ndvs);
+            stats.set_group_ndvs(group_ndvs);
             DerivedNode {
-                stats: table_stats.scale(*selectivity, ctx.scale_ndv_skew_ratio),
+                stats,
                 children: Vec::new(),
                 injected: false,
             }
@@ -532,7 +494,9 @@ fn derive_stats_with_groups(
 
 fn logical_columns(node: &LogicalNode) -> BTreeSet<ColumnId> {
     match node {
-        LogicalNode::DataSource { column_ndvs, .. } => column_ndvs.keys().copied().collect(),
+        LogicalNode::DataSource { table_stats, .. } => {
+            table_stats.col_ndvs().keys().copied().collect()
+        }
         LogicalNode::Selection { child } => logical_columns(child),
         LogicalNode::Projection { exprs, .. } => exprs.iter().map(|expr| expr.output).collect(),
         LogicalNode::Aggregation { columns, .. } => columns.iter().copied().collect(),

@@ -206,29 +206,8 @@ impl Session {
         )
     }
 
-    /// The record keys a pessimistic point write locks BEFORE it runs -- the
-    /// session-layer entry to [`tidb_executor::access_path::pessimistic_write_point_keys`].
-    /// An EXECUTE template resolves its `?` markers against `params`; an
-    /// already-bound tree carries constants and takes an empty slice. Empty
-    /// output means "no fold": the statement keeps today's read-then-lock
-    /// order.
-    #[must_use]
-    pub fn pessimistic_write_point_keys(&self, stmt: &Stmt, params: &[Datum]) -> Vec<Vec<u8>> {
-        let catalog = self
-            .catalog
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        tidb_executor::access_path::pessimistic_write_point_keys(
-            stmt,
-            params,
-            &catalog,
-            self.current_database(),
-            &self.session_time_zone(),
-        )
-    }
-
     /// The record keys a text-protocol statement locks BEFORE it runs: both
-    /// pre-lock arms ([`tidb_executor::access_path::pessimistic_statement_prelock_keys`])
+    /// pre-lock arms ([`tidb_executor::access_path::PessimisticPrelock`])
     /// over one parse of the statement. A statement that is not a pessimistic
     /// point write or a pessimistic point locking read classifies as an empty
     /// key set and keeps today's read-then-lock order.
@@ -240,64 +219,36 @@ impl Session {
         self.statement_prelock_keys(&stmt)
     }
 
-    /// [`Self::statement_prelock_keys`] for an EXECUTE template: the `?`
-    /// markers resolve against the execute parameters before classification,
-    /// exactly as [`Self::pessimistic_write_point_keys`] binds them.
+    /// Pre-lock keys from a retained EXECUTE template. Classify its shape
+    /// before touching the catalog, then bind only its key predicate. The
+    /// execute protocol validates the full parameter count before this call.
     #[must_use]
     pub fn prepared_statement_prelock_keys(&self, stmt: &Stmt, params: &[Datum]) -> Vec<Vec<u8>> {
-        let bound;
-        let stmt: &Stmt = if params.is_empty() {
-            stmt
-        } else {
-            match tidb_executor::bind_statement(stmt.clone(), params) {
-                Ok(bound_stmt) => {
-                    bound = bound_stmt;
-                    &bound
-                }
-                Err(_) => return Vec::new(),
-            }
+        let Some(prelock) = tidb_executor::access_path::PessimisticPrelock::from_statement(stmt) else {
+            return Vec::new();
         };
-        self.statement_prelock_keys(stmt)
-    }
-
-    /// [`Self::text_statement_prelock_keys`] over an already-parsed
-    /// statement.
-    #[must_use]
-    pub fn statement_prelock_keys(&self, stmt: &Stmt) -> Vec<Vec<u8>> {
+        // Go BatchPointGet locks all named keys before reading under RR,
+        // but only existing rows after reading under RC. The latter uses
+        // the executor's selected-row collector, not a speculative key set.
+        if prelock.is_locking_read() && self.read_committed_locking() {
+            return Vec::new();
+        }
         let catalog = self
             .catalog
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        tidb_executor::access_path::pessimistic_statement_prelock_keys(
-            stmt,
-            &catalog,
-            self.current_database(),
-            &self.session_time_zone(),
-        )
-    }
-
-    /// Classifies the narrow prepared clustered-handle point read directly
-    /// from its retained template and execute values.  Unlike
-    /// [`Self::statement_read_shape_parsed`], this path does not clone and
-    /// bind the complete AST; a refusal returns `Unknown` and lets the caller
-    /// use the ordinary bound-tree path.
-    #[must_use]
-    pub fn fast_prepared_statement_read_shape(
-        &self,
-        statement: &Stmt,
-        params: &[Datum],
-    ) -> StatementReadShape {
-        let catalog = self
-            .catalog
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        tidb_executor::access_path::prepared_statement_read_shape(
-            statement,
+        prelock.bind_keys(
             params,
             &catalog,
             self.current_database(),
             &self.session_time_zone(),
         )
+    }
+
+    /// [`Self::text_statement_prelock_keys`] over an already-bound statement.
+    #[must_use]
+    pub fn statement_prelock_keys(&self, stmt: &Stmt) -> Vec<Vec<u8>> {
+        self.prepared_statement_prelock_keys(stmt, &[])
     }
 
     /// Classifies a statement by parsing alone (no execution), so a caller can

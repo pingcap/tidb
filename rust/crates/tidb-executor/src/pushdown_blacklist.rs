@@ -111,7 +111,18 @@ pub(crate) fn blacklist_admits(
         // has an opinion about; whatever refuses it does so on its own.
         return true;
     };
-    admits(&rewritten, blacklist, store)
+    compiled_blacklist_admits(&rewritten, ctx, store)
+}
+
+/// The blacklist verdict for a condition its planner already built. Go
+/// `PushDownExprs` walks this tree; it does not rewrite the SQL again.
+pub(crate) fn compiled_blacklist_admits(
+    condition: &Expression,
+    ctx: &crate::StmtContext,
+    store: PushDownStore,
+) -> bool {
+    let blacklist = ctx.expr_pushdown_blacklist();
+    blacklist.is_empty() || admits(condition, blacklist, store)
 }
 
 /// Go `CheckAggPushDown`'s last line: `ret = IsPushDownEnabled(aggFunc.Name,
@@ -148,11 +159,10 @@ pub(crate) fn aggregate_admits(
         Agg::GroupBy { .. } => true,
         Agg::Count { .. } => admits_name("count"),
         Agg::Sum { .. } => admits_name("sum"),
-        Agg::GroupBySum { .. } => admits_name("sum"),
         Agg::Grouped { functions, .. } => functions
             .iter()
             .all(|function| admits_name(name_of(function.kind)) && admits_arg(function.input.as_ref())),
-        Agg::Global { functions } => functions
+        Agg::Global { functions, .. } => functions
             .iter()
             .all(|function| admits_name(name_of(function.kind)) && admits_arg(function.input.as_ref())),
     }

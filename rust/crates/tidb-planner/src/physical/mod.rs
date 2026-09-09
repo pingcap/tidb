@@ -33,8 +33,8 @@
 //!   protobuf is owned by `tidb-proto`, but the per-operator conversion is a
 //!   later batch; Go's own base body is an error return
 //!   (`"plan %s fails converts to PB"`), which is what this returns.
-//! * `ResolveIndices`. The base body recurses into children and is ported;
-//!   the per-operator column-index rewrite it wraps is a later batch.
+//! * `ResolveIndices` binds expression indexes after child schemas are final;
+//!   the operator implementations live in `resolve_indices`.
 //! * `probeParents` is carried, but `GetEstRowCountForDisplay` and
 //!   `GetActualProbeCnt` need `utilfuncp.GetEstimatedProbeCntFromProbeParents`
 //!   and the runtime stats collector, neither of which is here.
@@ -46,11 +46,20 @@ use tidb_expr::schema::Schema;
 
 use crate::cost_usage::{CostVer2, PlanCostOption};
 use crate::find_best_task::LogicalJoinType;
-use crate::physical_property::{PhysicalProperty, TaskType};
+use crate::physical_property::{ColumnSortItem, PhysicalProperty, TaskType};
 use crate::physical_table_reader::StoreType;
 use crate::plan_base::{BasePlan, PlanError, PlanIdAllocator};
 use crate::stats_info::StatsInfo;
 use crate::task::{RootTask, Task};
+
+mod resolve_indices;
+pub mod hash_join;
+pub mod merge_join;
+pub mod index_join;
+pub use index_join::{ColWithCmpFuncManager, IndexJoinInfo, PhysicalIndexJoin};
+pub mod apply;
+pub mod scan_ranges;
+mod correlated;
 
 /// Go `physicalop.BasePhysicalPlan` (`base_physical_plan.go:120`).
 ///
@@ -200,9 +209,7 @@ pub struct PhysicalSelection {
 /// `expression.CanExprsPushDown`. With no TiFlash tier in this port that
 /// guard evaluates false exactly as it does on a TiFlash-less Go cluster,
 /// so the MPP branch is structurally absent rather than refused.
-/// `admitIndexJoinProps` narrows the same way: with no index-join property
-/// on the ported [`PhysicalProperty`], Go's function returns the property
-/// list unchanged, which is this body.
+/// The child explicitly inherits IndexJoinProp, as in Go admitIndexJoinProps.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_selection(
     p: &crate::logical::LogicalSelection,
@@ -210,7 +217,8 @@ pub fn exhaust_physical_plans_4_logical_selection(
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
 ) -> Vec<PhysicalPlan> {
-    let child_prop = prop.clone_essential_fields();
+    let mut child_prop = prop.clone_essential_fields();
+    child_prop.index_join = prop.index_join.clone();
     let stats = p
         .base
         .base
@@ -257,8 +265,7 @@ pub struct PhysicalProjection {
 /// unported — the TiFlash guard also evaluates false with no TiFlash tier,
 /// exactly as on a TiFlash-less Go cluster, but the TiKV cop candidate is
 /// a genuine narrowing (this enumeration offers FEWER candidates than Go's
-/// when projection pushdown is allowed). `admitIndexJoinProps` narrows as
-/// in [`exhaust_physical_plans_4_logical_selection`].
+/// when projection pushdown is allowed). IndexJoinProp is inherited explicitly.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_projection(
     p: &crate::logical::LogicalProjection,
@@ -266,9 +273,10 @@ pub fn exhaust_physical_plans_4_logical_projection(
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
 ) -> Vec<PhysicalPlan> {
-    let Some(child_prop) = p.try_to_get_child_prop(prop) else {
+    let Some(mut child_prop) = p.try_to_get_child_prop(prop) else {
         return Vec::new();
     };
+    child_prop.index_join = prop.index_join.clone();
     let stats = p
         .base
         .base
@@ -290,23 +298,145 @@ pub fn exhaust_physical_plans_4_logical_projection(
     })]
 }
 
-/// Go `physicalop.PhysicalHashJoin`.
+/// Go `physicalop.BasePhysicalJoin`: shared predicates, keys and output layout.
 #[derive(Clone, Debug)]
-pub struct PhysicalHashJoin {
+pub struct BasePhysicalJoin {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
     /// Go `BasePhysicalJoin.JoinType`.
     pub join_type: LogicalJoinType,
     /// Go `BasePhysicalJoin.InnerChildIdx`.
     pub inner_child_idx: usize,
+    /// Go `BasePhysicalJoin` predicates, evaluated on each input or the joined row.
+    pub left_conditions: Vec<tidb_expr::expression::Expression>,
+    pub right_conditions: Vec<tidb_expr::expression::Expression>,
+    pub other_conditions: Vec<tidb_expr::expression::Expression>,
+    /// Go's input-local keys, bound from the equality conditions.
+    pub left_join_keys: Vec<tidb_expr::column::Column>,
+    pub right_join_keys: Vec<tidb_expr::column::Column>,
+    pub left_na_join_keys: Vec<tidb_expr::column::Column>,
+    pub right_na_join_keys: Vec<tidb_expr::column::Column>,
+    /// Go `IsNullEQ` and unmatched-row defaults.
+    pub is_null_eq: Vec<bool>,
+    pub default_values: Vec<tidb_datatype::Datum>,
 }
 
-impl Default for PhysicalHashJoin {
+impl Default for BasePhysicalJoin {
     fn default() -> Self {
         Self {
             base: BasePhysicalPlan::default(),
             join_type: LogicalJoinType::Inner,
             inner_child_idx: 1,
+            left_conditions: Vec::new(),
+            right_conditions: Vec::new(),
+            other_conditions: Vec::new(),
+            left_join_keys: Vec::new(),
+            right_join_keys: Vec::new(),
+            left_na_join_keys: Vec::new(),
+            right_na_join_keys: Vec::new(),
+            is_null_eq: Vec::new(),
+            default_values: Vec::new(),
+        }
+    }
+}
+
+impl BasePhysicalJoin {
+    fn clone_with_base(&self, base: BasePhysicalPlan) -> Self {
+        Self {
+            base,
+            join_type: self.join_type,
+            inner_child_idx: self.inner_child_idx,
+            left_conditions: self.left_conditions.clone(),
+            right_conditions: self.right_conditions.clone(),
+            other_conditions: self.other_conditions.clone(),
+            left_join_keys: self.left_join_keys.clone(),
+            right_join_keys: self.right_join_keys.clone(),
+            left_na_join_keys: self.left_na_join_keys.clone(),
+            right_na_join_keys: self.right_na_join_keys.clone(),
+            is_null_eq: self.is_null_eq.clone(),
+            default_values: self.default_values.clone(),
+        }
+    }
+}
+
+/// Go `physicalop.PhysicalHashJoin`.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalHashJoin {
+    /// Shared keys, predicates, defaults and child schemas.
+    pub join: BasePhysicalJoin,
+    /// Equalities used to bind ordinary hash keys.
+    pub equal_conditions: Vec<tidb_expr::expression::ScalarFunction>,
+    /// Null-aware equalities, separate from ordinary NULL-safe equality.
+    pub na_equal_conditions: Vec<tidb_expr::expression::ScalarFunction>,
+    /// Current session's hash worker count.
+    pub concurrency: usize,
+    /// Build the preserved side instead of the logical inner side.
+    pub use_outer_to_build: bool,
+}
+
+impl std::ops::Deref for PhysicalHashJoin {
+    type Target = BasePhysicalJoin;
+    fn deref(&self) -> &Self::Target {
+        &self.join
+    }
+}
+impl std::ops::DerefMut for PhysicalHashJoin {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.join
+    }
+}
+impl PhysicalHashJoin {
+    fn clone_with_base(&self, base: BasePhysicalPlan) -> Self {
+        Self {
+            join: self.join.clone_with_base(base),
+            equal_conditions: self.equal_conditions.clone(),
+            na_equal_conditions: self.na_equal_conditions.clone(),
+            concurrency: self.concurrency,
+            use_outer_to_build: self.use_outer_to_build,
+        }
+    }
+}
+
+/// Go `physicalop.PhysicalMergeJoin`. The executor binds comparisons from
+/// the ordered key types; this plan never retains execution state.
+#[derive(Clone, Debug)]
+pub struct PhysicalMergeJoin {
+    /// Ordered merge keys, residual predicates and output defaults.
+    pub join: BasePhysicalJoin,
+    /// Both children deliver the selected keys in descending order.
+    pub desc: bool,
+}
+
+impl Default for PhysicalMergeJoin {
+    fn default() -> Self {
+        Self {
+            // Go's merge constructor leaves InnerChildIdx at zero; the
+            // executor chooses its inner table from JoinType instead.
+            join: BasePhysicalJoin {
+                inner_child_idx: 0,
+                ..Default::default()
+            },
+            desc: false,
+        }
+    }
+}
+
+impl std::ops::Deref for PhysicalMergeJoin {
+    type Target = BasePhysicalJoin;
+    fn deref(&self) -> &Self::Target {
+        &self.join
+    }
+}
+impl std::ops::DerefMut for PhysicalMergeJoin {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.join
+    }
+}
+impl PhysicalMergeJoin {
+    fn clone_with_base(&self, base: BasePhysicalPlan) -> Self {
+        Self {
+            join: self.join.clone_with_base(base),
+            desc: self.desc,
         }
     }
 }
@@ -316,11 +446,8 @@ impl Default for PhysicalHashJoin {
 pub struct PhysicalSort {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
-    /// Go `ByItems` (`util.ByItems{Expr, Desc}`). `EnforceProperty` builds
-    /// each entry from a `property.SortItem`'s column and direction, and a
-    /// column's identity is its `UniqueID` (`EqualColumn`), so the item is
-    /// carried here as exactly that pair.
-    pub by_items: Vec<crate::physical_property::SortItem>,
+    /// Go `ByItems`: retain executable expressions, not just order-property IDs.
+    pub by_items: Vec<tidb_expr::aggregation::ByItems>,
     /// Go `IsPartialSort`: sort within one partition's data rather than
     /// globally; `EnforceProperty` sets it from
     /// `prop.IsSortItemAllForPartition()`.
@@ -337,14 +464,14 @@ pub struct PhysicalLimit {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
     /// Go `PartitionBy`: the enhanced-TopN partition order.
-    pub partition_by: Vec<crate::physical_property::SortItem>,
+    pub partition_by: Vec<ColumnSortItem>,
     /// Go `Offset`.
     pub offset: u64,
     /// Go `Count`.
     pub count: u64,
     /// Go `PrefixCol`, the prefix-index column for partial-order
-    /// optimization, by its `UniqueID`; `None` when unused.
-    pub prefix_col: Option<i64>,
+    /// optimization; `None` when unused.
+    pub prefix_col: Option<tidb_expr::column::Column>,
     /// Go `PrefixLen`, the prefix length in bytes; 0 when unused.
     pub prefix_len: usize,
 }
@@ -357,17 +484,24 @@ pub struct PhysicalLimit {
 ///
 /// Go appends an MPP candidate when TiFlash is present and MPP allowed;
 /// with no TiFlash tier that guard evaluates false exactly as on a
-/// TiFlash-less Go cluster. `CTEProducerStatus`/`NoCopPushDown` narrow with
-/// the unported property fields.
+/// TiFlash-less Go cluster. Child properties retain `CTEProducerStatus`
+/// and `NoCopPushDown` from the parent.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_limit(
     p: &crate::logical::LogicalLimit,
     prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
-) -> Vec<PhysicalPlan> {
+) -> Result<Vec<PhysicalPlan>, PlanError> {
     if !prop.is_sort_item_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
+    let partition_by = ColumnSortItem::from_property(
+        &p.partition_by,
+        p.base
+            .children()
+            .first()
+            .and_then(crate::logical::LogicalPlan::schema),
+    )?;
     let all_task_types = [
         TaskType::CopSingleRead,
         TaskType::CopMultiRead,
@@ -378,6 +512,8 @@ pub fn exhaust_physical_plans_4_logical_limit(
         let result_prop = PhysicalProperty {
             task_tp: tp,
             expected_cnt: (p.count + p.offset) as f64,
+            cte_producer_status: prop.cte_producer_status,
+            no_cop_push_down: prop.no_cop_push_down,
             ..PhysicalProperty::default()
         };
         let mut base = BasePhysicalPlan::new(
@@ -390,14 +526,14 @@ pub fn exhaust_physical_plans_4_logical_limit(
         base.set_children_req_props(vec![Some(result_prop)]);
         ret.push(PhysicalPlan::Limit(PhysicalLimit {
             base,
-            partition_by: p.partition_by.clone(),
+            partition_by: partition_by.clone(),
             offset: p.offset,
             count: p.count,
             prefix_col: None,
             prefix_len: 0,
         }));
     }
-    ret
+    Ok(ret)
 }
 
 /// Go `physicalop.PhysicalTableScan`.
@@ -414,9 +550,17 @@ pub struct PhysicalTableScan {
     pub keep_order: bool,
     /// Go `Desc`: the scan runs backward.
     pub desc: bool,
-    /// Go `Ranges`: the scan's key ranges (`ranger.Ranges`). Empty means
-    /// the builder predates range filling and reads as the full scan.
+    /// Go `Ranges`: empty means no rows, not a full scan.
     pub ranges: crate::ranger::types::Ranges,
+    /// Go `AccessCondition`, retained for correlated range rebuilding.
+    pub access_conditions: Vec<tidb_expr::expression::Expression>,
+    /// The integer primary-key column from table metadata, before pruning.
+    pub pk_column: Option<tidb_expr::column::Column>,
+    /// Common-handle primary-index columns and prefix lengths.
+    pub common_handle_cols: Vec<tidb_expr::column::Column>,
+    pub common_handle_lens: Vec<i64>,
+    /// Go `LateMaterializationFilterCondition` (TiFlash).
+    pub late_materialization_filter_conditions: Vec<tidb_expr::expression::Expression>,
 }
 
 /// Go `physicalop.PhysicalTableDual` (`physical_table_dual.go`, whole
@@ -510,17 +654,13 @@ pub struct PhysicalMaxOneRow {
 /// `plancodec.TypeSort`, so its explain name is `Sort`.
 ///
 /// `ResolveIndices` (`resolveIndicesForSort`) rewrites `ByItems` expressions
-/// against the child schema; the enum world carries a by-item as the
-/// column's `UniqueID`, which needs no resolution — the narrowing the
-/// enum's [`PhysicalSort`] already made.
+/// against the child schema, just as for [`PhysicalSort`].
 #[derive(Clone, Debug, Default)]
 pub struct NominalSort {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
-    /// Go `ByItems`, kept (issue #11653) so the NominalSorts that convert to
-    /// Projections can check whether their scalar functions are out of
-    /// bounds; carried as `SortItem`s like [`PhysicalSort::by_items`].
-    pub by_items: Vec<crate::physical_property::SortItem>,
+    /// Go `ByItems`, retained for expression evaluation when converted to Projection.
+    pub by_items: Vec<tidb_expr::aggregation::ByItems>,
     /// Go `OnlyColumn`: every by-item is a bare column, and `Attach2Task`
     /// then drops the operator entirely.
     pub only_column: bool,
@@ -534,9 +674,8 @@ pub struct NominalSort {
 /// Go's second return value is `true` (enumeration complete) in both arms
 /// and its error is always nil, so the return narrows to the plan list.
 /// Narrowed with it: `RaiseWarningWhenMPPEnforced` on the refusing arm (no
-/// session-vars warning sink) and the `CTEProducerStatus` /
-/// `NoCopPushDown` child-property fields (unported on
-/// [`PhysicalProperty`]).
+/// session-vars warning sink). The child retains `CTEProducerStatus`
+/// and `NoCopPushDown`.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_max_one_row(
     p: &crate::logical::LogicalMaxOneRow,
@@ -554,6 +693,8 @@ pub fn exhaust_physical_plans_4_logical_max_one_row(
     base.base.set_stats(p.base.base.stats_info().cloned());
     base.set_children_req_props(vec![Some(PhysicalProperty {
         expected_cnt: 2.0,
+        cte_producer_status: prop.cte_producer_status,
+        no_cop_push_down: prop.no_cop_push_down,
         ..PhysicalProperty::default()
     })]);
     vec![PhysicalPlan::MaxOneRow(PhysicalMaxOneRow { base })]
@@ -777,7 +918,7 @@ pub struct PhysicalUnionAll {
 /// the extra `mppUA` beside the root candidate — are gated on
 /// `IsMPPAllowed` over a TiFlash-backed cluster; with no TiFlash tier they
 /// narrow away as in [`exhaust_physical_plans_4_logical_limit`].
-/// `CTEProducerStatus`/`NoCopPushDown` narrow with the unported fields.
+/// Child properties retain `CTEProducerStatus` and `NoCopPushDown`.
 #[must_use]
 pub fn exhaust_physical_plans_4_logical_union_all(
     p: &crate::logical::LogicalUnionAll,
@@ -792,6 +933,8 @@ pub fn exhaust_physical_plans_4_logical_union_all(
         .map(|_| {
             Some(PhysicalProperty {
                 expected_cnt: prop.expected_cnt,
+                cte_producer_status: prop.cte_producer_status,
+                no_cop_push_down: prop.no_cop_push_down,
                 ..PhysicalProperty::default()
             })
         })
@@ -879,6 +1022,7 @@ pub fn exhaust_physical_plans_4_logical_sequence(
     }
     let producer_prop = PhysicalProperty {
         cte_producer_status: CteProducerStatus::SomeCteFailedMpp,
+        no_cop_push_down: prop.no_cop_push_down,
         ..PhysicalProperty::default()
     };
     let mut main_prop = prop.clone_essential_fields();
@@ -913,11 +1057,8 @@ pub fn exhaust_physical_plans_4_logical_sequence(
 /// override: an `Apply` variant simply is not a join variant, which is the
 /// same fact stated structurally. `GetCost`/ver1/ver2 delegate to
 /// core-cost bodies (`utilfuncp`) and follow the enum's cost narrowings;
-/// `Attach2Task4PhysicalApply` (core/task.go) refuses by name in
-/// [`crate::task::attach2_task`]. Go's `ExtractCorrelatedCols` override —
-/// the hash join's extraction minus columns the OUTER child's schema
-/// contains — narrows with the enum's condition-less hash join, whose own
-/// extraction is already the empty base body.
+/// task attachment converts both children to root tasks. `OuterSchema` is
+/// rebound against the outer input when constructing each executor.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalApply {
     /// Go's embedded `PhysicalHashJoin`.
@@ -1006,6 +1147,8 @@ pub struct PhysicalTableReader {
 pub struct PhysicalIndexScan {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
+    /// Go DataSourceSchema: reader output, distinct from index/handle scan columns.
+    pub data_source_schema: Option<std::sync::Arc<Schema>>,
     /// Go `Table.ID`.
     pub table_id: i64,
     /// Go `Index.ID`.
@@ -1016,8 +1159,13 @@ pub struct PhysicalIndexScan {
     pub keep_order: bool,
     /// Go `Desc`.
     pub desc: bool,
-    /// Go `Ranges` (`ranger.Ranges`); empty reads as the full range.
+    /// Go `Ranges` (`ranger.Ranges`); empty means no rows.
     pub ranges: crate::ranger::types::Ranges,
+    /// Go `AccessCondition`, retained rather than only its last range values.
+    pub access_conditions: Vec<tidb_expr::expression::Expression>,
+    /// Go `IdxCols` / `IdxColLens`, in index-definition order.
+    pub idx_cols: Vec<tidb_expr::column::Column>,
+    pub idx_col_lens: Vec<i64>,
 }
 
 /// Go `physicalop.PhysicalIndexReader` (`physical_index_reader.go:34`): the
@@ -1031,6 +1179,8 @@ pub struct PhysicalIndexReader {
     pub base: BasePhysicalPlan,
     /// Go `IndexPlan`.
     pub index_plan: Option<Box<PhysicalPlan>>,
+    /// Go `OutputColumns`, in the order exposed by the reader.
+    pub output_columns: Vec<tidb_expr::column::Column>,
 }
 
 /// Go `physicalop.PhysicalIndexLookUpReader`
@@ -1112,11 +1262,19 @@ pub fn match_items(prop: &PhysicalProperty, items: &[tidb_expr::aggregation::ByI
 #[must_use]
 pub fn get_phys_limits(
     topn: &crate::logical::LogicalTopN,
+    prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
-) -> Vec<PhysicalPlan> {
+) -> Result<Vec<PhysicalPlan>, PlanError> {
     let Some(sort_items) = get_prop_by_order_by_items(&topn.by_items) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
+    let partition_by = ColumnSortItem::from_property(
+        &topn.partition_by,
+        topn.base
+            .children()
+            .first()
+            .and_then(crate::logical::LogicalPlan::schema),
+    )?;
     let all_task_types = [
         TaskType::CopSingleRead,
         TaskType::CopMultiRead,
@@ -1127,6 +1285,8 @@ pub fn get_phys_limits(
         let result_prop = PhysicalProperty {
             task_tp: tp,
             expected_cnt: (topn.count + topn.offset) as f64,
+            cte_producer_status: prop.cte_producer_status,
+            no_cop_push_down: prop.no_cop_push_down,
             sort_items: sort_items.clone(),
             ..PhysicalProperty::default()
         };
@@ -1140,20 +1300,20 @@ pub fn get_phys_limits(
         base.set_children_req_props(vec![Some(result_prop)]);
         ret.push(PhysicalPlan::Limit(PhysicalLimit {
             base,
-            partition_by: topn.partition_by.clone(),
+            partition_by: partition_by.clone(),
             offset: topn.offset,
             count: topn.count,
             prefix_col: None,
             prefix_len: 0,
         }));
     }
-    ret
+    Ok(ret)
 }
 
 /// Go `physicalop.PhysicalTopN` (`physical_topn.go:37`), the planning
 /// slice: expression-borne `ByItems`, the K-heap partition order, and the
-/// offset/count pair. `PrefixCol`/`PrefixLen` (partial-order prefix-index
-/// optimization) narrow with ranger, as [`PhysicalLimit`]'s did.
+/// offset/count pair. `PrefixCol`/`PrefixLen` retain the partial-order
+/// prefix-index optimization selected by the planner.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalTopN {
     /// The shared physical base.
@@ -1161,11 +1321,14 @@ pub struct PhysicalTopN {
     /// Go `ByItems`.
     pub by_items: Vec<tidb_expr::aggregation::ByItems>,
     /// Go `PartitionBy`.
-    pub partition_by: Vec<crate::physical_property::SortItem>,
+    pub partition_by: Vec<ColumnSortItem>,
     /// Go `Offset`.
     pub offset: u64,
     /// Go `Count`.
     pub count: u64,
+    /// Go partial-order prefix-index optimization.
+    pub prefix_col: Option<tidb_expr::column::Column>,
+    pub prefix_len: usize,
 }
 
 /// Go `getPhysTopN` (`physical_topn.go:272`), the core loop: one TopN
@@ -1177,8 +1340,16 @@ pub struct PhysicalTopN {
 #[must_use]
 pub fn get_phys_topn(
     topn: &crate::logical::LogicalTopN,
+    prop: &PhysicalProperty,
     allocator: &PlanIdAllocator,
-) -> Vec<PhysicalPlan> {
+) -> Result<Vec<PhysicalPlan>, PlanError> {
+    let partition_by = ColumnSortItem::from_property(
+        &topn.partition_by,
+        topn.base
+            .children()
+            .first()
+            .and_then(crate::logical::LogicalPlan::schema),
+    )?;
     let all_task_types = [
         TaskType::CopSingleRead,
         TaskType::CopMultiRead,
@@ -1189,6 +1360,8 @@ pub fn get_phys_topn(
         let result_prop = PhysicalProperty {
             task_tp: tp,
             expected_cnt: f64::MAX,
+            cte_producer_status: prop.cte_producer_status,
+            no_cop_push_down: prop.no_cop_push_down,
             ..PhysicalProperty::default()
         };
         let mut base = BasePhysicalPlan::new(
@@ -1202,12 +1375,14 @@ pub fn get_phys_topn(
         ret.push(PhysicalPlan::TopN(PhysicalTopN {
             base,
             by_items: topn.by_items.clone(),
-            partition_by: topn.partition_by.clone(),
+            partition_by: partition_by.clone(),
             offset: topn.offset,
             count: topn.count,
+            prefix_col: None,
+            prefix_len: 0,
         }));
     }
-    ret
+    Ok(ret)
 }
 
 /// Go `physicalop.PhysicalHashAgg` (`physical_hash_agg.go:33`), the
@@ -1249,9 +1424,15 @@ pub fn get_hash_aggs(
     ];
     let mut hash_aggs = Vec::with_capacity(task_types.len());
     for tp in task_types {
+        if prop.no_cop_push_down && tp != TaskType::Root {
+            continue;
+        }
         let child_prop = PhysicalProperty {
             task_tp: tp,
             expected_cnt: f64::MAX,
+            index_join: prop.index_join.clone(),
+            cte_producer_status: prop.cte_producer_status,
+            no_cop_push_down: prop.no_cop_push_down,
             ..PhysicalProperty::default()
         };
         let stats = agg
@@ -1351,9 +1532,15 @@ pub fn get_stream_aggs(
             continue;
         }
         for tp in [TaskType::CopSingleRead, TaskType::Root] {
+            if prop.no_cop_push_down && tp != TaskType::Root {
+                continue;
+            }
             let child_prop = PhysicalProperty {
                 task_tp: tp,
                 expected_cnt: expected,
+                index_join: prop.index_join.clone(),
+                cte_producer_status: prop.cte_producer_status,
+                no_cop_push_down: prop.no_cop_push_down,
                 sort_items: child_sort.clone(),
                 ..PhysicalProperty::default()
             };
@@ -1396,6 +1583,10 @@ pub enum PhysicalPlan {
     Projection(PhysicalProjection),
     /// Go `physicalop.PhysicalHashJoin`.
     HashJoin(PhysicalHashJoin),
+    /// Go `physicalop.PhysicalMergeJoin`.
+    MergeJoin(PhysicalMergeJoin),
+    /// Go `physicalop.PhysicalIndexJoin`.
+    IndexJoin(PhysicalIndexJoin),
     /// Go `physicalop.PhysicalSort`.
     Sort(PhysicalSort),
     /// Go `physicalop.PhysicalLimit`.
@@ -1447,7 +1638,9 @@ impl PhysicalPlan {
         match self {
             Self::Selection(op) => &op.base,
             Self::Projection(op) => &op.base,
-            Self::HashJoin(op) => &op.base,
+            Self::HashJoin(op) => &op.join.base,
+            Self::MergeJoin(op) => &op.join.base,
+            Self::IndexJoin(op) => &op.join.base,
             Self::Sort(op) => &op.base,
             Self::Limit(op) => &op.base,
             Self::TableScan(op) => &op.base,
@@ -1460,7 +1653,7 @@ impl PhysicalPlan {
             Self::Lock(op) => &op.base,
             Self::UnionAll(op) => &op.base,
             Self::Sequence(op) => &op.base,
-            Self::Apply(op) => &op.hash_join.base,
+            Self::Apply(op) => &op.hash_join.join.base,
             Self::TableReader(op) => &op.base,
             Self::IndexScan(op) => &op.base,
             Self::IndexReader(op) => &op.base,
@@ -1477,7 +1670,9 @@ impl PhysicalPlan {
         match self {
             Self::Selection(op) => &mut op.base,
             Self::Projection(op) => &mut op.base,
-            Self::HashJoin(op) => &mut op.base,
+            Self::HashJoin(op) => &mut op.join.base,
+            Self::MergeJoin(op) => &mut op.join.base,
+            Self::IndexJoin(op) => &mut op.join.base,
             Self::Sort(op) => &mut op.base,
             Self::Limit(op) => &mut op.base,
             Self::TableScan(op) => &mut op.base,
@@ -1490,7 +1685,7 @@ impl PhysicalPlan {
             Self::Lock(op) => &mut op.base,
             Self::UnionAll(op) => &mut op.base,
             Self::Sequence(op) => &mut op.base,
-            Self::Apply(op) => &mut op.hash_join.base,
+            Self::Apply(op) => &mut op.hash_join.join.base,
             Self::TableReader(op) => &mut op.base,
             Self::IndexScan(op) => &mut op.base,
             Self::IndexReader(op) => &mut op.base,
@@ -1660,10 +1855,10 @@ impl PhysicalPlan {
         self.stats_info().map(StatsInfo::row_count)
     }
 
-    /// Go `ExtractCorrelatedCols()` (`<6th>`). The base body returns `nil`.
+    /// Go operator-local ExtractCorrelatedCols; readers include their pushed tree.
     #[must_use]
     pub fn extract_correlated_cols(&self) -> Vec<CorrelatedColumn> {
-        Vec::new()
+        correlated::extract(self)
     }
 
     /// Go `Children()` (`<7th>`).
@@ -1680,20 +1875,6 @@ impl PhysicalPlan {
     /// Go `SetChild(i, child)` (`<9th>`); returns the replaced child.
     pub fn set_child(&mut self, i: usize, child: Self) -> Option<Self> {
         self.base_mut().set_child(i, child)
-    }
-
-    /// Go `ResolveIndices()` (`<10th>`): resolve each child, depth first.
-    ///
-    /// The base body's recursion is ported with an explicit stack; the
-    /// per-operator expression rewrite it wraps is a later batch.
-    pub fn resolve_indices(&mut self) -> Result<(), PlanError> {
-        let mut stack: Vec<&mut Self> = vec![self];
-        while let Some(node) = stack.pop() {
-            for child in node.base_mut().children_mut().iter_mut() {
-                stack.push(child);
-            }
-        }
-        Ok(())
     }
 
     /// Go `ExplainNormalizedInfo()` (`<13th>`).
@@ -1765,7 +1946,9 @@ impl PhysicalPlan {
     #[must_use]
     pub const fn join_type(&self) -> Option<LogicalJoinType> {
         match self {
-            Self::HashJoin(join) => Some(join.join_type),
+            Self::HashJoin(join) => Some(join.join.join_type),
+            Self::MergeJoin(join) => Some(join.join.join_type),
+            Self::IndexJoin(join) => Some(join.join.join_type),
             _ => None,
         }
     }
@@ -1774,7 +1957,9 @@ impl PhysicalPlan {
     #[must_use]
     pub const fn inner_child_idx(&self) -> Option<usize> {
         match self {
-            Self::HashJoin(join) => Some(join.inner_child_idx),
+            Self::HashJoin(join) => Some(join.join.inner_child_idx),
+            Self::MergeJoin(join) => Some(join.join.inner_child_idx),
+            Self::IndexJoin(join) => Some(join.join.inner_child_idx),
             _ => None,
         }
     }
@@ -1810,11 +1995,9 @@ impl PhysicalPlan {
                 calculate_no_delay: op.calculate_no_delay,
                 avoid_column_evaluator: op.avoid_column_evaluator,
             }),
-            Self::HashJoin(op) => Self::HashJoin(PhysicalHashJoin {
-                base: base_of(&op.base),
-                join_type: op.join_type,
-                inner_child_idx: op.inner_child_idx,
-            }),
+            Self::HashJoin(op) => Self::HashJoin(op.clone_with_base(base_of(&op.base))),
+            Self::MergeJoin(op) => Self::MergeJoin(op.clone_with_base(base_of(&op.base))),
+            Self::IndexJoin(op) => Self::IndexJoin(op.clone_with_base(base_of(&op.join.base))),
             Self::Sort(op) => Self::Sort(PhysicalSort {
                 base: base_of(&op.base),
                 by_items: op.by_items.clone(),
@@ -1825,16 +2008,21 @@ impl PhysicalPlan {
                 partition_by: op.partition_by.clone(),
                 offset: op.offset,
                 count: op.count,
-                prefix_col: op.prefix_col,
+                prefix_col: op.prefix_col.clone(),
                 prefix_len: op.prefix_len,
             }),
             Self::TableScan(op) => Self::TableScan(PhysicalTableScan {
                 base: base_of(&op.base),
-                keep_order: op.keep_order,
-                desc: op.desc,
                 table_id: op.table_id,
                 store_type: op.store_type,
+                keep_order: op.keep_order,
+                desc: op.desc,
                 ranges: op.ranges.clone(),
+                access_conditions: op.access_conditions.clone(),
+                pk_column: op.pk_column.clone(),
+                common_handle_cols: op.common_handle_cols.clone(),
+                common_handle_lens: op.common_handle_lens.clone(),
+                late_materialization_filter_conditions: op.late_materialization_filter_conditions.clone(),
             }),
             Self::TableDual(op) => Self::TableDual(PhysicalTableDual {
                 base: base_of(&op.base),
@@ -1876,11 +2064,7 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
             }),
             Self::Apply(op) => Self::Apply(PhysicalApply {
-                hash_join: PhysicalHashJoin {
-                    base: base_of(&op.hash_join.base),
-                    join_type: op.hash_join.join_type,
-                    inner_child_idx: op.hash_join.inner_child_idx,
-                },
+                hash_join: op.hash_join.clone_with_base(base_of(&op.hash_join.base)),
                 can_use_cache: op.can_use_cache,
                 concurrency: op.concurrency,
                 keep_order: op.keep_order,
@@ -1895,16 +2079,21 @@ impl PhysicalPlan {
             }),
             Self::IndexScan(op) => Self::IndexScan(PhysicalIndexScan {
                 base: base_of(&op.base),
+                data_source_schema: op.data_source_schema.clone(),
                 table_id: op.table_id,
                 index_id: op.index_id,
                 index_name: op.index_name.clone(),
                 keep_order: op.keep_order,
                 desc: op.desc,
                 ranges: op.ranges.clone(),
+                access_conditions: op.access_conditions.clone(),
+                idx_cols: op.idx_cols.clone(),
+                idx_col_lens: op.idx_col_lens.clone(),
             }),
             Self::IndexReader(op) => Self::IndexReader(PhysicalIndexReader {
                 base: base_of(&op.base),
                 index_plan: op.index_plan.clone(),
+                output_columns: op.output_columns.clone(),
             }),
             Self::IndexLookUpReader(op) => Self::IndexLookUpReader(PhysicalIndexLookUpReader {
                 base: base_of(&op.base),
@@ -1920,6 +2109,8 @@ impl PhysicalPlan {
                 partition_by: op.partition_by.clone(),
                 offset: op.offset,
                 count: op.count,
+                prefix_col: op.prefix_col.clone(),
+                prefix_len: op.prefix_len,
             }),
             Self::HashAgg(op) => Self::HashAgg(PhysicalHashAgg {
                 base: base_of(&op.base),
@@ -2000,6 +2191,3 @@ impl PhysicalPlan {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

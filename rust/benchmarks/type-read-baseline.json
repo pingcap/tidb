@@ -1,0 +1,159 @@
+{
+  "status": "WIP: 63 scoped tests and live Go result comparisons pass. Mixed timing completed: sysbench -2.99%, TPC-C two/eight-client +3.28%/-7.35%. Eight-client pairs are all slower; no workload-wide performance improvement. Separate profile and repeated consistency checks are complete; regression causality remains unresolved.",
+  "change": "collation_derive::ret_type_of borrows the existing FieldType through Cow and owns only the pre-existing NULL placeholder. All consumers are read-only. No collation inference, comparison, timeout, cache or workload policy changes.",
+  "source": [
+    "pkg/expression/column.go: Column.GetType and GetStaticType",
+    "pkg/expression/scalar_function.go: ScalarFunction.GetType and GetStaticType",
+    "pkg/expression/constant.go: Constant.GetType (parameter markers remain context-dependent)",
+    "rust/crates/tidb-expr/src/expression.rs: Expression.static_type",
+    "rust/crates/tidb-expr/src/collation_derive.rs: ret_type_of and its read-only consumers",
+    "rust/crates/tidb-executor/src/sort.rs: less_by_items"
+  ],
+  "before": {
+    "port": 53050,
+    "pid": 28926,
+    "sha256": "701d7abb16bd8b88feffa1014d0fbec78c1049bab007ec52d00836196bbd1d7a",
+    "saved": "/private/tmp/tidb-type-read-before-ymJqKj/tidb-server"
+  },
+  "diagnostics": {
+    "tpcc": "/private/tmp/tidb-catalog-cpu-tpcc.json",
+    "sysbench": "/private/tmp/tidb-catalog-cpu-sysbench.json",
+    "tpcc_transactions": 20000,
+    "errors": 0,
+    "tpcc_cpu_interval_seconds": 33.64997287502047,
+    "tpcc_cpu_percent_one_core": {"current_rust": 174.76982884481518, "tikv": 389.9854555229448, "other_34_rust_servers_total": 15.274900871661908},
+    "sysbench_cpu_interval_seconds": 45.107636583969,
+    "sysbench_cpu_percent_one_core": {"current_rust": 84.2872801132571, "tikv": 142.34840231646942, "other_34_rust_servers_total": 12.702948844002174},
+    "sysbench_ret_type_non_wait_frames": 49,
+    "tpcc_ret_type_non_wait_frames": 4,
+    "interpretation": "Cumulative process CPU is measured over each complete diagnostic. The other servers were not stopped; these intervals do not support sustained 16-18% CPU per older server. Stack frame counts are heuristic non-wait classifications, not CPU percentages. Sysbench arguments include the timing helper's --mysql-ssl=off, but rustls frames still appear: matching flags are proven, actual plaintext transport is not. Sampled throughput is not a baseline."
+  },
+  "validation": {
+    "profile": "WIP",
+    "regression_command": "cargo test --offline --locked --release -j12 -p tidb-expr --lib collation_derive::go_tests::static_type_reads_share_metadata_and_keep_null_defaults",
+    "runtime_red": "/private/tmp/tidb-type-read-red-v2.log",
+    "runtime_green": "/private/tmp/tidb-type-read-green.log",
+    "green_command": "cargo test --offline --locked --release -j12 -p tidb-expr --lib collation_derive::",
+    "green_passed": 4,
+    "scoped_commands": [
+      "cargo test --offline --locked --release -j12 -p tidb-expr --lib collation",
+      "cargo test --offline --locked --release -j12 -p tidb-expr --test all info_metadata_source::",
+      "cargo test --offline --locked --release -j12 -p tidb-executor --lib sort::",
+      "cargo test --offline --locked --release -j12 -p tidb-executor --lib topn::"
+    ],
+    "scoped_passes": [31, 3, 13, 16],
+    "total_distinct_scoped_passes": 63,
+    "coverage": "All four expression variants share stored charset/collation allocations; subsequent explicit-collation mutation is visible; missing static types retain the exact NULL type's binary metadata.",
+    "fixture_correction": "The initial compile attempt used a struct literal with private ScalarFunction fields; corrected to its existing public constructor. Only red-v2 is behavioral red."
+  },
+  "after": {
+    "port": 53051,
+    "pid": 17058,
+    "server_session": 25228,
+    "sha256": "4f081c5fd78090b28191e5067906a25eee654791c2e6eb33fe6b25f5a58742d4",
+    "build_command": "cargo build --offline --locked --release -j12 -p tidb-server",
+    "build_seconds": 99,
+    "build_log": "/private/tmp/tidb-type-read-build.log"
+  },
+  "live": {
+    "commands": [
+      "python3 /private/tmp/tidb-type-read-live.py --ports 45000 53051",
+      "python3 /private/tmp/tidb-dirty-order-live.py --ports 45000 53051 --report-mutations",
+      "python3 /private/tmp/tidb-distinct-live.py --ports 45000 53051"
+    ],
+    "all_results_and_affected_rows_match_go": true,
+    "collation_cases_per_endpoint": 27,
+    "overlay_cases_per_endpoint": 11,
+    "distinct_having_cases_per_endpoint": 48,
+    "logs": ["/private/tmp/tidb-type-read-live.jsonl", "/private/tmp/tidb-type-read-overlay.jsonl", "/private/tmp/tidb-type-read-distinct.jsonl"],
+    "notes": "54 collation records, 38 overlay/affected-row records, and 96 DISTINCT/HAVING records. The existing DISTINCT matrix includes three expected Go errors per endpoint. Overlay mutations were rolled back."
+  },
+  "sysbench": {
+    "session": 55965,
+    "status": "complete",
+    "command": "python3 rust/scripts/compare-sysbench.py --server before:53050 --server after:53051 --server go:45000 --database perf_sysbench_locking_v2 --workload oltp_read_write --threads 2 --seconds 30 --rounds 3 --table-size 100000 --output /private/tmp/tidb-type-read-sysbench",
+    "results": "/private/tmp/tidb-type-read-sysbench/results.json",
+    "samples": 9,
+    "errors": 0,
+    "reconnects": 0,
+    "medians": {"before": 378.0715816416652, "after": 366.7729245568979, "go": 373.32657910610914},
+    "median_change_percent": -2.9884967909267757,
+    "paired_change_percent": [-3.0666494441206615, -2.9884967909267757, 2.7466204103577363],
+    "round_tps": {
+      "before": [396.62596315354466, 378.0715816416652, 353.6879988003799],
+      "after": [384.46283525925827, 366.7729245568979, 363.40246556441696],
+      "go": [380.0902564376037, 373.32657910610914, 361.2494250804887]
+    },
+    "interpretation": "Lower candidate median and mixed paired directions; no sysbench speedup. All servers' throughput trends downward across rounds, so causality is not established by the median."
+  },
+  "tpcc": {
+    "session": 71636,
+    "status": "complete",
+    "command": "python3 /private/tmp/tidb-agg-tpcc-compare.py --server before:53050 --server after:53051 --server go:45000 --output /private/tmp/tidb-type-read-tpcc",
+    "results": "/private/tmp/tidb-type-read-tpcc/results.json",
+    "measured_transactions": 180000,
+    "warmup_transactions": 6000,
+    "errors": 0,
+    "groups": [
+      {
+        "threads": 2,
+        "medians": {"before": 454.89682528902676, "after": 469.82702155392883, "go": 452.7485350613748},
+        "median_change_percent": 3.2821060589763196,
+        "paired_change_percent": [-2.1468354243654453, -7.667250246010271, 18.500862041552235],
+        "round_tps": {
+          "before": [480.1347238911022, 454.89682528902676, 403.3983344703399],
+          "after": [469.82702155392883, 420.01874733296097, 478.0305038086169],
+          "go": [424.98790023419446, 463.7121694044158, 452.7485350613748]
+        }
+      },
+      {
+        "threads": 8,
+        "medians": {"before": 687.451097522964, "after": 636.9229014620238, "go": 712.1014912806191},
+        "median_change_percent": -7.350078608209998,
+        "paired_change_percent": [-12.946460335788712, -9.722866794352115, -5.5950138807829175],
+        "round_tps": {
+          "before": [731.6450358237072, 687.451097522964, 679.5186771173086],
+          "after": [636.9229014620238, 620.6111430344946, 641.4995128100827],
+          "go": [769.9342201645424, 712.1014912806191, 564.9817144023681]
+        }
+      }
+    ],
+    "interpretation": "All five transaction kinds and exact counts completed in every sample. The eight-client candidate is slower in all three pairs; do not dismiss this result or claim a gain. Two-client directions are mixed. Shared evolving data and time-seeded transaction mix limit causal attribution."
+  },
+  "postcheck": {
+    "session": 77525,
+    "status": "complete",
+    "commands": [
+      "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc tpcc check -H 127.0.0.1 -P 45000 -U root -D perf_tpcc_locking_v1 --warehouses 1 -T 1",
+      "mysql --protocol=tcp -h127.0.0.1 -P45000 -uroot --plugin-dir=/opt/homebrew/opt/mysql-client/lib/plugin perf_tpcc_locking_v1 < /private/tmp/tidb-tpcc-locking-balance-check.sql"
+    ],
+    "conditions_passed": 11,
+    "customers_checked": 30000,
+    "bad_balances": 0,
+    "bad_delivery_counts": 0,
+    "logs": ["/private/tmp/tidb-type-read-tpcc-check.log", "/private/tmp/tidb-type-read-balances.tsv"]
+  },
+  "after_profile": {
+    "session": 80234,
+    "status": "complete",
+    "command": "python3 /private/tmp/tidb-mixed-workload-profile.py --port 53051 --pid 17058 --stem /private/tmp/tidb-type-read-tpcc-profile --workload tpcc --threads 8",
+    "report": "/private/tmp/tidb-type-read-tpcc-profile.json",
+    "sample": "/private/tmp/tidb-type-read-tpcc-profile.sample.txt",
+    "analysis": "/private/tmp/tidb-type-read-tpcc-profile.active.txt",
+    "transactions": 20000,
+    "errors": 0,
+    "cpu_interval_seconds": 36.00128029100597,
+    "rust_cpu_seconds": 56.140000000000015,
+    "tikv_cpu_seconds": 141.73000000001048,
+    "ret_type_frames": 0,
+    "packet_write_logical_payload_non_wait_frames": 380,
+    "interpretation": "The ret_type_of symbol is absent from this sample; runtime allocation sharing is proved independently by the regression. Rust used 56.14 CPU-seconds for this 20,000-transaction diagnostic versus 58.81 in the earlier diagnostic; TiKV used 141.73 versus 131.23. These unpaired sampled runs have different time-seeded mixes and evolving data, and do not establish throughput improvement or the cause of the paired regression.",
+    "postcheck_commands": "Same commands as postcheck.commands, rerun after profiling",
+    "postcheck_logs": ["/private/tmp/tidb-type-read-profile-check.log", "/private/tmp/tidb-type-read-profile-balances.tsv"],
+    "conditions_passed": 11,
+    "customers_checked": 30000,
+    "bad_balances": 0,
+    "bad_delivery_counts": 0
+  },
+  "remaining": "All test, build, live, timing, profile and postcheck handles are terminal; server 25228 remains running. No servers were stopped. Next investigate generic single-frame response writes: PacketIoWriter.write_logical_payload sends header and payload separately while Go writes a contiguous frame through its buffer. Preserve per-frame sequence advancement and partial-write failures; no protocol edit yet. The eight-client regression, rare stalls and planner estimate/EXPLAIN gaps remain unresolved. No Ready/lint, whole-package completion, commit or push."
+}

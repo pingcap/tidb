@@ -1,0 +1,1875 @@
+{
+  "status": "WIP: Go-alignment and allocation reduction verified; no independent end-to-end performance win accepted.",
+  "change": "Construction folding inspects already-built arguments, observes warnings only in try-fold mode, and commits replacements without snapshot clones. Column binding resolves complete metadata once; statistics-only callers use the identity/type view.",
+  "base_commit": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "worktree": "Shared dirty hparser-integration; unrelated edits preserved. No Git or remote mutation.",
+  "files": [
+    "crates/tidb-expr/src/constant_fold.rs",
+    "crates/tidb-expr/src/rewriter.rs",
+    "crates/tidb-executor/src/driver/from.rs",
+    "crates/tidb-executor/src/access_cost.rs",
+    "crates/tidb-executor/src/driver/access.rs"
+  ],
+  "go_source": [
+    "pkg/expression/scalar_function.go: newFunctionImpl normal/try-fold dispatch",
+    "pkg/expression/constant_fold.go: foldConstant ordinary scalar arm",
+    "pkg/expression/function_traits.go: TryFoldFunctions",
+    "pkg/planner/core/expression_rewriter.go: toColumn",
+    "tests/integrationtest/t/expression/builtin.test: select interval(1,0,1,2,1/0)"
+  ],
+  "evidence_directory": "/private/tmp/tidb-live-profile.RItNBU",
+  "binaries": {
+    "before": "4179bc8d4b09c1747238ca7bbef221e5ac5cabc625a9586ce541e5b2f9d17405",
+    "fold_only": "30d24ad493eae3896838088b2b65578e3c5f012d457a9789b837b15557f152a6",
+    "final": "a7c7ea4b7aaf1b0563c6efce389553955e4b6aef8622e7edce720e7878ba7bab",
+    "replay_before": "d55ad8aadad460291b2c699f73ea14b92608ccc34181df044e0af058dc5414c8",
+    "replay_final": "0d5b449aae674629a08e11d14b102b8236e411d30b08e3ef0fd2147b1fe1d8cb",
+    "source_note": "Only formatting and status documentation changed after the final build."
+  },
+  "measurement": {
+    "qualification": "First whole-workload ABBA run has startup drift and no accepted win. Follow-up pairs adjacent invocations per class, extending point to one million operations per round. Final median reductions of 0.5-1.3 percent are modest and comparable to the untouched point control; no independent throughput gain is accepted. No builds, tests, or sampling alongside timing. Shared host has no host-wide quiescence guarantee. Prior accepted performance baselines remain unchanged.",
+    "first_run": {
+      "summary": {
+        "point": {
+          "before_ns": 968.7808299999999,
+          "after_ns": 1014.84042,
+          "change_percent": 4.754387016514361,
+          "values": [
+            [
+              928.09166,
+              936.83916,
+              937.95666,
+              941.24668,
+              955.8425,
+              981.71916,
+              994.9225,
+              1003.00916,
+              1003.08,
+              1015.3525
+            ],
+            [
+              985.9275,
+              998.19166,
+              1004.59668,
+              1008.2375,
+              1012.71334,
+              1016.9675,
+              1019.37582,
+              1035.66832,
+              1073.2875,
+              1220.41334
+            ]
+          ]
+        },
+        "range": {
+          "before_ns": 24095.64833,
+          "after_ns": 24329.231249999997,
+          "change_percent": 0.9693987760818201,
+          "values": [
+            [
+              23137.215,
+              23186.6725,
+              23191.33834,
+              23699.11418,
+              23728.555,
+              24462.74166,
+              24472.86584,
+              24495.13084,
+              24759.68834,
+              25070.93416
+            ],
+            [
+              23780.635,
+              23801.81668,
+              23970.0275,
+              24320.47,
+              24327.51084,
+              24330.95166,
+              24352.72418,
+              24390.72332,
+              24402.3725,
+              24448.775
+            ]
+          ]
+        },
+        "index": {
+          "before_ns": 39385.83,
+          "after_ns": 40203.142909999995,
+          "change_percent": 2.0751445634127563,
+          "values": [
+            [
+              38141.52084,
+              38214.2525,
+              38320.23084,
+              38728.30334,
+              38772.53084,
+              39999.12916,
+              40145.8875,
+              40319.06,
+              40444.54332,
+              40548.465
+            ],
+            [
+              39930.385,
+              39939.36334,
+              40013.42916,
+              40109.49082,
+              40114.52166,
+              40291.76416,
+              40325.1275,
+              40339.32334,
+              40460.61666,
+              40607.34084
+            ]
+          ]
+        },
+        "aggregate": {
+          "before_ns": 36565.79874,
+          "after_ns": 36911.26208,
+          "change_percent": 0.9447717591414051,
+          "values": [
+            [
+              35225.4075,
+              35565.56334,
+              35882.3675,
+              35925.53084,
+              36090.46666,
+              37041.13082,
+              37058.91584,
+              37090.28082,
+              37211.12918,
+              37446.52332
+            ],
+            [
+              36766.2525,
+              36796.97416,
+              36829.13168,
+              36839.9275,
+              36911.17916,
+              36911.345,
+              36995.13584,
+              37074.145,
+              37198.09668,
+              37254.3975
+            ]
+          ]
+        },
+        "sort": {
+          "before_ns": 32641.17583,
+          "after_ns": 33380.705839999995,
+          "change_percent": 2.265635324694104,
+          "values": [
+            [
+              31908.13,
+              31980.4025,
+              32007.74082,
+              32096.47918,
+              32269.40082,
+              33012.95084,
+              33214.945,
+              33282.39916,
+              33284.11166,
+              33444.8475
+            ],
+            [
+              33222.325,
+              33277.13584,
+              33359.9175,
+              33368.8475,
+              33373.76668,
+              33387.645,
+              33396.97416,
+              33497.8925,
+              33560.3525,
+              33648.00666
+            ]
+          ]
+        }
+      },
+      "runs": [
+        {
+          "stage": "before",
+          "times": [
+            {
+              "kind": "point",
+              "round": 0,
+              "ns": 46404583,
+              "count": 50000
+            },
+            {
+              "kind": "point",
+              "round": 1,
+              "ns": 46897833,
+              "count": 50000
+            },
+            {
+              "kind": "point",
+              "round": 2,
+              "ns": 47062334,
+              "count": 50000
+            },
+            {
+              "kind": "point",
+              "round": 3,
+              "ns": 47792125,
+              "count": 50000
+            },
+            {
+              "kind": "point",
+              "round": 4,
+              "ns": 46841958,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 0,
+              "ns": 1156860750,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 1,
+              "ns": 1159333625,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 2,
+              "ns": 1159566917,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 3,
+              "ns": 1186427750,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 4,
+              "ns": 1184955709,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 0,
+              "ns": 1938626542,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 1,
+              "ns": 1907076042,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 2,
+              "ns": 1916011542,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 3,
+              "ns": 1936415167,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 4,
+              "ns": 1910712625,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 0,
+              "ns": 1794118375,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 1,
+              "ns": 1804523333,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 2,
+              "ns": 1761270375,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 3,
+              "ns": 1778278167,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 4,
+              "ns": 1796276542,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 0,
+              "ns": 1595406500,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 1,
+              "ns": 1599020125,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 2,
+              "ns": 1604823959,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 3,
+              "ns": 1600387041,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 4,
+              "ns": 1613470041,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "after",
+          "times": [
+            {
+              "kind": "point",
+              "round": 0,
+              "ns": 61020667,
+              "count": 50000
+            },
+            {
+              "kind": "point",
+              "round": 1,
+              "ns": 53664375,
+              "count": 50000
+            },
+            {
+              "kind": "point",
+              "round": 2,
+              "ns": 49296375,
+              "count": 50000
+            },
+            {
+              "kind": "point",
+              "round": 3,
+              "ns": 51783416,
+              "count": 50000
+            },
+            {
+              "kind": "point",
+              "round": 4,
+              "ns": 50229834,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 0,
+              "ns": 1189031750,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 1,
+              "ns": 1190090834,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 2,
+              "ns": 1216375542,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 3,
+              "ns": 1198501375,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 4,
+              "ns": 1217636209,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 0,
+              "ns": 2030367042,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 1,
+              "ns": 2023030833,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 2,
+              "ns": 2016966167,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 3,
+              "ns": 1996519250,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 4,
+              "ns": 1996968167,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 0,
+              "ns": 1849756792,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 1,
+              "ns": 1838312625,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 2,
+              "ns": 1839848708,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 3,
+              "ns": 1845567250,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 4,
+              "ns": 1845558958,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 0,
+              "ns": 1669382250,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 1,
+              "ns": 1678017625,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 2,
+              "ns": 1668688334,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 3,
+              "ns": 1674894625,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 4,
+              "ns": 1669848708,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "after",
+          "times": [
+            {
+              "kind": "point",
+              "round": 0,
+              "ns": 50411875,
+              "count": 50000
+            },
+            {
+              "kind": "point",
+              "round": 1,
+              "ns": 50635667,
+              "count": 50000
+            },
+            {
+              "kind": "point",
+              "round": 2,
+              "ns": 50968791,
+              "count": 50000
+            },
+            {
+              "kind": "point",
+              "round": 3,
+              "ns": 50848375,
+              "count": 50000
+            },
+            {
+              "kind": "point",
+              "round": 4,
+              "ns": 49909583,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 0,
+              "ns": 1219536166,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 1,
+              "ns": 1216547583,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 2,
+              "ns": 1216023500,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 3,
+              "ns": 1222438750,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 4,
+              "ns": 1220118625,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 0,
+              "ns": 2000671458,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 1,
+              "ns": 2005726083,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 2,
+              "ns": 2005474541,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 3,
+              "ns": 2014588208,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 4,
+              "ns": 2016256375,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 0,
+              "ns": 1862719875,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 1,
+              "ns": 1841456584,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 2,
+              "ns": 1853707250,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 3,
+              "ns": 1859904834,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 4,
+              "ns": 1841996375,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 0,
+              "ns": 1682400333,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 1,
+              "ns": 1667995875,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 2,
+              "ns": 1668442375,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 3,
+              "ns": 1661116250,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 4,
+              "ns": 1663856792,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "before",
+          "times": [
+            {
+              "kind": "point",
+              "round": 0,
+              "ns": 50767625,
+              "count": 50000
+            },
+            {
+              "kind": "point",
+              "round": 1,
+              "ns": 49746125,
+              "count": 50000
+            },
+            {
+              "kind": "point",
+              "round": 2,
+              "ns": 49085958,
+              "count": 50000
+            },
+            {
+              "kind": "point",
+              "round": 3,
+              "ns": 50150458,
+              "count": 50000
+            },
+            {
+              "kind": "point",
+              "round": 4,
+              "ns": 50154000,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 0,
+              "ns": 1224756542,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 1,
+              "ns": 1253546708,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 2,
+              "ns": 1237984417,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 3,
+              "ns": 1223137083,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 4,
+              "ns": 1223643292,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 0,
+              "ns": 2007294375,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 1,
+              "ns": 2015953000,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 2,
+              "ns": 2027423250,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 3,
+              "ns": 2022227166,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 4,
+              "ns": 1999956458,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 0,
+              "ns": 1852056541,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 1,
+              "ns": 1852945792,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 2,
+              "ns": 1854514041,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 3,
+              "ns": 1872326166,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 4,
+              "ns": 1860556459,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 0,
+              "ns": 1650647542,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 1,
+              "ns": 1660747250,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 2,
+              "ns": 1672242375,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 3,
+              "ns": 1664119958,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 4,
+              "ns": 1664205583,
+              "count": 50000
+            }
+          ]
+        }
+      ],
+      "result_samples": [
+        "RESULT point Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })]] }\n",
+        "RESULT range Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n",
+        "RESULT index Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n",
+        "RESULT aggregate Rows { columns: [(\"sum(k)\", FieldType { code: NewDecimal, flags: 128, flen: 41, decimal: 0, collation: Binary, charset_name: \"binary\", collation_name: \"binary\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[Decimal(Decimal { negative: false, digits: DecimalDigits([51, 54]), scale: 0, storage_scale: 0, declared_shape: Some((41, 0)) })]] }\n",
+        "RESULT sort Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n"
+      ]
+    },
+    "final_run": {
+      "summary": {
+        "point": {
+          "before_ns": 1001.290979,
+          "after_ns": 994.7792919999999,
+          "change_percent": -0.6503291387388033,
+          "per_run_medians": [
+            [
+              1001.545958,
+              998.965792
+            ],
+            [
+              993.64825,
+              995.910334
+            ]
+          ],
+          "values": [
+            [
+              [
+                999.713708,
+                1001.036,
+                1001.545958,
+                1003.84475,
+                1010.152958
+              ],
+              [
+                988.637042,
+                996.809792,
+                998.965792,
+                1002.672708,
+                1007.860291
+              ]
+            ],
+            [
+              [
+                992.300542,
+                993.576,
+                993.64825,
+                996.114083,
+                996.857625
+              ],
+              [
+                991.074666,
+                991.952667,
+                995.910334,
+                1001.066584,
+                1002.291375
+              ]
+            ]
+          ]
+        },
+        "range": {
+          "before_ns": 24353.94875,
+          "after_ns": 24107.99084,
+          "change_percent": -1.009930309556062,
+          "per_run_medians": [
+            [
+              24235.00584,
+              24386.41168
+            ],
+            [
+              23898.36334,
+              24308.79416
+            ]
+          ],
+          "values": [
+            [
+              [
+                23889.16,
+                24225.51916,
+                24235.00584,
+                24375.06916,
+                24386.74584
+              ],
+              [
+                24288.76834,
+                24332.82834,
+                24386.41168,
+                24641.29,
+                24695.98918
+              ]
+            ],
+            [
+              [
+                23748.40584,
+                23775.9225,
+                23898.36334,
+                23965.2525,
+                24015.75584
+              ],
+              [
+                24200.22584,
+                24255.1425,
+                24308.79416,
+                24310.39166,
+                24416.97084
+              ]
+            ]
+          ]
+        },
+        "index": {
+          "before_ns": 40244.57126,
+          "after_ns": 40025.87917,
+          "change_percent": -0.5434076774905483,
+          "per_run_medians": [
+            [
+              40336.70668,
+              39879.68834
+            ],
+            [
+              40263.0325,
+              39704.73082
+            ]
+          ],
+          "values": [
+            [
+              [
+                40206.83834,
+                40282.30418,
+                40336.70668,
+                40361.42584,
+                40496.03334
+              ],
+              [
+                39795.83582,
+                39831.67418,
+                39879.68834,
+                40008.27834,
+                40476.54082
+              ]
+            ],
+            [
+              [
+                40137.81,
+                40183.29418,
+                40263.0325,
+                40441.335,
+                40552.185
+              ],
+              [
+                39325.16584,
+                39374.94584,
+                39704.73082,
+                39736.95332,
+                39913.94834
+              ]
+            ]
+          ]
+        },
+        "aggregate": {
+          "before_ns": 37112.13583,
+          "after_ns": 36920.6775,
+          "change_percent": -0.5158914347506594,
+          "per_run_medians": [
+            [
+              36945.76084,
+              37279.82334
+            ],
+            [
+              36841.84918,
+              36939.40166
+            ]
+          ],
+          "values": [
+            [
+              [
+                36665.2675,
+                36856.79916,
+                36945.76084,
+                37064.29082,
+                37196.16834
+              ],
+              [
+                37022.39,
+                37159.98084,
+                37279.82334,
+                37286.1675,
+                37452.7975
+              ]
+            ],
+            [
+              [
+                36680.52834,
+                36695.70584,
+                36841.84918,
+                36910.72584,
+                36970.09334
+              ],
+              [
+                36618.09916,
+                36930.62916,
+                36939.40166,
+                37025.23334,
+                37361.14418
+              ]
+            ]
+          ]
+        },
+        "sort": {
+          "before_ns": 33642.465410000004,
+          "after_ns": 33220.83708,
+          "change_percent": -1.2532622828369755,
+          "per_run_medians": [
+            [
+              33408.15334,
+              33893.005
+            ],
+            [
+              33033.38582,
+              33611.01584
+            ]
+          ],
+          "values": [
+            [
+              [
+                33316.5825,
+                33407.51416,
+                33408.15334,
+                33505.00418,
+                33757.81166
+              ],
+              [
+                33527.11916,
+                33877.5775,
+                33893.005,
+                34036.87834,
+                34282.67418
+              ]
+            ],
+            [
+              [
+                32895.85082,
+                32986.57334,
+                33033.38582,
+                33129.84582,
+                33183.7525
+              ],
+              [
+                33257.92166,
+                33285.76582,
+                33611.01584,
+                33869.13916,
+                34101.71166
+              ]
+            ]
+          ]
+        }
+      },
+      "runs": [
+        {
+          "stage": "before",
+          "kind": "point",
+          "times": [
+            {
+              "kind": "point",
+              "round": 0,
+              "ns": 999713708,
+              "count": 1000000
+            },
+            {
+              "kind": "point",
+              "round": 1,
+              "ns": 1003844750,
+              "count": 1000000
+            },
+            {
+              "kind": "point",
+              "round": 2,
+              "ns": 1001036000,
+              "count": 1000000
+            },
+            {
+              "kind": "point",
+              "round": 3,
+              "ns": 1001545958,
+              "count": 1000000
+            },
+            {
+              "kind": "point",
+              "round": 4,
+              "ns": 1010152958,
+              "count": 1000000
+            }
+          ]
+        },
+        {
+          "stage": "final",
+          "kind": "point",
+          "times": [
+            {
+              "kind": "point",
+              "round": 0,
+              "ns": 996114083,
+              "count": 1000000
+            },
+            {
+              "kind": "point",
+              "round": 1,
+              "ns": 992300542,
+              "count": 1000000
+            },
+            {
+              "kind": "point",
+              "round": 2,
+              "ns": 993648250,
+              "count": 1000000
+            },
+            {
+              "kind": "point",
+              "round": 3,
+              "ns": 996857625,
+              "count": 1000000
+            },
+            {
+              "kind": "point",
+              "round": 4,
+              "ns": 993576000,
+              "count": 1000000
+            }
+          ]
+        },
+        {
+          "stage": "final",
+          "kind": "point",
+          "times": [
+            {
+              "kind": "point",
+              "round": 0,
+              "ns": 991074666,
+              "count": 1000000
+            },
+            {
+              "kind": "point",
+              "round": 1,
+              "ns": 991952667,
+              "count": 1000000
+            },
+            {
+              "kind": "point",
+              "round": 2,
+              "ns": 995910334,
+              "count": 1000000
+            },
+            {
+              "kind": "point",
+              "round": 3,
+              "ns": 1002291375,
+              "count": 1000000
+            },
+            {
+              "kind": "point",
+              "round": 4,
+              "ns": 1001066584,
+              "count": 1000000
+            }
+          ]
+        },
+        {
+          "stage": "before",
+          "kind": "point",
+          "times": [
+            {
+              "kind": "point",
+              "round": 0,
+              "ns": 998965792,
+              "count": 1000000
+            },
+            {
+              "kind": "point",
+              "round": 1,
+              "ns": 1007860291,
+              "count": 1000000
+            },
+            {
+              "kind": "point",
+              "round": 2,
+              "ns": 988637042,
+              "count": 1000000
+            },
+            {
+              "kind": "point",
+              "round": 3,
+              "ns": 996809792,
+              "count": 1000000
+            },
+            {
+              "kind": "point",
+              "round": 4,
+              "ns": 1002672708,
+              "count": 1000000
+            }
+          ]
+        },
+        {
+          "stage": "before",
+          "kind": "range",
+          "times": [
+            {
+              "kind": "range",
+              "round": 0,
+              "ns": 1194458000,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 1,
+              "ns": 1211275958,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 2,
+              "ns": 1218753458,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 3,
+              "ns": 1219337292,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 4,
+              "ns": 1211750292,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "final",
+          "kind": "range",
+          "times": [
+            {
+              "kind": "range",
+              "round": 0,
+              "ns": 1198262625,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 1,
+              "ns": 1200787792,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 2,
+              "ns": 1188796125,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 3,
+              "ns": 1187420292,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 4,
+              "ns": 1194918167,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "final",
+          "kind": "range",
+          "times": [
+            {
+              "kind": "range",
+              "round": 0,
+              "ns": 1215439708,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 1,
+              "ns": 1210011292,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 2,
+              "ns": 1215519583,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 3,
+              "ns": 1220848542,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 4,
+              "ns": 1212757125,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "before",
+          "kind": "range",
+          "times": [
+            {
+              "kind": "range",
+              "round": 0,
+              "ns": 1214438417,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 1,
+              "ns": 1219320584,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 2,
+              "ns": 1216641417,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 3,
+              "ns": 1234799459,
+              "count": 50000
+            },
+            {
+              "kind": "range",
+              "round": 4,
+              "ns": 1232064500,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "before",
+          "kind": "index",
+          "times": [
+            {
+              "kind": "index",
+              "round": 0,
+              "ns": 2014115209,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 1,
+              "ns": 2016835334,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 2,
+              "ns": 2010341917,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 3,
+              "ns": 2018071292,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 4,
+              "ns": 2024801667,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "final",
+          "kind": "index",
+          "times": [
+            {
+              "kind": "index",
+              "round": 0,
+              "ns": 2013151625,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 1,
+              "ns": 2009164709,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 2,
+              "ns": 2006890500,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 3,
+              "ns": 2022066750,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 4,
+              "ns": 2027609250,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "final",
+          "kind": "index",
+          "times": [
+            {
+              "kind": "index",
+              "round": 0,
+              "ns": 1985236541,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 1,
+              "ns": 1966258292,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 2,
+              "ns": 1968747292,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 3,
+              "ns": 1986847666,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 4,
+              "ns": 1995697417,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "before",
+          "kind": "index",
+          "times": [
+            {
+              "kind": "index",
+              "round": 0,
+              "ns": 2023827041,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 1,
+              "ns": 1991583709,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 2,
+              "ns": 1989791791,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 3,
+              "ns": 1993984417,
+              "count": 50000
+            },
+            {
+              "kind": "index",
+              "round": 4,
+              "ns": 2000413917,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "before",
+          "kind": "aggregate",
+          "times": [
+            {
+              "kind": "aggregate",
+              "round": 0,
+              "ns": 1842839958,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 1,
+              "ns": 1833263375,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 2,
+              "ns": 1847288042,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 3,
+              "ns": 1853214541,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 4,
+              "ns": 1859808417,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "final",
+          "kind": "aggregate",
+          "times": [
+            {
+              "kind": "aggregate",
+              "round": 0,
+              "ns": 1842092459,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 1,
+              "ns": 1834785292,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 2,
+              "ns": 1834026417,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 3,
+              "ns": 1845536292,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 4,
+              "ns": 1848504667,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "final",
+          "kind": "aggregate",
+          "times": [
+            {
+              "kind": "aggregate",
+              "round": 0,
+              "ns": 1868057209,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 1,
+              "ns": 1830904958,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 2,
+              "ns": 1846531458,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 3,
+              "ns": 1851261667,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 4,
+              "ns": 1846970083,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "before",
+          "kind": "aggregate",
+          "times": [
+            {
+              "kind": "aggregate",
+              "round": 0,
+              "ns": 1872639875,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 1,
+              "ns": 1857999042,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 2,
+              "ns": 1851119500,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 3,
+              "ns": 1864308375,
+              "count": 50000
+            },
+            {
+              "kind": "aggregate",
+              "round": 4,
+              "ns": 1863991167,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "before",
+          "kind": "sort",
+          "times": [
+            {
+              "kind": "sort",
+              "round": 0,
+              "ns": 1675250209,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 1,
+              "ns": 1687890583,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 2,
+              "ns": 1670407667,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 3,
+              "ns": 1670375708,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 4,
+              "ns": 1665829125,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "final",
+          "kind": "sort",
+          "times": [
+            {
+              "kind": "sort",
+              "round": 0,
+              "ns": 1656492291,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 1,
+              "ns": 1651669291,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 2,
+              "ns": 1644792541,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 3,
+              "ns": 1649328667,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 4,
+              "ns": 1659187625,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "final",
+          "kind": "sort",
+          "times": [
+            {
+              "kind": "sort",
+              "round": 0,
+              "ns": 1664288291,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 1,
+              "ns": 1662896083,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 2,
+              "ns": 1705085583,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 3,
+              "ns": 1693456958,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 4,
+              "ns": 1680550792,
+              "count": 50000
+            }
+          ]
+        },
+        {
+          "stage": "before",
+          "kind": "sort",
+          "times": [
+            {
+              "kind": "sort",
+              "round": 0,
+              "ns": 1714133709,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 1,
+              "ns": 1694650250,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 2,
+              "ns": 1701843917,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 3,
+              "ns": 1693878875,
+              "count": 50000
+            },
+            {
+              "kind": "sort",
+              "round": 4,
+              "ns": 1676355958,
+              "count": 50000
+            }
+          ]
+        }
+      ],
+      "result_samples": [
+        "RESULT point Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })]] }\n",
+        "RESULT range Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n",
+        "RESULT index Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n",
+        "RESULT aggregate Rows { columns: [(\"sum(k)\", FieldType { code: NewDecimal, flags: 128, flen: 41, decimal: 0, collation: Binary, charset_name: \"binary\", collation_name: \"binary\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[Decimal(Decimal { negative: false, digits: DecimalDigits([51, 54]), scale: 0, storage_scale: 0, declared_shape: Some((41, 0)) })]] }\n",
+        "RESULT sort Rows { columns: [(\"v\", FieldType { code: Varchar, flags: 0, flen: 40, decimal: 0, collation: Utf8Mb4Bin, charset_name: \"utf8mb4\", collation_name: \"utf8mb4_bin\", elems: GoSharedSlice(nil), elems_is_binary_literal: GoSharedSlice(nil), array: false })], rows: [[String(StringDatum { bytes: [111, 110, 101], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 119, 111], collation: Utf8Mb4Bin })], [String(StringDatum { bytes: [116, 104, 114, 101, 101], collation: Utf8Mb4Bin })]] }\n"
+      ]
+    }
+  },
+  "validation": {
+    "profile": "WIP",
+    "expr_tests": {
+      "passed": 143,
+      "failed": 0
+    },
+    "executor_tests": {
+      "passed": 77,
+      "failed": 2,
+      "ignored": 1,
+      "failures": [
+        "driver::tests::predicate_pushdown::a_common_dnf_equality_is_a_hash_join_key",
+        "driver::tests::predicate_pushdown::a_join_leaf_dnf_selection_uses_loaded_column_statistics"
+      ],
+      "error": "global StreamAgg child is not a point get or bare scan",
+      "qualification": "These failures are documented in select-rewrite-ownership-baseline.json. This increment did not rebuild the pre-edit executor unit-test suite."
+    },
+    "go_fixtures": {
+      "topics": 20,
+      "before_matched": 4937,
+      "after_matched": 4938,
+      "before_diverged": 142,
+      "after_diverged": 141,
+      "skipped": 606,
+      "change": "Original INTERVAL fixture no longer emits a spurious division-by-zero warning. All other complete outputs and divergence details unchanged, normalizing elapsed time only."
+    },
+    "permanent_tests_changed": false,
+    "allocation_diagnostic": {
+      "depths": [
+        1,
+        8,
+        32,
+        128
+      ],
+      "try_before_allocations": [
+        3,
+        24,
+        96,
+        384
+      ],
+      "try_after_allocations": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "normal_warning_bookmarks_before": 1,
+      "normal_warning_bookmarks_after": 0,
+      "semantic_controls": "Nonconstant nested trees unchanged; normal/try/disabled warning-producing folds preserve results and preexisting warnings."
+    }
+  },
+  "profiling": {
+    "method": "bash /Users/qiliu/.codex/skills/instruments/scripts/sample-quick.sh --launch -d 8 -o <sample> -- <sealed-binary> 200000 range",
+    "before": "range-before.sample",
+    "fold_only": "range-after.sample",
+    "final": "range-final.sample",
+    "qualification": "Initial sandbox sample failed. Outside-sandbox traces contain symbolicated call chains; helper summary exits 141 after successful capture. Samples show call-flow work, not per-operation throughput. No fresh Go CPU profile."
+  },
+  "reproduction": {
+    "benchmark_source": "type-metadata-sharing-baseline.json reproduction.source and reproduction.manifest (unchanged probe)",
+    "build": "cargo build --offline --locked --release -j12 --target-dir /Users/qiliu/projects/tidb/rust/target --manifest-path <evidence>/Cargo.toml",
+    "first_timing_script": "require 'json'\nroot=File.dirname(__FILE__)\nruns=[]\n%w[before after after before].each_with_index do |stage,i|\n  path=\"#{root}/timing-#{i}-#{stage}.log\"\n  abort \"benchmark #{stage}\" unless system(\"#{root}/#{stage}\",'50000',out:path,err:[:child,:out])\n  lines=File.readlines(path)\n  results=lines.grep(/^RESULT /)\n  abort 'row or metadata mismatch' if !runs.empty? && results!=runs.first[:results]\n  times=lines.grep(/^TIME /).map{|line| _,kind,round,ns,count=line.split;{kind:kind,round:round.to_i,ns:ns.to_i,count:count.to_i}}\n  runs<<{stage:stage,results:results,times:times}\nend\nsummary={}\n%w[point range index aggregate sort].each do |kind|\n values=%w[before after].map{|stage| runs.select{|r|r[:stage]==stage}.flat_map{|r|r[:times].select{|t|t[:kind]==kind}.map{|t|t[:ns].to_f/t[:count]}}.sort}\n med=values.map{|a|(a[4]+a[5])/2}\n summary[kind]={before_ns:med[0],after_ns:med[1],change_percent:(med[1]/med[0]-1)*100,values:values}\nend\nputs JSON.pretty_generate({runs:runs,summary:summary})\n",
+    "final_timing_script": "require 'json'\nroot=File.dirname(__FILE__)\nruns=[]\n%w[point range index aggregate sort].each do |kind|\n  count=kind=='point' ? 1000000 : 50000\n  expected=nil\n  %w[before final final before].each_with_index do |stage,i|\n    path=\"#{root}/paired-#{kind}-#{i}-#{stage}.log\"\n    abort \"benchmark #{stage} #{kind}\" unless system(\"#{root}/#{stage}\",count.to_s,kind,out:path,err:[:child,:out])\n    lines=File.readlines(path)\n    results=lines.grep(/^RESULT /)\n    abort 'row or metadata mismatch' if expected && results!=expected\n    expected=results\n    times=lines.grep(/^TIME /).map{|line| _,k,round,ns,n=line.split;{kind:k,round:round.to_i,ns:ns.to_i,count:n.to_i}}\n    runs<<{stage:stage,kind:kind,results:results,times:times}\n  end\nend\nsummary={}\n%w[point range index aggregate sort].each do |kind|\n  grouped=%w[before final].map{|stage|runs.select{|r|r[:stage]==stage && r[:kind]==kind}.map{|r|r[:times].map{|t|t[:ns].to_f/t[:count]}.sort}}\n  med=grouped.map{|g|a=g.flatten.sort;(a[4]+a[5])/2}\n  per_run=grouped.map{|g|g.map{|a|a[2]}}\n  summary[kind]={before_ns:med[0],after_ns:med[1],change_percent:(med[1]/med[0]-1)*100,per_run_medians:per_run,values:grouped}\nend\nputs JSON.pretty_generate({runs:runs,summary:summary})\n",
+    "fixture_script": "root=File.dirname(__FILE__)\ntopics=[\"table/index\",\"explain_easy\",\"explain_complex\",\"util/ranger\",\"index_join\",\"index_merge\",\"executor/aggregate\",\"session/clustered_index\",\"executor/prepared\",\"expression/charset_and_collation\",\"common_collation\",\"collation_pointget\",\"subquery\",\"planner/core/join_reorder_through_projection\",\"executor/update\",\"executor/delete\",\"expression/constant_fold\",\"expression/builtin\",\"expression/cast\",\"expression/plan_cache\"]\nstage,binary=ARGV\nnormalize=->(text){text.gsub(/in\\s+\\d+ms/,'in TIME').gsub(/finished in [0-9.]+s/,'finished in TIME')}\ntopics.each do |topic|\n  path=\"#{root}/#{stage}-#{topic.tr('/', '_')}.log\"\n  next if stage=='before' && File.exist?(path)\n  abort topic unless system({'INTEGRATION_TOPIC'=>topic,'INTEGRATION_SHOW_DIVERGENCES'=>'1'},binary,'--ignored','--nocapture','replay_one_topic_from_env','--test-threads=12',out:path,err:[:child,:out])\n  if stage=='after'\n    before=normalize.call(File.read(path.sub('/after-','/before-')))\n    if topic=='expression/builtin'\n      old=\"--- [expression/builtin] select interval(1,0,1,2,1/0);\\n  tidb warnings: <none>\\n  rust warnings: Warning\\t1365\\tDivision by 0\\n\"\n      abort 'missing prior interval divergence' unless before.include?(old)\n      before=before.sub(old,'').sub('1278 matched    13 diverged','1279 matched    12 diverged').sub('{\"Rows\": 802, \"SideEffect\": 476}','{\"Rows\": 803, \"SideEffect\": 476}')\n    end\n    abort \"different #{topic}\" unless normalize.call(File.read(path))==before\n    puts(topic=='expression/builtin' ? \"IMPROVED interval warning; other builtin output identical\" : \"IDENTICAL #{topic}\")\n  end\nend\n",
+    "diagnostic_manifest": "[package]\nname = \"construction-fold-diagnostic\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[workspace]\n[profile.release]\nlto = \"thin\"\n[dependencies]\ntidb-expr = { path = \"/Users/qiliu/projects/tidb/rust/crates/tidb-expr\" }\ntidb-datatype = { path = \"/Users/qiliu/projects/tidb/rust/crates/tidb-datatype\" }\ntidb-ast = { path = \"/Users/qiliu/projects/tidb/rust/crates/tidb-ast\" }\ntidb-chunk = { path = \"/Users/qiliu/projects/tidb/rust/crates/tidb-chunk\" }\n[[bin]]\nname = \"construction-fold-diagnostic\"\npath = \"main.rs\"\n",
+    "diagnostic_source": "pub use tidb_expr::*;\nmod context { pub use tidb_expr::NoColumns; }\nuse std::{alloc::{GlobalAlloc,Layout,System},cell::{Cell,RefCell},sync::atomic::{AtomicUsize,Ordering}};\nuse tidb_datatype::{Datum,FieldType,FieldTypeCode};\nuse tidb_expr::expression::{Expression,ScalarFunction};\n#[allow(dead_code)] mod before_fold;\nstruct Alloc;\nstatic ALLOCS:AtomicUsize=AtomicUsize::new(0);\nunsafe impl GlobalAlloc for Alloc {\n unsafe fn alloc(&self,l:Layout)->*mut u8{ALLOCS.fetch_add(1,Ordering::Relaxed);unsafe{System.alloc(l)}}\n unsafe fn dealloc(&self,p:*mut u8,l:Layout){unsafe{System.dealloc(p,l)}}\n unsafe fn realloc(&self,p:*mut u8,l:Layout,n:usize)->*mut u8{ALLOCS.fetch_add(1,Ordering::Relaxed);unsafe{System.realloc(p,l,n)}}\n}\n#[global_allocator] static A:Alloc=Alloc;\n#[derive(Default)] struct Context{bookmarks:Cell<usize>,warnings:RefCell<Vec<u16>>}\nimpl Columns for Context {\n fn get(&self,_:&[String])->Option<Datum>{None}\n fn warning_count(&self)->usize{self.bookmarks.set(self.bookmarks.get()+1);self.warnings.borrow().len()}\n fn append_warning(&self,code:u16,_:&str){self.warnings.borrow_mut().push(code);}\n fn truncate_warnings(&self,n:usize){self.warnings.borrow_mut().truncate(n);}\n fn division_by_zero_level(&self)->ErrorLevel{ErrorLevel::Warn}\n}\nfn ty()->FieldType{FieldType::new(FieldTypeCode::LongLong)}\nfn val(v:i64)->Expression{Expression::Constant(constant::Constant::new(Datum::Int(v),ty()))}\nfn call(name:&str,args:Vec<Expression>)->Expression{Expression::ScalarFunction(ScalarFunction::new(tidb_ast::CiString::new(name),ty(),args))}\nfn fold(old:bool,mode:u8,e:&mut Expression,c:&Context){if old{before_fold::fold_constant_in_mode(e,c,match mode{0=>before_fold::ConstantFoldMode::Normal,1=>before_fold::ConstantFoldMode::Try,_=>before_fold::ConstantFoldMode::Disabled})}else{fold_constant_in_mode(e,c,match mode{0=>ConstantFoldMode::Normal,1=>ConstantFoldMode::Try,_=>ConstantFoldMode::Disabled})}}\nfn main(){\n for depth in [1,8,32,128]{\n  let mut original=Expression::Column(column::Column::new(1,ty()));for _ in 0..depth{original=call(\"plus\",vec![original,val(1)]);}\n  for mode in [0,1]{let mut counts=vec![];for old in [true,false]{let mut e=original.clone();let c=Context::default();ALLOCS.store(0,Ordering::Relaxed);fold(old,mode,&mut e,&c);let allocations=ALLOCS.load(Ordering::Relaxed);counts.push(allocations);assert_eq!(format!(\"{e:?}\"),format!(\"{original:?}\"));assert_eq!(c.bookmarks.get(),if mode==0{usize::from(old)}else{2});}\n   assert_eq!(counts[1],0);if mode==1{assert!(counts[0]>0);}println!(\"depth={depth} mode={mode} allocations before={} after={}\",counts[0],counts[1]);\n  }\n }\n for mode in [0,1,2]{let mut outputs=vec![];for old in [true,false]{let mut e=call(\"div\",vec![val(1),val(0)]);let c=Context::default();c.warnings.borrow_mut().push(9999);fold(old,mode,&mut e,&c);outputs.push((format!(\"{e:?}\"),c.warnings.into_inner()));}assert_eq!(outputs[0],outputs[1]);assert_eq!(outputs[1].1.len(),if mode==0{2}else{1});}\n println!(\"PASS nested nonconstant trees unchanged; zero replacement/snapshot allocations; warning-producing normal/try/disabled folds preserve results and prior warnings\");\n}\n",
+    "diagnostic_pre_edit_fold_source": "// Copyright 2026 PingCAP, Inc.\n//\n// Licensed under the Apache License, Version 2.0 (the \"License\");\n// you may not use this file except in compliance with the License.\n// You may obtain a copy of the License at\n//\n//     http://www.apache.org/licenses/LICENSE-2.0\n//\n// Unless required by applicable law or agreed to in writing, software\n// distributed under the License is distributed on an \"AS IS\" BASIS,\n// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n// See the License for the specific language governing permissions and\n// limitations under the License.\n\n//! Go `pkg/expression/constant_fold.go`, reduced to the part this tier can\n//! observe.\n\nuse crate::expression::Expression;\nuse tidb_datatype::Datum;\n\n/// How Go's expression rewriter constructs functions under the current AST\n/// parent (`newFunctionWithInit`).\n#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]\npub enum ConstantFoldMode {\n    /// `expression.NewFunction`: fold the newly built function normally.\n    #[default]\n    Normal,\n    /// `expression.NewFunctionTryFold`: keep the function when folding warns.\n    Try,\n    /// `expression.NewFunctionBase`: do not fold descendants in this scope.\n    Disabled,\n}\n\n/// Runs the NOT NULL half of Go's `foldConstant`\n/// (`pkg/expression/constant_fold.go`) over a freshly built tree, bottom up.\n///\n/// Go replaces a wholly-constant subtree with a `Constant` and derives its\n/// `NotNullFlag` from the computed value. This walk derives only that flag;\n/// it does not supply the folded value that some parent type constructors\n/// inspect. Callers needing that representation must use the construction\n/// fold, not treat this metadata-only walk as a substitute.\n///\n/// The flag is not decoration: `SHOW COLUMNS` on a view reads it, which is how\n/// `CREATE VIEW v AS SELECT CAST('' AS CHAR(32))` reports `NO` for a column no\n/// base table declared NOT NULL.\npub fn derive_constant_null_flag(expr: &mut Expression) {\n    let _ = fold_value(expr);\n}\n\n/// Folds exactly the function just built, under Go's selected construction\n/// mode. Its arguments have already been rewritten and folded individually;\n/// recursively evaluating them here would duplicate warnings and side effects.\npub fn fold_constant_in_mode(\n    expr: &mut Expression,\n    ctx: &impl crate::Columns,\n    mode: ConstantFoldMode,\n) {\n    if mode == ConstantFoldMode::Disabled {\n        return;\n    }\n    let original = (mode == ConstantFoldMode::Try).then(|| expr.clone());\n    let warning_bookmark = ctx.warning_count();\n    let _ = fold_current_value_in(expr, ctx);\n    if mode == ConstantFoldMode::Try && ctx.warning_count() > warning_bookmark {\n        ctx.truncate_warnings(warning_bookmark);\n        *expr = original.expect(\"try-fold mode retained the original expression\");\n    }\n}\n\nfn fold_current_value_in(expr: &mut Expression, ctx: &impl crate::Columns) -> Option<Datum> {\n    // Recursively fold sub-expressions FIRST (Go's `FoldConstant` walks\n    // bottom-up): a nested `date_add_month(\"...\", \"...\")` whose args are all\n    // constants becomes a Constant before the parent checks its own args.\n    // Lazy short-circuit functions are exempt: their UNTAKEN branches must\n    // not evaluate -- `SELECT IF(1, 1, 1/0)` runs without dividing, so\n    // plan-time folding inside them would fabricate both warnings and\n    // errors the runtime never reaches.\n    if let Expression::ScalarFunction(func) = expr {\n        let lazy = is_lazy_short_circuit(func.func_name.lowercase());\n        if !lazy {\n            for arg in &mut func.args {\n                fold_current_value_in(arg, ctx);\n            }\n        }\n    }\n    let func = match expr {\n        Expression::Constant(constant) => return constant.literal_value().cloned(),\n        Expression::Column(_) | Expression::CorrelatedColumn(_) => return None,\n        Expression::ScalarFunction(func) => func,\n    };\n    // Go `FoldConstant` copies the original expression's collation state onto\n    // the replacement constant.  That state is semantic: metadata functions\n    // such as COERCIBILITY and enclosing collation aggregation inspect it\n    // after folding.\n    let original_collation = func.collation.clone();\n    let unfoldable = is_unfoldable(func.func_name.lowercase());\n    let mut has_null_arg = false;\n    let mut all_const_arg = true;\n    let mut is_deferred_const = false;\n    for arg in &func.args {\n        match arg {\n            Expression::Constant(constant) => {\n                has_null_arg |= constant.value.is_null();\n                is_deferred_const |= constant.literal_value().is_none();\n            }\n            _ => all_const_arg = false,\n        }\n    }\n    if unfoldable || !all_const_arg {\n        return None;\n    }\n    let value = crate::eval_expression_once(expr, ctx).ok()?;\n    let mut ret_type = expr.static_type()?.clone();\n    if !has_null_arg {\n        if value.is_null() {\n            ret_type.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);\n        } else {\n            ret_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);\n        }\n    }\n    let mut folded = crate::constant::Constant::new(value.clone(), ret_type);\n    folded.collation = original_collation;\n    // The current typed value is visible to parent type constructors. Move\n    // the original expression under it so replay uses the current context,\n    // without cloning each growing subtree during bottom-up construction.\n    let original = std::mem::replace(expr, Expression::Constant(folded));\n    if is_deferred_const {\n        let Expression::Constant(folded) = expr else {\n            unreachable!()\n        };\n        folded.deferred_expr = Some(Box::new(original));\n        None\n    } else {\n        Some(value)\n    }\n}\n\n/// One node of Go's `foldConstant`: folds bottom up, returning the constant\n/// value the node reduces to, or `None` when it does not reduce to one.\n///\n/// `None` is Go's \"return the expression unfolded\", which is what a parent\n/// reads as `allConstArg = false`. An evaluation that FAILS also returns\n/// `None` and leaves the flag alone, exactly as Go's `err != nil` arm returns\n/// before the folded `Constant` is built.\nfn fold_value(expr: &mut Expression) -> Option<Datum> {\n    let func = match expr {\n        Expression::Constant(constant) => return constant.literal_value().cloned(),\n        Expression::Column(_) | Expression::CorrelatedColumn(_) => return None,\n        Expression::ScalarFunction(func) => func,\n    };\n    if is_unfoldable(func.func_name.lowercase()) {\n        // Go still folds this node's ARGUMENTS -- `foldConstant` recurses\n        // through `NewFunction` as each level is built -- it only refuses to\n        // fold the unfoldable node itself.\n        for arg in &mut func.args {\n            let _ = fold_value(arg);\n        }\n        return None;\n    }\n    let mut has_null_arg = false;\n    let mut all_const_arg = true;\n    for arg in &mut func.args {\n        match fold_value(arg) {\n            Some(Datum::Null) => has_null_arg = true,\n            Some(_) => {}\n            None => all_const_arg = false,\n        }\n    }\n    if !all_const_arg {\n        return None;\n    }\n    // A constant tree reads no row and no session state, so Go's empty\n    // `chunk.Row{}` over a resolver that answers nothing is the whole input.\n    let chunk = {\n        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);\n        chunk.set_num_virtual_rows(1);\n        chunk\n    };\n    let value = expr\n        .eval(&crate::context::NoColumns, chunk.get_row(0))\n        .ok()?;\n    if !has_null_arg {\n        let Expression::ScalarFunction(func) = expr else {\n            unreachable!(\"matched as a scalar function above\")\n        };\n        if let Some(ret_type) = func.ret_type.as_mut() {\n            if matches!(value, Datum::Null) {\n                ret_type.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);\n            } else {\n                ret_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);\n            }\n        }\n    }\n    Some(value)\n}\n\n/// Whether Go's `foldConstant` would have REPLACED this subtree with a\n/// `*Constant` by the time an enclosing function's `getFunction` runs its\n/// `args[i].(*Constant)` type switch.\n///\n/// Go folds during construction, so the switch never sees the unfolded shape.\n/// This rewriter keeps the shape (see [`derive_constant_null_flag`]), so every\n/// dispatch that Go keys on constant-ness has to ask this question instead of\n/// testing the node kind -- and the two answers differ for exactly the cases\n/// that matter: `CONCAT('1:00',':00')` is a `*Constant` in Go and a\n/// `ScalarFunction` here, while a column reference is neither.\n///\n/// The predicate is `foldConstant`'s own gate: not one of the\n/// [`is_unfoldable`] names, and every argument folds too. The one arm not\n/// reproduced is Go's `err != nil` escape -- a constant subtree whose\n/// evaluation FAILS is left unfolded there and reported constant here. That\n/// arm only changes which of two error-or-domain choices a doomed expression\n/// takes, never a value, so it is not worth evaluating the subtree once per\n/// row to reproduce.\npub(crate) fn folds_to_constant(expr: &Expression) -> bool {\n    match expr {\n        Expression::Constant(_) => true,\n        Expression::Column(_) | Expression::CorrelatedColumn(_) => false,\n        Expression::ScalarFunction(func) => {\n            !is_unfoldable(func.func_name.lowercase()) && func.args.iter().all(folds_to_constant)\n        }\n    }\n}\n\n/// The `*Constant`'s VALUE that Go's dispatch reads off a folded subtree --\n/// `unaryMinusFunctionClass.handleIntOverflow` is the one rule here that needs\n/// the value and not merely the fact of constancy (`arg.Value.GetInt64()`).\n///\n/// `None` for anything [`folds_to_constant`] rejects, and for a fold whose\n/// evaluation fails -- which is Go's own `err != nil` arm, where the subtree\n/// stays unfolded and the type switch therefore misses it. The evaluation runs\n/// against no columns because a foldable subtree reads none; that is exactly\n/// the `chunk.Row{}` Go's `foldConstant` passes.\npub(crate) fn folded_value(expr: &Expression) -> Option<Datum> {\n    if let Expression::Constant(constant) = expr {\n        return constant.literal_value().cloned();\n    }\n    if !folds_to_constant(expr) {\n        return None;\n    }\n    let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);\n    chunk.set_num_virtual_rows(1);\n    expr.eval(&crate::context::NoColumns, chunk.get_row(0)).ok()\n}\n\n/// Go `unFoldableFunctions` (`pkg/expression/function_traits.go`): the\n/// functions whose result is not a property of their arguments -- a clock, a\n/// counter, a random source, a session variable, or a side effect.\nfn is_unfoldable(name: &str) -> bool {\n    // Go's `GetVar` is one name; this rewriter encodes the signature the\n    // session's current value picked into the name (`getvar_int`,\n    // `getvar_string`, ...), so a bare `\"getvar\"` arm below would never match\n    // anything the rewriter builds. The prefix test is what actually fires.\n    if name.starts_with(\"getvar_\") {\n        return true;\n    }\n    matches!(\n        name,\n        \"sysdate\"\n            | \"found_rows\"\n            | \"rand\"\n            | \"uuid\"\n            | \"uuid_v4\"\n            | \"uuid_v7\"\n            | \"sleep\"\n            | \"row\"\n            | \"values\"\n            | \"setvar\"\n            | \"getparam\"\n            | \"benchmark\"\n            | \"dayname\"\n            // Reads the SESSION transaction context at evaluation: folding\n            // it at plan time would freeze the zero the statement had before\n            // its first read opened a snapshot.\n            | \"tidb_current_tso\"\n            | \"nextval\"\n            | \"lastval\"\n            | \"setval\"\n            | \"any_value\"\n    )\n}\n\n/// Whether the function evaluates only SOME of its arguments at run time.\n/// Folding inside one would evaluate branches or operands the executor can\n/// skip, changing warnings and errors (`IF(1, 1, 1/0)` divides).\nfn is_lazy_short_circuit(name: &str) -> bool {\n    matches!(\n        name,\n        \"if\" | \"ifnull\" | \"case\" | \"case_when\" | \"and\" | \"or\" | \"xor\" | \"nullif\" | \"coalesce\"\n    )\n}\n",
+    "test_commands": "Exact consolidated commands and scope are retained in rust/docs/prepared-plan-execplan.md."
+  },
+  "not_verified": [
+    "Live sysbench/TPC-C throughput",
+    "Fresh Go CPU comparison",
+    "Full native prepared-plan cache",
+    "Secondary IndexJoin statistics/selection",
+    "Whole-package parity",
+    "Ready lint/PR readiness"
+  ]
+}

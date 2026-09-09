@@ -6,6 +6,392 @@
 
 use super::*;
 
+/// Go enumerates both global aggregate implementations and prices the whole
+/// tree with the statement's factors, including multiple aggregate functions.
+#[test]
+fn aggregate_choice_reads_statement_cost_factors_for_multiple_functions() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE costed_aggregates (id INT PRIMARY KEY, k INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO costed_aggregates VALUES (1,10),(2,20),(3,NULL)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let sql = "SELECT SUM(k), COUNT(k) FROM costed_aggregates WHERE id BETWEEN 1 AND 100";
+    let statement = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    for (hash_factor, stream_factor, expected) in
+        [(1000.0, 1.0, "StreamAgg"), (1.0, 1000.0, "HashAgg")]
+    {
+        let mut env = tidb_planner::candidate_cost::CostEnv::default();
+        env.cost_factors.hash_agg = hash_factor;
+        env.cost_factors.stream_agg = stream_factor;
+        let ctx = crate::StmtContext::for_query().with_optimizer_cost_env(env, 5.0);
+        let (_, plan) =
+            explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+        assert_eq!(
+            plan[0][0].sql_string().unwrap(),
+            expected,
+            "hash factor={hash_factor}, stream factor={stream_factor}: {plan:?}"
+        );
+        assert_eq!(
+            run_select_on(sql, &catalog, &ctx).unwrap(),
+            vec![vec![
+                Datum::Decimal(tidb_datatype::Decimal::from_int(30)),
+                Datum::Int(2),
+            ]]
+        );
+        for (predicate, sum, count) in [
+            ("id = 1", Some(10), 1),
+            ("id IN (1,2)", Some(30), 2),
+            ("id = 3", None, 0),
+            ("id = 999", None, 0),
+        ] {
+            let sql = format!("SELECT SUM(k), COUNT(k) FROM costed_aggregates WHERE {predicate}");
+            let statement = tidb_parser::parse(&sql).unwrap();
+            let Stmt::Query(query) = &statement else {
+                panic!("not a query")
+            };
+            let QueryStmt::Select(select) = &**query else {
+                panic!("not a SELECT")
+            };
+            let (_, plan) =
+                explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+            assert_eq!(
+                plan[0][0].sql_string().unwrap(),
+                expected,
+                "{sql}: {plan:?}"
+            );
+            assert!(
+                plan.iter()
+                    .all(|row| row[2].sql_string().unwrap() == "root"),
+                "a point task cannot carry a cop partial aggregate: {sql}: {plan:?}"
+            );
+            assert_eq!(
+                run_select_on(&sql, &catalog, &ctx).unwrap(),
+                vec![vec![
+                    sum.map_or(Datum::Null, |sum| Datum::Decimal(
+                        tidb_datatype::Decimal::from_int(sum)
+                    )),
+                    Datum::Int(count),
+                ]],
+                "{sql}"
+            );
+        }
+    }
+}
+
+/// A cost-selected HashAgg cannot satisfy its parent's ordered property.
+#[test]
+fn hash_aggregate_does_not_advertise_its_ordered_inputs_order() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE ordered_aggregates (w INT, d INT, id INT, PRIMARY KEY(w,d,id) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    let statement =
+        tidb_parser::parse("SELECT w,d,COUNT(*) FROM ordered_aggregates GROUP BY w,d").unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query")
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT")
+    };
+    let mut env = tidb_planner::candidate_cost::CostEnv::default();
+    env.cost_factors.stream_agg = 1000.0;
+    let ctx = crate::StmtContext::for_query().with_optimizer_cost_env(env, 5.0);
+    let mut delivered = crate::driver::from::Delivered::new();
+    let required = tidb_planner::physical_property::PhysicalProperty::new(
+        tidb_planner::task_type::TaskType::Root,
+        &[],
+        false,
+        f64::MAX,
+        false,
+    );
+    crate::driver::run_select_traced_with_delivery_choice(
+        select,
+        &catalog,
+        "test",
+        &ctx,
+        None,
+        &required,
+        Some(&mut delivered),
+        None,
+        false,
+        crate::driver::AggregationChoice::Stream,
+        true,
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            delivered.candidate,
+            Some(tidb_planner::candidate_cost::Candidate::HashAgg { .. })
+        ),
+        "{delivered:?}"
+    );
+    assert!(
+        delivered.is_empty(),
+        "HashAgg destroys its input order: {delivered:?}"
+    );
+    for (hash_factor, stream_factor, streamed) in [(1000.0, 1.0, true), (1.0, 1000.0, false)] {
+        let mut env = tidb_planner::candidate_cost::CostEnv::default();
+        env.cost_factors.hash_agg = hash_factor;
+        env.cost_factors.stream_agg = stream_factor;
+        let ctx = crate::StmtContext::for_query().with_optimizer_cost_env(env, 5.0);
+        let mut delivered = crate::driver::from::Delivered::new();
+        crate::driver::AGGREGATION_PIPELINE_BUILDS.with(|builds| builds.set(0));
+        crate::driver::run_select_traced_with_delivery(
+            select,
+            &catalog,
+            "test",
+            &ctx,
+            None,
+            &required,
+            Some(&mut delivered),
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            matches!(
+                delivered.candidate,
+                Some(tidb_planner::candidate_cost::Candidate::StreamAgg { .. })
+            ),
+            streamed,
+            "whole-child comparison must use the statement factors: {delivered:?}"
+        );
+        assert_eq!(delivered.is_empty(), !streamed, "{delivered:?}");
+        assert_eq!(
+            crate::driver::AGGREGATION_PIPELINE_BUILDS.with(|builds| builds.get()),
+            2,
+            "the chosen aggregate pipeline must not be built a third time"
+        );
+    }
+}
+
+/// Keeping a costed task also keeps its output layout and the trace counters
+/// attached to that exact executor, including when a parent drains it later.
+#[test]
+fn aggregate_choice_retains_execution_output_and_trace() {
+    use crate::driver::{AggregationChoice, AGGREGATION_PIPELINE_BUILDS};
+    use crate::plan_trace::{PlanNode, PlanTrace};
+
+    fn describe(node: &PlanNode, rows: &mut Vec<String>) {
+        rows.push(format!(
+            "{} {:?} {} {} {} {:?} {}",
+            node.name,
+            node.est_rows,
+            node.access,
+            node.info,
+            node.task,
+            node.act_rows.as_ref().map(|rows| rows.get()),
+            node.children.len()
+        ));
+        for child in &node.children {
+            describe(child, rows);
+        }
+    }
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE retained_aggregates (w INT, d INT, id INT, line INT, v DECIMAL(8,2), PRIMARY KEY(w,d,id,line) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO retained_aggregates VALUES (1,1,10,1,1.25),(1,1,20,1,2.50),(1,2,30,1,3.75)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    catalog.clear_dirty_content();
+    for sql in [
+        "SELECT w,d,SUM(id) AS total FROM retained_aggregates GROUP BY w,d",
+        "SELECT d,w,COUNT(*) AS total FROM retained_aggregates GROUP BY w,d",
+        "SELECT d,SUM(v) AS total FROM retained_aggregates WHERE (w,d,id) IN ((1,1,10),(1,1,20),(1,2,30)) GROUP BY d",
+    ] {
+        let statement = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &statement else {
+            panic!("not a query")
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("not a SELECT")
+        };
+        for (hash_factor, stream_factor, choice) in [
+            (1000.0, 1.0, AggregationChoice::Stream),
+            (1.0, 1000.0, AggregationChoice::Hash),
+        ] {
+            let mut env = tidb_planner::candidate_cost::CostEnv::default();
+            env.cost_factors.hash_agg = hash_factor;
+            env.cost_factors.stream_agg = stream_factor;
+            let ctx = crate::StmtContext::for_query().with_optimizer_cost_env(env, 5.0);
+            for trace_mode in 0..3 {
+                for derived_output in [false, true] {
+                    for defer in [false, true] {
+                        let run = |choice| {
+                            let mut trace = match trace_mode {
+                                1 => Some(PlanTrace::planning()),
+                                2 => Some(PlanTrace::analyzing()),
+                                _ => None,
+                            };
+                            if let Some(trace) = &trace {
+                                trace.reserve_plan_column_ids(17);
+                            }
+                            let mut delivered = crate::driver::from::Delivered::new();
+                            let mut executor = None;
+                            let (columns, mut rows) =
+                                crate::driver::run_select_traced_with_delivery_choice(
+                                    select,
+                                    &catalog,
+                                    "test",
+                                    &ctx,
+                                    trace.as_mut(),
+                                    &tidb_planner::physical_property::PhysicalProperty::default(),
+                                    derived_output.then_some(&mut delivered),
+                                    defer.then_some(&mut executor),
+                                    false,
+                                    choice,
+                                    derived_output,
+                                )
+                                .unwrap();
+                            if defer {
+                                assert!(rows.is_empty());
+                                let executor = executor.expect("the chosen task must be retained");
+                                if trace_mode != 1 {
+                                    let types: Vec<_> =
+                                        columns.iter().map(|(_, ty)| ty.clone()).collect();
+                                    rows = crate::driver::drain_executor_rows(
+                                        executor,
+                                        &types,
+                                        &ctx.statement_memory(),
+                                    )
+                                    .unwrap();
+                                }
+                            }
+                            rows.sort_by_key(|row| format!("{row:?}"));
+                            let mut plan = Vec::new();
+                            if let Some(trace) = trace {
+                                assert!(trace.refusal().is_none());
+                                for root in trace.into_roots() {
+                                    describe(&root, &mut plan);
+                                }
+                            }
+                            ((columns, rows), plan, delivered.to_vec())
+                        };
+                        let expected = run(choice);
+                        AGGREGATION_PIPELINE_BUILDS.with(|builds| builds.set(0));
+                        assert_eq!(run(AggregationChoice::Auto), expected,
+                            "{sql}, {choice:?}, trace={trace_mode}, derived={derived_output}, defer={defer}");
+                        assert_eq!(
+                            AGGREGATION_PIPELINE_BUILDS.with(|builds| builds.get()),
+                            2
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn single_grouped_sum_returns_a_costed_pipeline() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE priced_sum (w INT, d INT, id INT, v DECIMAL(8,2), PRIMARY KEY(w,d,id) CLUSTERED)",
+        &mut catalog,
+    ).unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on("INSERT INTO priced_sum VALUES (1,1,1,1.25),(1,1,2,2.50),(1,2,3,3.75),(1,1,4,NULL),(1,3,5,NULL)", &mut catalog, &ctx).unwrap();
+    catalog.clear_dirty_content();
+    let TableEntry::Kv(table) = catalog.get_in("test", "priced_sum").unwrap() else {
+        panic!("not KV")
+    };
+    let table_id = table.table_id;
+    let statistics = table
+        .visible_columns()
+        .iter()
+        .filter(|column| column.name != "v")
+        .map(|column| {
+            let ndv = match column.name.as_str() {
+                "w" => 1,
+                "d" => 2,
+                _ => 1000,
+            };
+            let mut histogram = tidb_stats::Histogram::new(column.id, ndv, 0, 42, 1, 10_000);
+            histogram.append_bucket(Datum::Int(1), Datum::Int(ndv), 10_000, 10_000 / ndv);
+            (
+                column.id,
+                tidb_planner::cardinality::row_count_estimator::ColumnStats {
+                    histogram,
+                    topn: None,
+                    cms: None,
+                    stats_ver: 2,
+                    unsigned: false,
+                },
+            )
+        })
+        .collect();
+    catalog.set_table_statistics(
+        table_id,
+        std::sync::Arc::new(crate::access_cost::TableStatistics::new(
+            10_000,
+            0,
+            statistics,
+            Default::default(),
+        )),
+    );
+    let mut env = tidb_planner::candidate_cost::CostEnv::default();
+    env.cost_factors.stream_agg = 1000.0;
+    let ctx = ctx.with_optimizer_cost_env(env, 5.0);
+    crate::driver::AGGREGATION_PIPELINE_BUILDS.with(|builds| builds.set(0));
+    let mut rows = run_select_on(
+        "SELECT d,SUM(v) FROM priced_sum WHERE w=1 GROUP BY d",
+        &catalog,
+        &ctx,
+    )
+    .unwrap();
+    rows.sort_by_key(|row| row[0].sql_string().unwrap());
+    assert_eq!(
+        rows,
+        vec![
+            vec![
+                Datum::Int(1),
+                Datum::Decimal(tidb_datatype::Decimal::from_literal("3.75")),
+            ],
+            vec![
+                Datum::Int(2),
+                Datum::Decimal(tidb_datatype::Decimal::from_literal("3.75")),
+            ],
+            vec![Datum::Int(3), Datum::Null],
+        ]
+    );
+    assert_eq!(
+        crate::driver::AGGREGATION_PIPELINE_BUILDS.with(|builds| builds.get()),
+        2,
+        "single SUM must retain its priced task like multi-function aggregation"
+    );
+    assert!(run_select_on(
+        "SELECT d,SUM(v) FROM priced_sum WHERE w=99 GROUP BY d",
+        &catalog,
+        &ctx
+    )
+    .unwrap()
+    .is_empty());
+}
+
 /// TPC-H q1 is Go's complete grouped partial-aggregation contract: AVG is a
 /// count/sum pair in TiKV, the root AVG merges both partial columns, and the
 /// restoring projection stays below the final group-key sort.
@@ -2247,7 +2633,7 @@ fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
         .expect("customer warehouse carrier");
     let synthetic_count = customer_aggregation
         .find("funcs:count(Column#")
-        .expect("synthetic customer row count");
+        .unwrap_or_else(|| panic!("synthetic customer row count: {operators:#?}\n{details:#?}"));
     assert!(
         customer_district < customer_warehouse && customer_warehouse < synthetic_count,
         "Go appends the synthetic COUNT after surviving FIRST_ROW carriers: {customer_aggregation}"
@@ -2711,10 +3097,11 @@ fn tpcc_condition_two_orders_group_uses_the_covering_index_range() {
 }
 
 /// Go accepts a pushdown-safe expression as the input of a global SUM. The
-/// cop HashAgg evaluates that expression after its Selection, and the root
-/// HashAgg merges one partial result per region.
+/// cop StreamAgg evaluates that expression after its Selection, and the root
+/// StreamAgg merges one partial result per region. Live Go with the same
+/// pseudo-statistics fixture selects this pair (2026-09-07).
 #[test]
-fn global_sum_expression_uses_partial_and_final_hash_agg() {
+fn global_sum_expression_uses_partial_and_final_stream_agg() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
     let mut catalog = Catalog::default();
@@ -2755,9 +3142,9 @@ fn global_sum_expression_uses_partial_and_final_hash_agg() {
     assert_eq!(
         (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
         vec![
-            "HashAgg",
+            "StreamAgg",
             "└─TableReader",
-            "  └─HashAgg",
+            "  └─StreamAgg",
             "    └─Selection",
             "      └─TableFullScan"
         ]
@@ -2772,8 +3159,9 @@ fn global_sum_expression_uses_partial_and_final_hash_agg() {
 
 /// Go's `BasePhysicalAgg.NewPartialAggregate` expands a global AVG into a
 /// cop COUNT/SUM pair and a root final AVG over those two partial columns.
+/// Live Go selects StreamAgg at both stages for this pseudo-statistics fixture.
 #[test]
-fn global_avg_uses_count_sum_partial_and_final_hash_agg() {
+fn global_avg_uses_count_sum_partial_and_final_stream_agg() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
     let mut catalog = Catalog::default();
@@ -2811,9 +3199,9 @@ fn global_avg_uses_count_sum_partial_and_final_hash_agg() {
     assert_eq!(
         (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
         vec![
-            "HashAgg",
+            "StreamAgg",
             "└─TableReader",
-            "  └─HashAgg",
+            "  └─StreamAgg",
             "    └─Selection",
             "      └─TableFullScan"
         ]
@@ -3539,8 +3927,14 @@ fn distinct_range_orders_gos_hash_agg_over_reader_tree() {
     let QueryStmt::Select(select) = &**query else {
         panic!("not a SELECT");
     };
+    crate::driver::AGGREGATION_PIPELINE_BUILDS.with(|builds| builds.set(0));
     let (_, rows) =
         explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    assert_eq!(
+        crate::driver::AGGREGATION_PIPELINE_BUILDS.with(|builds| builds.get()),
+        2,
+        "DISTINCT must retain its costed alternative, not rebuild an Auto fallback"
+    );
     let cell = |row: usize, column: usize| match &rows[row][column] {
         Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
         other => format!("{other:?}"),
@@ -3626,6 +4020,228 @@ fn distinct_range_orders_gos_hash_agg_over_reader_tree() {
     assert_eq!(analyzed_cell(2, 1), "100.00", "{analyzed:#?}");
     assert_eq!(analyzed_cell(3, 1), "100.00", "{analyzed:#?}");
     assert_eq!(analyzed_cell(4, 1), "100.00", "{analyzed:#?}");
+
+    // Returning the task is independent of projection width, computed
+    // fields, and ordering/window operators above DISTINCT.
+    for sql in [
+        "SELECT DISTINCT c FROM distinct_range",
+        "SELECT DISTINCT c FROM distinct_range ORDER BY c LIMIT 1 OFFSET 1",
+        "SELECT DISTINCT c FROM distinct_range LIMIT 1",
+        "SELECT DISTINCT c, c AS again FROM distinct_range ORDER BY c",
+        "SELECT DISTINCT CONCAT(c,'!') AS v FROM distinct_range ORDER BY v",
+        "SELECT DISTINCT c FROM distinct_range WHERE id = 999 ORDER BY c",
+    ] {
+        let Stmt::Query(query) = tidb_parser::parse(sql).unwrap() else {
+            panic!("not a query")
+        };
+        let QueryStmt::Select(select) = &*query else {
+            panic!("not a select")
+        };
+        let mut delivered = crate::driver::from::Delivered::new();
+        let mut deferred = None;
+        crate::driver::AGGREGATION_PIPELINE_BUILDS.with(|builds| builds.set(0));
+        let (columns, _) = crate::driver::run_select_traced_with_delivery_choice(
+            select,
+            &catalog,
+            "test",
+            &ctx,
+            None,
+            &tidb_planner::physical_property::PhysicalProperty::default(),
+            Some(&mut delivered),
+            Some(&mut deferred),
+            false,
+            crate::driver::AggregationChoice::Auto,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            crate::driver::AGGREGATION_PIPELINE_BUILDS.with(|builds| builds.get()),
+            2,
+            "{sql}"
+        );
+        assert!(delivered.candidate.is_some(), "{sql}");
+        let types = columns.into_iter().map(|(_, ty)| ty).collect::<Vec<_>>();
+        let got =
+            crate::driver::drain_executor_rows(deferred.unwrap(), &types, &ctx.statement_memory())
+                .unwrap();
+        assert_eq!(got, run_select_on(sql, &catalog, &ctx).unwrap(), "{sql}");
+    }
+    run_insert_on(
+        "INSERT INTO distinct_range VALUES (4, NULL), (5, NULL)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    for clean in [false, true] {
+        if clean {
+            catalog.clear_dirty_content();
+        }
+        let sql = "SELECT DISTINCT c FROM distinct_range ORDER BY c";
+        crate::driver::AGGREGATION_PIPELINE_BUILDS.with(|builds| builds.set(0));
+        let rows = run_select_on(sql, &catalog, &ctx).unwrap();
+        assert_eq!(rows.len(), 3, "clean={clean}");
+        assert_eq!(rows[0], vec![Datum::Null]);
+        assert_eq!(datum_text_for_test(&rows[1][0]), "a");
+        assert_eq!(datum_text_for_test(&rows[2][0]), "b");
+        assert_eq!(
+            crate::driver::AGGREGATION_PIPELINE_BUILDS.with(|builds| builds.get()),
+            2
+        );
+        let rows = run_select_on(
+            "SELECT DISTINCT c FROM distinct_range ORDER BY c LIMIT 1 OFFSET 1",
+            &catalog,
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(datum_text_for_test(&rows[0][0]), "a");
+    }
+}
+
+/// A DISTINCT task must price the filter it actually executes below dedup.
+#[test]
+fn distinct_candidate_includes_plain_having() {
+    use tidb_planner::candidate_cost::Candidate;
+
+    fn includes_selection(candidate: &Candidate) -> bool {
+        match candidate {
+            Candidate::Selection { .. } => true,
+            Candidate::HashAgg { child, .. }
+            | Candidate::StreamAgg { child, .. }
+            | Candidate::Reader { child, .. }
+            | Candidate::Projection { child, .. }
+            | Candidate::Sort { child, .. }
+            | Candidate::TopN { child, .. }
+            | Candidate::Limit { child, .. } => includes_selection(child),
+            _ => false,
+        }
+    }
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE having_cost (id INT PRIMARY KEY, c INT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO having_cost VALUES (1,1),(2,2),(3,2)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    catalog.clear_dirty_content();
+    let sql = "SELECT DISTINCT c FROM having_cost HAVING c > 1";
+    // The range retains id before c in the scan schema. A partial DISTINCT
+    // below HAVING must not replace that row with only c while the filter
+    // still refers to its original second slot (the live sysbench failure).
+    assert_eq!(
+        run_select_on(
+            "SELECT DISTINCT c FROM having_cost WHERE id BETWEEN 1 AND 3 HAVING c > 1 ORDER BY c",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(2)]],
+    );
+    let Stmt::Query(query) = tidb_parser::parse(sql).unwrap() else {
+        panic!("not a query")
+    };
+    let QueryStmt::Select(select) = &*query else {
+        panic!("not a select")
+    };
+    let mut delivered = crate::driver::from::Delivered::new();
+    let mut deferred = None;
+    let (columns, _) = crate::driver::run_select_traced_with_delivery_choice(
+        select,
+        &catalog,
+        "test",
+        &ctx,
+        None,
+        &tidb_planner::physical_property::PhysicalProperty::default(),
+        Some(&mut delivered),
+        Some(&mut deferred),
+        false,
+        crate::driver::AggregationChoice::Hash,
+        false,
+    )
+    .unwrap();
+    let types = columns.into_iter().map(|(_, ty)| ty).collect::<Vec<_>>();
+    let rows =
+        crate::driver::drain_executor_rows(deferred.unwrap(), &types, &ctx.statement_memory())
+            .unwrap();
+    assert_eq!(rows, vec![vec![Datum::Int(2)]]);
+    let candidate = delivered
+        .candidate
+        .expect("DISTINCT must return a complete task");
+    assert!(
+        includes_selection(&candidate),
+        "the HAVING filter is missing: {candidate:?}"
+    );
+    let Candidate::HashAgg { child, .. } = &candidate else {
+        panic!("not a hash task")
+    };
+    let Candidate::Selection {
+        child,
+        input_rows,
+        conditions,
+    } = &**child
+    else {
+        panic!("missing HAVING")
+    };
+    let Candidate::Reader {
+        rows: scan_rows,
+        child,
+        ..
+    } = &**child
+    else {
+        panic!("missing reader")
+    };
+    assert!(!matches!(&**child, Candidate::HashAgg { .. }));
+    assert_eq!(
+        input_rows, scan_rows,
+        "HAVING must process source rows before aggregation"
+    );
+    assert_eq!(conditions, &[true]);
+    for sql in [
+        "SELECT c FROM having_cost WHERE id BETWEEN 1 AND 3 HAVING c > 1 LIMIT 1",
+        "SELECT DISTINCT c FROM having_cost WHERE id BETWEEN 1 AND 3 HAVING c > 1 ORDER BY c LIMIT 1",
+    ] {
+        assert_eq!(run_select_on(sql, &catalog, &ctx).unwrap(), vec![vec![Datum::Int(2)]], "{sql}");
+    }
+
+    // An unrepresented operator cannot turn back into a priced source just
+    // because a later projection or DISTINCT knows its own local cost.
+    for (sql, expected) in [
+        (
+            "SELECT DISTINCT o.c FROM having_cost o HAVING (SELECT MAX(i.c) FROM having_cost i WHERE i.c=o.c) > 1",
+            vec![vec![Datum::Int(2)]],
+        ),
+        (
+            "SELECT DISTINCT o.c FROM having_cost o WHERE (SELECT i.c FROM having_cost i WHERE i.id=o.id LIMIT 1) > 1",
+            vec![vec![Datum::Int(2)]],
+        ),
+        (
+            "SELECT DISTINCT o.c, (SELECT i.id FROM having_cost i WHERE i.id=o.id LIMIT 1) AS x FROM having_cost o",
+            vec![vec![Datum::Int(1), Datum::Int(1)], vec![Datum::Int(2), Datum::Int(2)], vec![Datum::Int(2), Datum::Int(3)]],
+        ),
+        (
+            "SELECT DISTINCT c, ROW_NUMBER() OVER (ORDER BY id) AS n FROM having_cost",
+            vec![vec![Datum::Int(1), Datum::Int(1)], vec![Datum::Int(2), Datum::Int(2)], vec![Datum::Int(2), Datum::Int(3)]],
+        ),
+    ] {
+        let Stmt::Query(query) = tidb_parser::parse(sql).unwrap() else { panic!("not a query") };
+        let QueryStmt::Select(select) = &*query else { panic!("not a select") };
+        let mut delivered = crate::driver::from::Delivered::new();
+        let (columns, rows) = crate::driver::run_select_traced_with_delivery_choice(
+            select, &catalog, "test", &ctx, None,
+            &tidb_planner::physical_property::PhysicalProperty::default(),
+            Some(&mut delivered), None, false,
+            crate::driver::AggregationChoice::Hash, false,
+        ).unwrap();
+        assert_eq!(rows, expected, "{sql}: {columns:?}");
+        assert!(delivered.candidate.is_none(), "an incomplete source was published for {sql}: {delivered:?}");
+    }
 }
 
 /// `BIT_AND`/`BIT_OR`/`BIT_XOR` return BIGINT **UNSIGNED**.

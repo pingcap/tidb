@@ -113,6 +113,8 @@ struct Observation {
     /// The children of the COUNT function sent to TiKV, if this is an
     /// aggregate request.
     count_children: Vec<Expr>,
+    /// Physical hash/stream operator selected for the aggregation DAG node.
+    aggregate_type: Option<i32>,
 }
 
 #[derive(Debug, Default)]
@@ -181,11 +183,18 @@ impl QueryTransport for FakeTransport {
                     .as_ref()
                     .map_or(0, |selection| selection.conditions.len());
             }
-            if executor.tp == Some(ExecType::TypeAggregation as i32) {
+            if executor.tp == Some(ExecType::TypeAggregation as i32)
+                || executor.tp == Some(ExecType::TypeStreamAgg as i32)
+            {
+                observation.aggregate_type = executor.tp;
                 let aggregation = executor
                     .aggregation
                     .as_ref()
                     .expect("an aggregation executor carries its descriptor");
+                assert_eq!(
+                    aggregation.streamed, None,
+                    "Go's list DAG carries the mode only in Executor.tp"
+                );
                 let count = aggregation
                     .agg_func
                     .iter()
@@ -197,9 +206,7 @@ impl QueryTransport for FakeTransport {
 
         let mut rows_data = Vec::new();
         let mut sent = 0usize;
-        if observation.count_children.is_empty() && dag.executors.iter().any(|executor| {
-            executor.tp == Some(ExecType::TypeAggregation as i32)
-        }) {
+        if observation.count_children.is_empty() && observation.aggregate_type.is_some() {
             // Still return a valid partial count when the malformed request
             // has no child, so the regression fails on the encoded DAG rather
             // than on response decoding.
@@ -441,76 +448,86 @@ fn a_limit_over_a_fully_lowered_builtin_predicate_travels_with_it() {
 /// omitting it makes TiKV look for primary-key columns in the row value.
 #[test]
 fn count_star_lowers_to_count_with_one_constant_child() {
-    let region = Arc::new(FakeRegion::default());
-    let scanner = CopScanSource::new(Arc::new(FakeFactory {
-        region: Arc::clone(&region),
-    }));
-    let mut count_type = FieldType::new(FieldTypeCode::LongLong);
-    count_type.set_flen(21);
-    count_type.set_decimal(0);
-    let request = PushdownScanRequest {
-        table_id: 91,
-        index: None,
-        columns: vec![PushdownScanColumn {
-            id: 1,
-            field_type: FieldType::new(FieldTypeCode::LongLong),
-            is_handle: false,
-            // No stored `DEFAULT` for this synthetic column.
-            origin_default: None,
-        }],
-        handle_index: None,
-        primary_column_ids: vec![1],
-        primary_prefix_column_ids: vec![1],
-        predicates: Vec::new(),
-        output_offsets: None,
-        topn: None,
-        limit: None,
-        paging_min_size: None,
-        aggregate: Some(PushdownPartialAggregate::Global {
-            functions: vec![PushdownGlobalAggregateFunction {
-                kind: PushdownAggregateKind::Count,
-                input: None,
-                output_type: count_type,
+    for streamed in [false, true] {
+        let region = Arc::new(FakeRegion::default());
+        let scanner = CopScanSource::new(Arc::new(FakeFactory {
+            region: Arc::clone(&region),
+        }));
+        let mut count_type = FieldType::new(FieldTypeCode::LongLong);
+        count_type.set_flen(21);
+        count_type.set_decimal(0);
+        let request = PushdownScanRequest {
+            table_id: 91,
+            index: None,
+            columns: vec![PushdownScanColumn {
+                id: 1,
+                field_type: FieldType::new(FieldTypeCode::LongLong),
+                is_handle: false,
+                // No stored `DEFAULT` for this synthetic column.
+                origin_default: None,
             }],
-        }),
-        keep_order: false,
-        allow_unordered_response: false,
-        // Go's `desc` on the TableScan executor: this request walks its one
-        // range forwards.
-        desc: false,
-        read_ahead_batches: tidb_executor::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
-        snapshot_ts: 4_242,
-        ranges: vec![(Key::from_bytes(b"a"), Key::from_bytes(b"z"))],
-        range_hints: Vec::new(),
-        statement: PushdownStatementContext::default(),
-    };
-    let mut stream = scanner
-        .open(&request)
-        .expect("the partial count is served by the coprocessor");
-    assert_eq!(
-        stream.next_row().expect("the partial count row"),
-        Some(vec![Datum::Int(region_rows().len() as i64)])
-    );
-    stream.close();
-
-    let observations = region.observations.lock().unwrap();
-    let [observation] = observations.as_slice() else {
-        panic!("exactly one coprocessor request: {observations:?}");
-    };
-    assert_eq!(observation.primary_column_ids, [1]);
-    assert_eq!(observation.primary_prefix_column_ids, [1]);
-    let [argument] = observation.count_children.as_slice() else {
-        panic!(
-            "Go sends COUNT(1) with one child, got {:?}",
-            observation.count_children
+            handle_index: None,
+            primary_column_ids: vec![1],
+            primary_prefix_column_ids: vec![1],
+            predicates: Vec::new(),
+            output_offsets: None,
+            topn: None,
+            limit: None,
+            paging_min_size: None,
+            aggregate: Some(PushdownPartialAggregate::Global {
+                streamed,
+                functions: vec![PushdownGlobalAggregateFunction {
+                    kind: PushdownAggregateKind::Count,
+                    input: None,
+                    output_type: count_type,
+                }],
+            }),
+            keep_order: false,
+            allow_unordered_response: false,
+            // Go's `desc` on the TableScan executor: this request walks its one
+            // range forwards.
+            desc: false,
+            snapshot_ts: 4_242,
+            ranges: vec![(Key::from_bytes(b"a"), Key::from_bytes(b"z"))],
+            range_hints: Vec::new(),
+            statement: PushdownStatementContext::default(),
+        };
+        let mut stream = scanner
+            .open(&request)
+            .expect("the partial count is served by the coprocessor");
+        assert_eq!(
+            stream.next_row().expect("the partial count row"),
+            Some(vec![Datum::Int(region_rows().len() as i64)])
         );
-    };
-    assert_eq!(argument.tp, Some(ExprType::Int64 as i32));
-    assert_eq!(
-        tidb_codec::decode_int(argument.val.as_deref().expect("the literal value"))
-            .expect("the signed literal encoding"),
-        (&[][..], 1)
-    );
+        stream.close();
+
+        let observations = region.observations.lock().unwrap();
+        let [observation] = observations.as_slice() else {
+            panic!("exactly one coprocessor request: {observations:?}");
+        };
+        assert_eq!(
+            observation.aggregate_type,
+            Some(if streamed {
+                ExecType::TypeStreamAgg as i32
+            } else {
+                ExecType::TypeAggregation as i32
+            })
+        );
+        assert_eq!(observation.primary_column_ids, [1]);
+        assert_eq!(observation.primary_prefix_column_ids, [1]);
+        let [argument] = observation.count_children.as_slice() else {
+            panic!(
+                "Go sends COUNT(1) with one child, got {:?}",
+                observation.count_children
+            );
+        };
+        assert_eq!(argument.tp, Some(ExprType::Int64 as i32));
+        assert_eq!(
+            tidb_codec::decode_int(argument.val.as_deref().expect("the literal value"))
+                .expect("the signed literal encoding"),
+            (&[][..], 1)
+        );
+    }
 }
 
 /// A globally ordered descending scan has two direction owners: TableScan
@@ -545,7 +562,6 @@ fn a_descending_scan_marks_both_the_dag_and_dist_sql_request() {
         desc: true,
         // A globally ordered scan cannot accept unordered region responses.
         allow_unordered_response: false,
-        read_ahead_batches: tidb_executor::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
         snapshot_ts: 4_242,
         ranges: vec![(Key::from_bytes(b"a"), Key::from_bytes(b"z"))],
         range_hints: Vec::new(),

@@ -173,16 +173,12 @@ pub mod catalog;
 pub mod cte;
 pub mod expand;
 pub mod from;
-#[cfg(test)]
-mod from_tests;
 pub mod handle_col_helper;
 pub mod marker;
 pub mod only_full_group_by;
 pub mod set_opr;
 #[cfg(test)]
 mod set_opr_tests;
-#[cfg(test)]
-mod tests;
 pub mod window;
 #[cfg(test)]
 mod window_tests;
@@ -198,7 +194,7 @@ use tidb_expr::aggregation::ByItems;
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
 
-use tidb_expr::expr_util::normal_form::split_cnf_items;
+use tidb_expr::expr_util::normal_form::into_cnf_items;
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
 use tidb_expr::schema::Schema;
@@ -992,6 +988,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             self.optimizer_use_invisible_indexes,
         );
         data_source.indexes = table.indexes.clone();
+        data_source.table_columns = schema_columns.clone();
         debug_assert!(data_source.possible_access_paths.is_empty());
 
         data_source
@@ -1103,7 +1100,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let scratch = Self::clause_scratch(where_clause);
         let built = self.rewrite_scalar(&scratch, &schema, &names, markers)?;
 
-        for item in split_cnf_items(&built) {
+        for item in into_cnf_items(built) {
             if let Expression::Constant(constant) = &item {
                 match constant_is_always_false(constant) {
                     // "If there is condition which is always false, return

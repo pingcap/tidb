@@ -99,15 +99,13 @@ pub(crate) fn eliminate(
     current_db: &str,
     parent_duplicate_agnostic: bool,
 ) -> Option<SelectStmt> {
-    let mut current = select.clone();
-    let mut eliminated = false;
+    let mut current = eliminate_once(select, catalog, current_db, parent_duplicate_agnostic)?;
     while let Some(rewritten) =
         eliminate_once(&current, catalog, current_db, parent_duplicate_agnostic)
     {
         current = rewritten;
-        eliminated = true;
     }
-    eliminated.then_some(current)
+    Some(current)
 }
 
 /// One round of [`eliminate`]: the statement with its top-level outer join
@@ -151,19 +149,9 @@ fn eliminate_once(
         .clone()
         .unwrap_or_else(|| name.to_ascii_lowercase());
 
-    // The candidate: the same statement reading only the outer side.
-    let mut candidate = select.clone();
-    candidate.from = Some(Join {
-        left: outer.clone(),
-        right: None,
-        tp: JoinType::Cross,
-        straight: false,
-        on: None,
-        using: Vec::new(),
-        natural: false,
-        explicit_parens: false,
-    });
-    if !LeafDemand::of_select_parent_clauses(&candidate)
+    // Parent-clause demand does not read FROM. Prove elimination against
+    // those borrowed clauses before constructing the replacement tree.
+    if !LeafDemand::of_select_parent_clauses(select)
         .needed(&visible, &entry.column_types())
         .is_empty()
     {
@@ -172,15 +160,25 @@ fn eliminate_once(
     // Go carries SELECT DISTINCT as duplicate-agnostic aggregate columns into
     // `tryToEliminateOuterJoin`. Once no inner column survives, duplicate
     // matches cannot alter the result, even when the inner key is not unique.
-    if parent_duplicate_agnostic || select.distinct || direct_duplicate_agnostic_aggregate(select) {
-        return Some(candidate);
+    if !(parent_duplicate_agnostic || select.distinct || direct_duplicate_agnostic_aggregate(select)) {
+        let keys = inner_join_keys(join.on.as_ref()?, &visible)?;
+        if !keys_contain_unique_key(entry, &keys) {
+            return None;
+        }
     }
-
-    let keys = inner_join_keys(join.on.as_ref()?, &visible)?;
-    if !keys_contain_unique_key(entry, &keys) {
-        return None;
-    }
-    Some(candidate)
+    Some(super::ast_rewrite::replace_from(
+        select,
+        Join {
+            left: outer.clone(),
+            right: None,
+            tp: JoinType::Cross,
+            straight: false,
+            on: None,
+            using: Vec::new(),
+            natural: false,
+            explicit_parens: false,
+        },
+    ))
 }
 
 /// The direct, ungrouped subset of Go `GetDupAgnosticAggCols`: every output

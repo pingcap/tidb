@@ -220,6 +220,12 @@ pub struct ImmediatePending {
 }
 
 impl tidb_txnkv::rpc::PendingRequest for ImmediatePending {
+    fn set_notifier(&mut self, notifier: tidb_txnkv::rpc::CompletionNotifier, token: u64) {
+        if self.result.is_some() {
+            notifier.notify(token);
+        }
+    }
+
     fn try_complete(
         &mut self,
     ) -> Result<
@@ -505,8 +511,7 @@ mod tests {
         assert_ne!(response.publication.request_id(), 0);
     }
 
-    #[test]
-    fn a_cop_request_travels_the_client_seam_end_to_end() {
+    fn cop_read_fixture() -> (InProcessClient, coprocessor::Request) {
         // The final joint: the SAME encoded body the gRPC client would carry
         // to TiKV goes through the trait and comes back as an encoded
         // coprocessor.Response with rows in it.
@@ -514,7 +519,7 @@ mod tests {
         use tidb_datatype::Datum;
         use tidb_proto::{KvrpcMutation, KvrpcOp};
 
-        let mut client = InProcessClient::new();
+        let client = InProcessClient::new();
         client.with_store(|store| {
             let key = encode_row_key_with_handle(5, &RecordHandle::Int(1));
             let value = tidb_codec::encode_value(&[Datum::Int(2), Datum::Int(7)]).expect("row");
@@ -560,6 +565,14 @@ mod tests {
             start_ts: 20,
             ..coprocessor::Request::default()
         };
+        (client, cop)
+    }
+
+    #[test]
+    fn a_cop_request_travels_the_client_seam_end_to_end() {
+        use tidb_datatype::Datum;
+        use tidb_proto::tipb;
+        let (mut client, cop) = cop_read_fixture();
         let mut encoded_request = Vec::new();
         cop.encode(&mut encoded_request).expect("encodes");
 
@@ -589,22 +602,68 @@ mod tests {
     }
 
     #[test]
-    fn the_full_transport_constructs_over_the_in_process_pair() {
-        // The decisive bound: `DirectUnaryQueryTransport::from_read_authority`
-        // demands the unary core PLUS lock recovery PLUS async dispatch.
-        // With all three implemented, the node's ACTUAL query transport
-        // constructs over a store with no network under it — the last type
-        // barrier between --store unistore and a running node.
+    fn the_full_transport_reads_the_in_process_store() {
+        // Go mockstore serves the same coprocessor reader over its in-process
+        // RPC client. Exercise actual ordered/unordered results, not just the
+        // transport's constructor bounds.
         use crate::region_loader::InProcessRegionLoader;
+        use tidb_distsql::{
+            InjectedQueryRuntime, KvRequestMetadata, QueryResultContext, RequestKeyRange,
+            RequestKeyRanges, RequestType, SelectInput, StoreType, TransportRequest,
+            WarningCollector,
+        };
+        let (client, cop) = cop_read_fixture();
         let cache = tidb_txnkv::region::RegionCache::new(InProcessRegionLoader);
         let authority: tidb_txnkv::SharedReadAuthority<InProcessClient, InProcessRegionLoader> =
-            tidb_txnkv::SharedReadAuthority::start(InProcessClient::new(), cache)
-                .expect("the authority starts");
-        let transport = tidb_distsql::DirectUnaryQueryTransport::from_read_authority(
-            &authority.opener(),
-            tidb_distsql::DirectUnaryRuntimeConfig::default(),
-            tidb_txnkv::lock::FixedTimestampSource::new(42),
-        );
-        assert!(transport.is_ok(), "{:?}", transport.err());
+            tidb_txnkv::SharedReadAuthority::start(client, cache).expect("the authority starts");
+        for keep_order in [true, false] {
+            let transport = tidb_distsql::DirectUnaryQueryTransport::from_read_authority(
+                &authority.opener(),
+                tidb_distsql::DirectUnaryRuntimeConfig::default(),
+                tidb_txnkv::lock::FixedTimestampSource::new(42),
+            )
+            .unwrap();
+            let mut metadata = KvRequestMetadata::default();
+            metadata.request_type = RequestType::Dag;
+            metadata.data = Some(cop.data.clone());
+            metadata.start_ts = cop.start_ts;
+            metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(
+                cop.ranges
+                    .iter()
+                    .map(|range| RequestKeyRange {
+                        start_key: range.start.clone().into(),
+                        end_key: range.end.clone().into(),
+                    })
+                    .collect(),
+            ));
+            metadata.keep_order = keep_order;
+            metadata.concurrency = 2;
+            metadata.paging.enabled = false;
+            metadata.store_type = StoreType::TiKv;
+            metadata.read_replica_scope = "global".to_owned();
+            metadata.txn_scope = "global".to_owned();
+            metadata.tikv_client_read_timeout_ms = 1000;
+            let request =
+                TransportRequest::new(metadata, Arc::new(tidb_distsql::CancelHandle::default()));
+            let mut runtime = InjectedQueryRuntime::new(transport);
+            let mut result = runtime
+                .select_with_runtime_stats(
+                    &request,
+                    SelectInput::default(),
+                    QueryResultContext::new(Vec::new(), WarningCollector::new()),
+                    vec![],
+                    0,
+                    false,
+                )
+                .unwrap();
+            let data = result.next_raw().unwrap().expect("one cop response");
+            let selected = tidb_proto::tipb::SelectResponse::decode(data.as_slice()).unwrap();
+            let rows = selected.chunks[0].rows_data.as_deref().unwrap();
+            assert_eq!(
+                tidb_codec::decode(rows, 1).unwrap(),
+                vec![tidb_datatype::Datum::Int(7)]
+            );
+            assert_eq!(result.next_raw().unwrap(), None);
+        }
     }
 }

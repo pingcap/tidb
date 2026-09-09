@@ -15,12 +15,11 @@
 //! `pkg/expression/constant.go`: the `Constant` expression node and its
 //! `ParamMarker`.
 //!
-//! Ported: the struct and its structural, context-free methods (static type,
-//! const-level, correlation, and the lazily-cached `HashCode`). DEFERRED (need
-//! `EvalContext`/`chunk.Row` or the param/user-var machinery): all `Eval*`,
-//! `GetType(ctx)`'s param-type inference, `Equal` (it evaluates and compares
-//! values through a collator), `StringWithCtx`/`ExplainInfo`, `CanonicalHashCode`,
-//! and `MemoryUsage`.
+//! Includes structural methods and contextual datum evaluation with current
+//! parameters, deferred expressions, statement conversion flags and warnings.
+//! Unported conversion diagnostics remain explicit errors. The typed `Eval*`
+//! entrypoints, `GetType(ctx)`'s parameter inference, contextual comparison and
+//! display, `CanonicalHashCode`, and `MemoryUsage` remain incomplete.
 
 use std::hash::{Hash, Hasher};
 
@@ -120,19 +119,84 @@ impl Constant {
         }
     }
 
-    /// Go `Constant.Eval`: a plain literal evaluates to its value.
-    ///
-    /// The deferred-expression and parameter-marker branches (Go's
-    /// `getLazyDatum`) need an `EvalContext` and are not yet ported; a constant
-    /// carrying either is reported as unsupported rather than silently returning
-    /// the stale `Value`.
+    /// A context-independent literal value. Parameter snapshots are not
+    /// literals: using them for specialization would freeze one execution.
+    #[must_use]
+    pub fn literal_value(&self) -> Option<&Datum> {
+        (self.const_level() == ConstLevel::STRICT).then_some(&self.value)
+    }
+
+    /// Evaluates without prepared parameters. Dynamic constants fail rather
+    /// than silently returning the saved planning-time value.
     pub fn eval(&self) -> Result<Datum, EvalError> {
-        if self.deferred_expr.is_some() || self.param_marker.is_some() {
-            return Err(EvalError::Unsupported(
-                "deferred/parameter constant evaluation is not yet ported",
+        self.eval_in(&crate::NoColumns)
+    }
+
+    /// Go `Constant.getLazyDatum/Eval`: lazy values come from this execution,
+    /// while the planning value and expression remain immutable.
+    pub fn eval_in(&self, ctx: &impl crate::Columns) -> Result<Datum, EvalError> {
+        self.eval_lazy_in(ctx, |expression| {
+            crate::eval_expression_once(expression, ctx)
+        })
+    }
+
+    /// Runtime evaluation keeps the caller's row, as Go `getLazyDatum` does.
+    /// It must not construct a new empty chunk at every deferred node.
+    pub(crate) fn eval_on_row(
+        &self,
+        ctx: &impl crate::Columns,
+        row: tidb_chunk::row::Row<'_>,
+    ) -> Result<Datum, EvalError> {
+        self.eval_lazy_in(ctx, |expression| expression.eval(ctx, row))
+    }
+
+    fn eval_lazy_in(
+        &self,
+        ctx: &impl crate::Columns,
+        evaluate_deferred: impl FnOnce(&Expression) -> Result<Datum, EvalError>,
+    ) -> Result<Datum, EvalError> {
+        let value = if let Some(marker) = self.param_marker {
+            let order = usize::try_from(marker.order)
+                .map_err(|_| EvalError::Unsupported("unbound prepared parameter"))?;
+            ctx.param_value(order)?
+        } else if let Some(deferred) = self.deferred_expr.as_deref() {
+            evaluate_deferred(deferred)?
+        } else {
+            return Ok(self.value.clone());
+        };
+        if self.deferred_expr.is_none() || value.is_null() {
+            return Ok(value);
+        }
+        let target = self.ret_type.as_ref().ok_or(EvalError::Unsupported(
+            "deferred constant has no result type",
+        ))?;
+        if let Datum::Decimal(value) = value {
+            // Go adjustDecimal only pads a short fraction. It neither
+            // narrows precision nor rounds away existing fractional digits.
+            return Ok(Datum::Decimal(
+                if i64::from(value.precision_and_frac().1) < target.decimal() {
+                    value.round_to_scale(target.decimal() as i32)
+                } else {
+                    value
+                },
             ));
         }
-        Ok(self.value.clone())
+        let warnings = ConversionWarnings(ctx);
+        let zone = ctx.time_zone();
+        let context = tidb_datatype::ConversionContext::new(
+            ctx.type_flags(),
+            tidb_datatype::ConversionLocation::from_time_zone(&zone),
+            &warnings,
+        );
+        let converted = value
+            .convert_to_in_context(target, &context, &zone)
+            .map_err(|_| {
+                EvalError::Unsupported("deferred conversion diagnostic routing is not yet ported")
+            })?;
+        if let Some(error) = converted.error {
+            return Err(EvalError::Conversion(error));
+        }
+        Ok(converted.value)
     }
 
     /// Go `HashCode` (= `getHashCode(false)`), cached on first call:
@@ -175,6 +239,16 @@ impl Constant {
             && optional_expression_equals(&self.deferred_expr, &other.deferred_expr)
             && self.param_marker == other.param_marker
             && datum_equals(&self.value, &other.value)
+    }
+}
+
+/// Borrow the active evaluator's warning sink; no per-conversion warning store.
+struct ConversionWarnings<'a, C>(&'a C);
+
+impl<C: crate::Columns> tidb_datatype::ConversionWarningAppender for ConversionWarnings<'_, C> {
+    fn append_conversion_warning(&self, warning: tidb_error::terror::TerrorError) {
+        let warning = warning.to_sql_error();
+        self.0.append_warning(warning.code, &warning.message);
     }
 }
 
@@ -352,6 +426,263 @@ mod tests {
 
     fn ft() -> FieldType {
         FieldType::new(FieldTypeCode::Long)
+    }
+
+    struct Parameters(Vec<Datum>);
+
+    impl crate::Columns for Parameters {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
+            self.0
+                .get(order)
+                .cloned()
+                .ok_or(EvalError::Unsupported("unbound prepared parameter"))
+        }
+    }
+
+    fn parameter(order: i64) -> Expression {
+        let mut constant = Constant::new(Datum::Int(99), ft());
+        constant.param_marker = Some(ParamMarker { order });
+        Expression::Constant(constant)
+    }
+
+    fn scalar(name: &str, args: Vec<Expression>) -> Expression {
+        Expression::ScalarFunction(crate::expression::ScalarFunction::new(
+            tidb_ast::CiString::new(name),
+            ft(),
+            args,
+        ))
+    }
+
+    fn int(value: i64) -> Expression {
+        Expression::Constant(Constant::new(Datum::Int(value), ft()))
+    }
+
+    #[test]
+    fn prepared_constant_reads_current_typed_value_not_saved_literal() {
+        let expression = parameter(0);
+        for value in [
+            Datum::Null,
+            Datum::Int(-7),
+            Datum::UInt(u64::MAX),
+            Datum::Real(1.25),
+            Datum::new_bytes(vec![0, 255, 1]),
+            Datum::Decimal(tidb_datatype::Decimal::from_scaled_i128(12340, 3)),
+        ] {
+            assert_eq!(
+                crate::eval_expression_once(&expression, &Parameters(vec![value.clone()])).unwrap(),
+                value,
+            );
+        }
+        assert!(crate::eval_expression_once(&expression, &crate::NoColumns).is_err());
+        assert!(
+            crate::eval_expression_once(&parameter(-1), &Parameters(vec![Datum::Int(3)])).is_err()
+        );
+        assert!(
+            crate::eval_expression_once(&parameter(1), &Parameters(vec![Datum::Int(3)])).is_err()
+        );
+        let Expression::Constant(saved) = expression else {
+            unreachable!()
+        };
+        assert_eq!(saved.value, Datum::Int(99));
+    }
+
+    #[test]
+    fn prepared_constants_never_supply_a_context_free_folded_value() {
+        assert!(crate::constant_fold::folded_value(&parameter(0)).is_none());
+    }
+
+    #[test]
+    fn prepared_deferred_constant_converts_current_value_without_mutation() {
+        let mut constant = Constant::new(Datum::Real(100.0), FieldType::new(FieldTypeCode::Double));
+        constant.deferred_expr = Some(Box::new(scalar("plus", vec![parameter(0), int(1)])));
+        for (value, expected) in [
+            (Datum::Int(1), Datum::Real(2.0)),
+            (Datum::Int(9), Datum::Real(10.0)),
+            (Datum::Null, Datum::Null),
+        ] {
+            assert_eq!(
+                constant.eval_in(&Parameters(vec![value])).unwrap(),
+                expected
+            );
+        }
+        assert_eq!(constant.value, Datum::Real(100.0));
+        assert!(constant.literal_value().is_none());
+
+        // getLazyDatum prioritizes ParamMarker; Eval still applies the
+        // declared result conversion whenever DeferredExpr is present.
+        constant.param_marker = Some(ParamMarker { order: 0 });
+        assert_eq!(
+            constant.eval_in(&Parameters(vec![Datum::Int(7)])).unwrap(),
+            Datum::Real(7.0),
+        );
+    }
+
+    #[test]
+    fn prepared_deferred_decimal_only_extends_declared_fraction() {
+        let mut constant = Constant::new(
+            Datum::Null,
+            FieldType::new(FieldTypeCode::NewDecimal).with_decimal(2),
+        );
+        constant.deferred_expr = Some(Box::new(parameter(0)));
+        let context = Parameters(vec![Datum::Decimal(
+            tidb_datatype::Decimal::from_scaled_i128(12345, 3),
+        )]);
+        assert_eq!(
+            constant.eval_in(&context).unwrap().sql_string().unwrap(),
+            "12.345",
+        );
+        constant.ret_type.as_mut().unwrap().set_decimal(5);
+        let Datum::Decimal(value) = constant.eval_in(&context).unwrap() else {
+            panic!("deferred decimal lost its datum kind");
+        };
+        assert_eq!(value.to_string(), "12.34500");
+        assert_eq!(value.precision_and_frac().1, 5);
+    }
+
+    #[test]
+    fn prepared_folding_preserves_parameter_dependencies_in_lazy_functions() {
+        let mut expression = Expression::ScalarFunction(crate::expression::ScalarFunction::new(
+            tidb_ast::CiString::new("if"),
+            ft(),
+            vec![
+                parameter(0),
+                Expression::Constant(Constant::new(Datum::Int(7), ft())),
+                Expression::Constant(Constant::new(Datum::Int(11), ft())),
+            ],
+        ));
+        crate::fold_constant_in_mode(
+            &mut expression,
+            &Parameters(vec![Datum::Int(1)]),
+            crate::ConstantFoldMode::Normal,
+        );
+        for (input, expected) in [(Datum::Int(1), 7), (Datum::Int(0), 11), (Datum::Null, 11)] {
+            assert_eq!(
+                crate::eval_expression_once(&expression, &Parameters(vec![input])).unwrap(),
+                Datum::Int(expected),
+            );
+        }
+    }
+
+    #[test]
+    fn prepared_public_folding_keeps_nested_lazy_branches_live() {
+        let builder = crate::expr_util::PreservingFunctionBuilder;
+        let mut options = crate::expr_util::FoldOptions::new(&builder);
+        options.use_plan_cache = true;
+        // Go EXECUTE results for parameters [0, 1, NULL, -2]. Compare with
+        // those answers as well as the unfurled tree, not just two Rust paths.
+        for (original, answers) in [
+            (
+                scalar("if", vec![parameter(0), int(7), int(11)]),
+                [Some(11), Some(7), Some(11), Some(7)],
+            ),
+            (
+                scalar("ifnull", vec![parameter(0), int(11)]),
+                [Some(0), Some(1), Some(11), Some(-2)],
+            ),
+            (
+                scalar("isnull", vec![parameter(0)]),
+                [Some(0), Some(0), Some(1), Some(0)],
+            ),
+            (
+                scalar("case_when", vec![parameter(0), int(7), int(11)]),
+                [Some(11), Some(7), Some(11), Some(7)],
+            ),
+            (
+                scalar("plus", vec![parameter(0), int(11)]),
+                [Some(11), Some(12), None, Some(9)],
+            ),
+            (
+                scalar(
+                    "plus",
+                    vec![scalar("if", vec![parameter(0), int(7), int(11)]), int(3)],
+                ),
+                [Some(14), Some(10), Some(14), Some(10)],
+            ),
+        ] {
+            let folded = crate::expr_util::fold_constant_with(
+                &original,
+                &Parameters(vec![Datum::Int(1)]),
+                &options,
+            );
+            for (value, expected) in [Datum::Int(0), Datum::Int(1), Datum::Null, Datum::Int(-2)]
+                .into_iter()
+                .zip(answers)
+            {
+                let ctx = Parameters(vec![value]);
+                let expected = expected.map_or(Datum::Null, Datum::Int);
+                assert_eq!(
+                    crate::eval_expression_once(&original, &ctx).unwrap(),
+                    expected
+                );
+                assert_eq!(
+                    crate::eval_expression_once(&folded, &ctx).unwrap(),
+                    expected,
+                    "{original:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn prepared_overflow_reports_current_operands() {
+        let expression = scalar("plus", vec![parameter(0), int(1)]);
+        let literal = scalar("plus", vec![int(i64::MAX), int(1)]);
+        let expected = crate::eval_expression_once(&literal, &crate::NoColumns);
+        assert!(expected.is_err());
+        assert_eq!(
+            crate::eval_expression_once(&expression, &Parameters(vec![Datum::Int(i64::MAX)])),
+            expected,
+        );
+    }
+
+    #[test]
+    fn prepared_decimal_batch_specialization_does_not_use_saved_parameter() {
+        use crate::column::Column;
+        use tidb_chunk::chunk::Chunk;
+        use tidb_datatype::Decimal;
+
+        let mut decimal = FieldType::new(FieldTypeCode::NewDecimal);
+        decimal.set_decimal(2);
+        let column = |index: i64| {
+            let mut column = Column::new(index + 1, decimal.clone());
+            column.index = index;
+            Expression::Column(column)
+        };
+        let mut marker = Constant::new(Datum::Int(1), ft());
+        marker.param_marker = Some(ParamMarker { order: 0 });
+        let minus = Expression::ScalarFunction(crate::expression::ScalarFunction::new(
+            tidb_ast::CiString::new("minus"),
+            decimal.clone(),
+            vec![Expression::Constant(marker), column(1)],
+        ));
+        let expression = Expression::ScalarFunction(crate::expression::ScalarFunction::new(
+            tidb_ast::CiString::new("mul"),
+            decimal.clone(),
+            vec![column(0), minus],
+        ));
+        let suite = crate::evaluator::EvaluatorSuite::new(vec![expression.clone()], false);
+        for (value, coefficient) in [
+            (Datum::Int(2), Some(175000)),
+            (Datum::Null, None),
+            (Datum::Int(1), Some(75000)),
+            (Datum::Int(-2), Some(-225000)),
+        ] {
+            let ctx = Parameters(vec![value]);
+            let mut input = Chunk::new_with_capacity(&[decimal.clone(), decimal.clone()], 1);
+            input.append_datum(0, &Datum::Decimal(Decimal::from_scaled_i128(1000, 2)));
+            input.append_datum(1, &Datum::Decimal(Decimal::from_scaled_i128(25, 2)));
+            let expected = coefficient.map_or(Datum::Null, |value| {
+                Datum::Decimal(Decimal::from_scaled_i128(value, 4))
+            });
+            assert_eq!(expression.eval(&ctx, input.get_row(0)).unwrap(), expected);
+            let mut output = Chunk::new_with_capacity(std::slice::from_ref(&decimal), 1);
+            suite.run(&ctx, &mut input, &mut output).unwrap();
+            assert_eq!(output.get_row(0).get_datum(0, &decimal), expected);
+        }
     }
 
     #[test]

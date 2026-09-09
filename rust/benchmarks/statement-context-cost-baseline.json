@@ -1,0 +1,122 @@
+{
+  "status": "WIP diagnostic complete; no production change or throughput-gain claim.",
+  "change": "Add an ignored, serial in-memory construction-cost probe to the existing session lifecycle suite.",
+  "source": [
+    "pkg/executor/select.go: ResetContextOfStmt reuses eligible context state except retry/cursor cases",
+    "pkg/sessionctx/stmtctx/stmtctx.go: Reset preserves reusable storage and checks outstanding locks",
+    "rust/crates/tidb-executor/src/stmt_context.rs: StmtContext::new creates default channels",
+    "rust/crates/tidb-session/src/stmt_ctx.rs: statement_context_ignoring replaces channels with session-owned state"
+  ],
+  "validation": {
+    "profile": "WIP",
+    "command": "cargo test --offline --locked --release -j12 -p tidb-session --lib statement_context_construction_cost_probe -- --ignored --nocapture --test-threads=1",
+    "working_directory": "rust",
+    "session": 36770,
+    "status": "terminal exit 0",
+    "log": "/private/tmp/tidb-statement-context-cost.log",
+    "compile_seconds": 33.8,
+    "test_seconds": 1.55,
+    "tests_passed": 1,
+    "iterations_per_sample": 10000,
+    "rounds": 5,
+    "samples": [
+      {
+        "round": 0,
+        "case": "query_context",
+        "iterations": 10000,
+        "ns_per_op": 2408.45
+      },
+      {
+        "round": 0,
+        "case": "dml_context",
+        "iterations": 10000,
+        "ns_per_op": 2063.42
+      },
+      {
+        "round": 0,
+        "case": "select_one",
+        "iterations": 10000,
+        "ns_per_op": 27650.2
+      },
+      {
+        "round": 1,
+        "case": "dml_context",
+        "iterations": 10000,
+        "ns_per_op": 1812.63
+      },
+      {
+        "round": 1,
+        "case": "select_one",
+        "iterations": 10000,
+        "ns_per_op": 27167.18
+      },
+      {
+        "round": 1,
+        "case": "query_context",
+        "iterations": 10000,
+        "ns_per_op": 1691.91
+      },
+      {
+        "round": 2,
+        "case": "select_one",
+        "iterations": 10000,
+        "ns_per_op": 26757.83
+      },
+      {
+        "round": 2,
+        "case": "query_context",
+        "iterations": 10000,
+        "ns_per_op": 1694.64
+      },
+      {
+        "round": 2,
+        "case": "dml_context",
+        "iterations": 10000,
+        "ns_per_op": 1787.43
+      },
+      {
+        "round": 3,
+        "case": "query_context",
+        "iterations": 10000,
+        "ns_per_op": 1668.53
+      },
+      {
+        "round": 3,
+        "case": "dml_context",
+        "iterations": 10000,
+        "ns_per_op": 1890.35
+      },
+      {
+        "round": 3,
+        "case": "select_one",
+        "iterations": 10000,
+        "ns_per_op": 26650.85
+      },
+      {
+        "round": 4,
+        "case": "dml_context",
+        "iterations": 10000,
+        "ns_per_op": 1788.36
+      },
+      {
+        "round": 4,
+        "case": "select_one",
+        "iterations": 10000,
+        "ns_per_op": 27688.22
+      },
+      {
+        "round": 4,
+        "case": "query_context",
+        "iterations": 10000,
+        "ns_per_op": 1751.49
+      }
+    ],
+    "median_ns_per_op": {
+      "query_context": 1694.64,
+      "dml_context": 1812.63,
+      "select_one": 27167.18
+    }
+  },
+  "interpretation": "Context construction is measurable at about 1.7-1.8 microseconds per call, versus about 27 microseconds for in-memory SELECT 1. The latter is a local reference, not a component-time decomposition or a real-TiKV workload. This does not establish that removing default allocations can recover the mixed-workload regression; no production refactor is justified by these timings alone.",
+  "remaining": "Complete the separate data-free repeated-baseline packet diagnostic; the seeded mixed TPC-C comparison still requires explicit persistent-fixture-write approval."
+}

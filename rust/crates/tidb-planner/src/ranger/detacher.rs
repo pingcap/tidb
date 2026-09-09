@@ -148,12 +148,13 @@ pub fn append_conditions_if_not_exist(
 
 /// Go `ExtractAccessConditionsForColumn`: the access conditions only, no
 /// filter split (a flat filter over the checker, unlike the CNF/DNF walk).
+/// Go filters expression interfaces; retain references to the same trees.
 #[must_use]
-pub fn extract_access_conditions_for_column(
-    conds: &[Expression],
+pub fn extract_access_conditions_for_column<'a>(
+    conds: &'a [Expression],
     col: &tidb_expr::column::Column,
     opt_prefix_index_single_scan: bool,
-) -> Vec<Expression> {
+) -> Vec<&'a Expression> {
     let checker = ConditionChecker {
         checker_col: Some(col),
         length: UNSPECIFIED_LENGTH,
@@ -162,7 +163,6 @@ pub fn extract_access_conditions_for_column(
     conds
         .iter()
         .filter(|expr| checker.check(expr).0)
-        .cloned()
         .collect()
 }
 
@@ -184,7 +184,8 @@ pub fn detach_conds_for_column(
 use tidb_datatype::Datum;
 
 use super::points::{
-    range_point_cmp, Point, PointBuilder, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_NE, OP_NULL_EQ,
+    range_point_cmp, ConstantEvaluator, Point, PointBuilder, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT,
+    OP_NE, OP_NULL_EQ,
 };
 
 /// Go `valueInfo`: one index column's constant value, when it has one.
@@ -207,6 +208,20 @@ pub fn get_potential_eq_or_in_col_offset(
     cols: &[tidb_expr::column::Column],
     regard_null_as_point: bool,
 ) -> i64 {
+    get_potential_eq_or_in_col_offset_in(
+        expr,
+        cols,
+        regard_null_as_point,
+        &tidb_expr::constant::Constant::eval,
+    )
+}
+
+fn get_potential_eq_or_in_col_offset_in(
+    expr: &Expression,
+    cols: &[tidb_expr::column::Column],
+    regard_null_as_point: bool,
+    eval_constant: &ConstantEvaluator<'_>,
+) -> i64 {
     let Expression::ScalarFunction(f) = expr else {
         return -1;
     };
@@ -216,8 +231,12 @@ pub fn get_potential_eq_or_in_col_offset(
             let dnf_items = flatten_dnf_conditions(f);
             let mut offset = -1;
             for dnf_item in &dnf_items {
-                let cur_offset =
-                    get_potential_eq_or_in_col_offset(dnf_item, cols, regard_null_as_point);
+                let cur_offset = get_potential_eq_or_in_col_offset_in(
+                    dnf_item,
+                    cols,
+                    regard_null_as_point,
+                    eval_constant,
+                );
                 if cur_offset == -1 {
                     return -1;
                 }
@@ -255,7 +274,9 @@ pub fn get_potential_eq_or_in_col_offset(
             let Expression::Constant(const_val) = const_side else {
                 return -1;
             };
-            let val = &const_val.value;
+            let Ok(val) = eval_constant(const_val) else {
+                return -1;
+            };
             // col <=> NULL stays a range scan, not a point get (nullable
             // unique indexes can hold several NULL rows).
             if (!regard_null_as_point && matches!(val, Datum::Null))
@@ -411,11 +432,10 @@ fn extract_value_info(expr: &Expression) -> Option<ValueInfo> {
         "eq" | "nulleq" => {
             for arg in &f.args[..2.min(f.args.len())] {
                 if let Expression::Constant(c) = arg {
-                    // Go's mutable test reads ParamMarker/DeferredExpr;
-                    // this port's constants are materialized values.
+                    let mutable = c.param_marker.is_some() || c.deferred_expr.is_some();
                     return Some(ValueInfo {
-                        value: Some(c.value.clone()),
-                        mutable: false,
+                        value: (!mutable).then(|| c.value.clone()),
+                        mutable,
                     });
                 }
             }
@@ -500,7 +520,24 @@ pub fn extract_eq_and_in_condition(
     lengths: &[i64],
     regard_null_as_point: bool,
 ) -> EqAndInExtraction {
-    let mut builder = PointBuilder::default();
+    extract_eq_and_in_condition_in(
+        conditions,
+        cols,
+        lengths,
+        regard_null_as_point,
+        &tidb_expr::constant::Constant::eval,
+    )
+}
+
+/// Extract the equality prefix using the current statement's constant evaluator.
+pub fn extract_eq_and_in_condition_in(
+    conditions: &[Expression],
+    cols: &[tidb_expr::column::Column],
+    lengths: &[i64],
+    regard_null_as_point: bool,
+    eval_constant: &ConstantEvaluator<'_>,
+) -> EqAndInExtraction {
+    let mut builder = PointBuilder::new(eval_constant);
     let mut accesses: Vec<Option<Expression>> = vec![None; cols.len()];
     let mut points: Vec<Vec<Point>> = vec![Vec::new(); cols.len()];
     let mut merged: Vec<bool> = vec![false; cols.len()];
@@ -508,7 +545,8 @@ pub fn extract_eq_and_in_condition(
     let mut column_values: Vec<Option<ValueInfo>> = vec![None; cols.len()];
     let mut offsets = vec![-1_i64; conditions.len()];
     for (i, cond) in conditions.iter().enumerate() {
-        let offset = get_potential_eq_or_in_col_offset(cond, cols, regard_null_as_point);
+        let offset =
+            get_potential_eq_or_in_col_offset_in(cond, cols, regard_null_as_point, eval_constant);
         offsets[i] = offset;
         if offset == -1 {
             continue;
@@ -661,6 +699,8 @@ pub struct DetachRangeResult {
 
 /// Go `rangeDetacher`: one detach run's inputs.
 pub struct RangeDetacher<'a> {
+    /// Evaluation of retained constants in the current statement context.
+    pub eval_constant: &'a ConstantEvaluator<'a>,
     /// Go `cols`.
     pub cols: &'a [tidb_expr::column::Column],
     /// Go `lengths`.
@@ -699,7 +739,7 @@ impl RangeDetacher<'_> {
         (super::types::Ranges, Vec<Expression>, Vec<Expression>),
         super::points::PointBuilderError,
     > {
-        let mut builder = PointBuilder::default();
+        let mut builder = PointBuilder::new(self.eval_constant);
         let mut ranges = super::types::Ranges::new();
         for i in 0..eq_and_in_count {
             let point = builder.build(
@@ -823,11 +863,12 @@ impl RangeDetacher<'_> {
         consider_dnf: bool,
     ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
         let mut res = DetachRangeResult::default();
-        let extraction = extract_eq_and_in_condition(
+        let extraction = extract_eq_and_in_condition_in(
             conditions,
             self.cols,
             self.lengths,
             self.regard_null_as_point,
+            self.eval_constant,
         );
         if extraction.empty_range {
             return Ok(res);
@@ -923,6 +964,26 @@ pub fn detach_simple_cond_and_build_range_for_index(
     (super::types::Ranges, Vec<Expression>, Vec<Expression>),
     super::points::PointBuilderError,
 > {
+    detach_simple_cond_and_build_range_for_index_in(
+        conditions,
+        cols,
+        lengths,
+        range_max_size,
+        &tidb_expr::constant::Constant::eval,
+    )
+}
+
+/// Simple index detachment with current parameter/deferred values.
+pub fn detach_simple_cond_and_build_range_for_index_in(
+    conditions: &[Expression],
+    cols: &[tidb_expr::column::Column],
+    lengths: &[i64],
+    range_max_size: i64,
+    eval_constant: &ConstantEvaluator<'_>,
+) -> Result<
+    (super::types::Ranges, Vec<Expression>, Vec<Expression>),
+    super::points::PointBuilderError,
+> {
     let new_tp_slice: Vec<tidb_datatype::FieldType> = cols
         .iter()
         .map(|col| {
@@ -932,6 +993,7 @@ pub fn detach_simple_cond_and_build_range_for_index(
         })
         .collect();
     let mut detacher = RangeDetacher {
+        eval_constant,
         cols,
         lengths,
         new_tp_slice,
@@ -1120,6 +1182,7 @@ impl RangeDetacher<'_> {
             // Consecutive-merge OFF here: point ranges must stay points so
             // later columns can append (issue 41572).
             let mut inner = RangeDetacher {
+                eval_constant: self.eval_constant,
                 cols: self.cols,
                 lengths: self.lengths,
                 new_tp_slice: self.new_tp_slice.clone(),
@@ -1248,6 +1311,7 @@ impl RangeDetacher<'_> {
             let new_tps: Vec<tidb_datatype::FieldType> =
                 self.new_tp_slice[eq_or_in_count..].to_vec();
             let mut tail_detacher = RangeDetacher {
+                eval_constant: self.eval_constant,
                 cols: new_cols,
                 lengths: new_lengths,
                 new_tp_slice: new_tps,
@@ -1357,7 +1421,7 @@ impl RangeDetacher<'_> {
             length: self.lengths[0],
             opt_prefix_index_single_scan: self.opt_prefix_index_single_scan,
         };
-        let mut builder = PointBuilder::default();
+        let mut builder = PointBuilder::new(self.eval_constant);
         let dnf_items = flatten_dnf_conditions(condition);
         let mut new_access_items = Vec::with_capacity(dnf_items.len());
         let mut min_access_conds: i64 = -1;
@@ -1540,7 +1604,32 @@ pub fn detach_cond_and_build_range_for_index(
     lengths: &[i64],
     range_max_size: i64,
 ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
-    detach_cond_and_build_range(conditions, cols, lengths, range_max_size, true, true)
+    detach_cond_and_build_range_for_index_in(
+        conditions,
+        cols,
+        lengths,
+        range_max_size,
+        &tidb_expr::constant::Constant::eval,
+    )
+}
+
+/// Go's index detachment with the current execution's constant evaluator.
+pub fn detach_cond_and_build_range_for_index_in(
+    conditions: &[Expression],
+    cols: &[tidb_expr::column::Column],
+    lengths: &[i64],
+    range_max_size: i64,
+    eval_constant: &ConstantEvaluator<'_>,
+) -> Result<DetachRangeResult, super::points::PointBuilderError> {
+    detach_cond_and_build_range(
+        conditions,
+        cols,
+        lengths,
+        range_max_size,
+        true,
+        true,
+        eval_constant,
+    )
 }
 
 /// Go `DetachCondAndBuildRangeForPartition`: no sort key, no
@@ -1551,7 +1640,32 @@ pub fn detach_cond_and_build_range_for_partition(
     lengths: &[i64],
     range_max_size: i64,
 ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
-    detach_cond_and_build_range(conditions, cols, lengths, range_max_size, false, false)
+    detach_cond_and_build_range_for_partition_in(
+        conditions,
+        cols,
+        lengths,
+        range_max_size,
+        &tidb_expr::constant::Constant::eval,
+    )
+}
+
+/// Partition bounds use the same current values, without sort-key conversion.
+pub fn detach_cond_and_build_range_for_partition_in(
+    conditions: &[Expression],
+    cols: &[tidb_expr::column::Column],
+    lengths: &[i64],
+    range_max_size: i64,
+    eval_constant: &ConstantEvaluator<'_>,
+) -> Result<DetachRangeResult, super::points::PointBuilderError> {
+    detach_cond_and_build_range(
+        conditions,
+        cols,
+        lengths,
+        range_max_size,
+        false,
+        false,
+        eval_constant,
+    )
 }
 
 /// Go `detachCondAndBuildRange`.
@@ -1562,6 +1676,7 @@ fn detach_cond_and_build_range(
     range_max_size: i64,
     convert_to_sort_key: bool,
     merge_consecutive: bool,
+    eval_constant: &ConstantEvaluator<'_>,
 ) -> Result<DetachRangeResult, super::points::PointBuilderError> {
     let new_tp_slice: Vec<tidb_datatype::FieldType> = cols
         .iter()
@@ -1572,6 +1687,7 @@ fn detach_cond_and_build_range(
         })
         .collect();
     let mut detacher = RangeDetacher {
+        eval_constant,
         cols,
         lengths,
         new_tp_slice,
@@ -1645,6 +1761,30 @@ mod tests {
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
     use tidb_expr::scalar_function::ScalarFunction;
+
+    #[test]
+    fn value_info_does_not_publish_mutable_planning_values() {
+        use tidb_expr::constant::{Constant, ParamMarker};
+        let literal = Constant::new(Datum::Int(7), FieldType::new(FieldTypeCode::LongLong));
+        let mut parameter = literal.clone();
+        parameter.param_marker = Some(ParamMarker { order: 0 });
+        let mut deferred = literal.clone();
+        deferred.deferred_expr = Some(Box::new(Expression::Constant(parameter.clone())));
+        for (constant, mutable) in [(literal, false), (parameter, true), (deferred, true)] {
+            for reversed in [false, true] {
+                let mut args = vec![
+                    Expression::Column(int_column(1)),
+                    Expression::Constant(constant.clone()),
+                ];
+                if reversed {
+                    args.reverse();
+                }
+                let info = extract_value_info(&func("eq", args)).unwrap();
+                assert_eq!(info.mutable, mutable);
+                assert_eq!(info.value, (!mutable).then_some(Datum::Int(7)));
+            }
+        }
+    }
 
     fn int_column(unique_id: i64) -> Column {
         Column::new(unique_id, FieldType::new(FieldTypeCode::LongLong))

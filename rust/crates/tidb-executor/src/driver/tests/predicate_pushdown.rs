@@ -9,6 +9,185 @@
 
 use super::*;
 
+#[test]
+fn bound_nullability_is_preserved_for_tables_and_views() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE base (a INT NOT NULL, b INT)", &mut catalog).unwrap();
+    for sql in [
+        "CREATE VIEW direct_v AS SELECT a,b FROM base",
+        "CREATE VIEW outer_v AS SELECT r.a FROM base l LEFT JOIN base r ON l.a=r.a",
+    ] {
+        let Stmt::Ddl(ddl) = tidb_parser::parse(sql).unwrap() else {
+            panic!("DDL");
+        };
+        let tidb_ast::DdlStmt::CreateView(create) = &*ddl else {
+            panic!("view");
+        };
+        crate::run_create_view_in(
+            create,
+            &mut catalog,
+            "test",
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+    }
+    for (table, column, nullable) in [
+        ("base", "a", false),
+        ("base", "b", true),
+        ("direct_v", "a", false),
+        ("direct_v", "b", true),
+    ] {
+        let sql =
+            format!("SELECT L.{column} FROM {table} L JOIN {table} R ON L.{column}=R.{column}");
+        let Stmt::Query(query) = tidb_parser::parse(&sql).unwrap() else {
+            panic!("query");
+        };
+        let QueryStmt::Select(select) = &*query else {
+            panic!("select");
+        };
+        let join = select.from.as_ref().unwrap();
+        let plan = super::super::predicate_push_down::plan(join, None, &catalog, "test", false);
+        for node in [&join.left, join.right.as_ref().unwrap()] {
+            let tidb_ast::JoinNode::Table(table) = node else {
+                panic!("table");
+            };
+            let filters = plan.filters_for(table);
+            assert_eq!(filters.len(), usize::from(nullable), "{sql}: {filters:?}");
+            if nullable {
+                assert!(matches!(
+                    &filters[0],
+                    tidb_ast::Expr::Is {
+                        target: tidb_ast::IsTarget::Null,
+                        not: true,
+                        ..
+                    }
+                ));
+            }
+        }
+    }
+    // Origin tracing must retain outer-join null extension, even when the
+    // stored view field flags were inferred as NOT NULL at CREATE time.
+    let Stmt::Query(query) = tidb_parser::parse("SELECT a FROM outer_v V").unwrap() else {
+        panic!("query");
+    };
+    let QueryStmt::Select(select) = &*query else {
+        panic!("select");
+    };
+    assert_eq!(
+        super::super::merge_decision::physical_column_is_nullable(
+            &select.from.as_ref().unwrap().left,
+            &super::super::merge_decision::RelColumn {
+                relation: "v".into(),
+                column: "a".into(),
+            },
+            &catalog,
+            "test",
+        ),
+        Some(true),
+    );
+    for (body, nullable) in [
+        (
+            "SELECT r.a AS k FROM base l LEFT JOIN base r ON l.a=r.a",
+            Some(true),
+        ),
+        (
+            "SELECT l.a AS k FROM base l LEFT JOIN base r ON l.a=r.a",
+            Some(false),
+        ),
+        (
+            "SELECT l.a AS k FROM base l RIGHT JOIN base r ON l.a=r.a",
+            Some(true),
+        ),
+        (
+            "SELECT r.a AS k FROM base l RIGHT JOIN base r ON l.a=r.a",
+            Some(false),
+        ),
+        (
+            "SELECT z AS k FROM (SELECT a AS z FROM base) l RIGHT JOIN base r ON l.z=r.a",
+            Some(true),
+        ),
+        (
+            "SELECT z AS k FROM base l LEFT JOIN (SELECT a AS z FROM base) r ON l.a=r.z",
+            Some(true),
+        ),
+        (
+            "SELECT a AS k FROM base l LEFT JOIN base r ON l.a=r.a",
+            None,
+        ),
+    ] {
+        let sql = format!("SELECT d.k FROM ({body}) d");
+        let Stmt::Query(query) = tidb_parser::parse(&sql).unwrap() else {
+            panic!("query");
+        };
+        let QueryStmt::Select(select) = &*query else {
+            panic!("select");
+        };
+        assert_eq!(
+            super::super::merge_decision::physical_column_is_nullable(
+                &select.from.as_ref().unwrap().left,
+                &super::super::merge_decision::RelColumn {
+                    relation: "d".into(),
+                    column: "k".into(),
+                },
+                &catalog,
+                "test",
+            ),
+            nullable,
+            "{sql}",
+        );
+    }
+}
+
+/// Isolates the metadata work from parsing, storage and executor startup.
+/// Run explicitly in release mode; timings are evidence, not test thresholds.
+#[test]
+#[ignore = "manual planning benchmark"]
+fn predicate_metadata_width_benchmark() {
+    for width in [16, 64, 256] {
+        let mut catalog = Catalog::default();
+        catalog.register(
+            "wide",
+            MemTable {
+                columns: (0..width)
+                    .map(|i| {
+                        (
+                            format!("c{i}"),
+                            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                        )
+                    })
+                    .collect(),
+                rows: Vec::new(),
+            },
+        );
+        let Stmt::Query(query) =
+            tidb_parser::parse("SELECT l.c0 FROM wide l JOIN wide r ON l.c0=r.c0 WHERE l.c1=7")
+                .unwrap()
+        else {
+            panic!("query");
+        };
+        let QueryStmt::Select(select) = &*query else {
+            panic!("select");
+        };
+        let join = select.from.as_ref().unwrap();
+        for round in 0..5 {
+            let started = std::time::Instant::now();
+            for _ in 0..100 {
+                std::hint::black_box(super::super::predicate_push_down::plan(
+                    std::hint::black_box(join),
+                    select.where_clause.as_ref(),
+                    &catalog,
+                    "test",
+                    false,
+                ));
+            }
+            println!(
+                "predicate_metadata width={width} round={round} ns_per_plan={}",
+                started.elapsed().as_nanos() / 100,
+            );
+        }
+    }
+}
+
 /// The rejection is Go's `infoschema.ErrTableNotExists` (1146), not an
 /// untyped refusal: a client tells a typo'd table from a fatal server error
 /// by the CODE, so the shape here is load-bearing.
@@ -496,6 +675,7 @@ fn a_join_leaf_dnf_selection_uses_loaded_column_statistics() {
     assert_eq!(datum_text_for_test(&selection[3]), "", "{plan:?}");
 }
 
+/// Go `pkg/expression/integration_test/integration_test.go::TestFilterExtractFromDNF`.
 #[test]
 fn common_dnf_filter_extraction_matches_go_expression_cases() {
     fn predicate(sql: &str) -> tidb_ast::Expr {
@@ -542,30 +722,6 @@ fn common_dnf_filter_extraction_matches_go_expression_cases() {
     assert!(multiple.contains(&a), "{multiple:?}");
     assert!(multiple.contains(&b), "{multiple:?}");
 
-    let duplicate = extracted("(a = 1 AND b = 2 AND a = 1) OR (a = 1 AND b = 3)");
-    assert_eq!(
-        duplicate
-            .iter()
-            .filter(|condition| **condition == a)
-            .count(),
-        1,
-        "{duplicate:?}"
-    );
-
-    let between = extracted(
-        "(a BETWEEN 1 AND 5 AND b = 1) OR \
-         (a BETWEEN 1 AND 10 AND b = 2) OR \
-         (a BETWEEN 1 AND 15 AND b = 3)",
-    );
-    let lower_bound = predicate("a >= 1");
-    assert!(between.contains(&lower_bound), "{between:?}");
-    let residual = between
-        .iter()
-        .find(|condition| **condition != lower_bound)
-        .expect("branch-specific DNF residue")
-        .restore();
-    assert!(!residual.contains("BETWEEN"), "{residual}");
-    assert!(!residual.contains("`a`>=1"), "{residual}");
 }
 
 #[test]

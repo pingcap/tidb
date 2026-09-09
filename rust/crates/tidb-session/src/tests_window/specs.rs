@@ -174,6 +174,87 @@ fn window_outer_order_by_applies_after_computation() {
     );
 }
 
+#[test]
+fn window_materialization_invalidates_scan_order_and_preserves_full_input() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE window_order (id BIGINT PRIMARY KEY, g BIGINT, v BIGINT, KEY by_v(v))")
+        .unwrap();
+    session
+        .run(
+            "INSERT INTO window_order VALUES (1,2,60),(2,1,50),(3,2,40),(4,1,30),(5,2,20),(6,1,10)",
+        )
+        .unwrap();
+
+    let cases = [
+        (
+            "SELECT id,COUNT(*) OVER (PARTITION BY g) FROM window_order ORDER BY id",
+            vec![
+                ["1", "3"],
+                ["2", "3"],
+                ["3", "3"],
+                ["4", "3"],
+                ["5", "3"],
+                ["6", "3"],
+            ],
+        ),
+        (
+            "SELECT id,COUNT(*) OVER (PARTITION BY g) FROM window_order ORDER BY id LIMIT 1,2",
+            vec![["2", "3"], ["3", "3"]],
+        ),
+        (
+            "SELECT id,COUNT(*) OVER (PARTITION BY g) FROM window_order ORDER BY id DESC LIMIT 1,2",
+            vec![["5", "3"], ["4", "3"]],
+        ),
+        (
+            "SELECT id AS k,COUNT(*) OVER w FROM window_order WINDOW w AS (PARTITION BY g) ORDER BY k LIMIT 2",
+            vec![["1", "3"], ["2", "3"]],
+        ),
+        (
+            "SELECT v,COUNT(*) OVER (PARTITION BY g) FROM window_order FORCE INDEX(by_v) WHERE v>=10 ORDER BY v LIMIT 1,2",
+            vec![["20", "3"], ["30", "3"]],
+        ),
+        (
+            "SELECT v,COUNT(*) OVER (PARTITION BY g) FROM window_order FORCE INDEX(by_v) WHERE v>=10 ORDER BY v DESC LIMIT 1,2",
+            vec![["50", "3"], ["40", "3"]],
+        ),
+        (
+            "SELECT v AS x,COUNT(*) OVER (PARTITION BY v%20) FROM window_order FORCE INDEX(by_v) WHERE v>=10 ORDER BY x LIMIT 1,2",
+            vec![["20", "3"], ["30", "3"]],
+        ),
+        (
+            "SELECT id,COUNT(*) OVER () FROM window_order ORDER BY id LIMIT 2",
+            vec![["1", "6"], ["2", "6"]],
+        ),
+        (
+            "SELECT id,COUNT(*) OVER (PARTITION BY g) FROM window_order WHERE id>2 ORDER BY id LIMIT 2",
+            vec![["3", "2"], ["4", "2"]],
+        ),
+        (
+            "SELECT id,c FROM (SELECT id,COUNT(*) OVER (PARTITION BY g) AS c FROM window_order) d ORDER BY id LIMIT 1,2",
+            vec![["2", "3"], ["3", "3"]],
+        ),
+        (
+            "SELECT d.id,d.c FROM (SELECT id,COUNT(*) OVER (PARTITION BY g) AS c FROM window_order) d JOIN window_order e ON d.id=e.id ORDER BY d.id LIMIT 1,2",
+            vec![["2", "3"], ["3", "3"]],
+        ),
+        (
+            "SELECT id,ROW_NUMBER() OVER (PARTITION BY g ORDER BY v) FROM window_order ORDER BY id",
+            vec![
+                ["1", "3"],
+                ["2", "3"],
+                ["3", "2"],
+                ["4", "2"],
+                ["5", "1"],
+                ["6", "1"],
+            ],
+        ),
+    ];
+    for (sql, expected) in cases {
+        assert_eq!(row_text(session.run(sql)), expected, "{sql}");
+    }
+}
+
 /// Go groups window calls by specification, sorts those specifications in
 /// reverse lexical order, and stacks one Window operator per group. The
 /// lexically smallest non-empty property is therefore topmost and determines

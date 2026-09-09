@@ -167,11 +167,9 @@ pub const APPLY_GEN_FROM_XF_DECORRELATE_RULE_FLAG: u64 = 1 << 0;
 ///   `(planIDsHash, prop) -> Task` table. `base.Task` is not transcreated, so
 ///   the table is absent rather than typed against a placeholder;
 ///   `roll_back_task_map` keeps its signature and is a `todo`.
-/// * `fdSet`. `pkg/planner/funcdep` IS transcreated — it lives outside this
-///   crate and this crate does not depend on it yet, so the field is absent
-///   rather than typed against a placeholder and `ExtractFD` keeps its
-///   signature as a `todo`. Wiring it in is a later batch; nothing here is
-///   blocked on the Go side.
+/// * `fdSet`. Native extraction uses `tidb_funcdep` and statement-owned
+///   column IDs. Go's cached per-node FD lifecycle is not represented yet;
+///   extraction currently returns a fresh dependency set.
 #[derive(Clone, Debug, Default)]
 pub struct BaseLogicalPlan {
     /// Go's embedded `baseimpl.Plan`.
@@ -340,6 +338,7 @@ pub mod cte;
 pub mod data_source;
 pub mod expand;
 pub mod fold;
+pub mod functional_dependencies;
 pub mod index_scan;
 pub mod join;
 pub mod limit;
@@ -1105,11 +1104,13 @@ impl LogicalPlan {
         false // todo: logicalop.CanPushToCopImpl
     }
 
-    /// Go `ExtractFD()` (`<20th>`): the functional-dependency set, derived
-    /// bottom-up. `pkg/planner/funcdep` IS transcreated but lives outside
-    /// this crate and is not depended on here yet; see the
-    /// [`BaseLogicalPlan`] header.
-    pub const fn extract_fd(&self) {}
+    /// Go ExtractFD over resolved logical expressions and table metadata.
+    pub fn extract_fd(
+        &self,
+        context: &functional_dependencies::FdContext<'_>,
+    ) -> Result<tidb_funcdep::FdSet, PlanError> {
+        functional_dependencies::extract(self, context)
+    }
 
     /// Go `ConvertOuterToInnerJoin(predicates)` (`<22nd>`).
     #[must_use]

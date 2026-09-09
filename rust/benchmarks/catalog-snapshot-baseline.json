@@ -1,0 +1,224 @@
+{
+  "status": "WIP: 141 scoped tests and live Go comparisons pass. Timing is terminal: mixed sysbench -2.29%, TPC-C +1.25%/+3.20%, all with mixed paired directions. Later cumulative CPU diagnostics do not reproduce substantial retained-server CPU load. No broad performance, readiness or package-completion claim.",
+  "change": "Extend existing table-entry copy-on-write through database entries and the outer schema map. Catalog clones retain schema maps; mutations detach only the changed database. No new locks, second catalog owner, or workload-specific path.",
+  "source": [
+    "pkg/session/session.go: Session.GetInfoSchema",
+    "pkg/infoschema/builder.go: Builder.getSchemaAndCopyIfNecessary",
+    "rust/crates/tidb-executor/src/driver/catalog.rs: Catalog and database_mut",
+    "rust/crates/tidb-session/src/txn.rs: Transaction.open and with_staged_catalog"
+  ],
+  "before": {
+    "port": 53049,
+    "pid": 43140,
+    "sha256": "8e153009837e963a8fd89a6847eb640f3a04eeb57ba573e2852b0da866d9ba92",
+    "saved": "/private/tmp/tidb-catalog-snapshot-before-ci5NOO/tidb-server"
+  },
+  "profiles": {
+    "tpcc": "/private/tmp/tidb-epoch-store-tpcc-profile.sample.txt",
+    "sysbench": "/private/tmp/tidb-epoch-store-sysbench-profile.sample.txt",
+    "analysis_command": "python3 /private/tmp/tidb-sample-active.py <sample-file>",
+    "tpcc_catalog_clone_non_wait_frames": 260,
+    "tpcc_database_map_clone_non_wait_frames": 201,
+    "sysbench_catalog_clone_non_wait_frames": 29,
+    "interpretation": "Samples include blocked and idle threads; helper classifies leaf names heuristically. TPC-C diagnostic arguments match timing. The sysbench profile omitted the baseline's --mysql-ssl=off flag. The helper was corrected afterward, but later samples still show rustls frames with that flag: do not infer an actual TLS/plaintext difference from these command lines. Counts locate repeated map copies but are not CPU-time percentages or a whole-workload speedup."
+  },
+  "validation": {
+    "profile": "WIP",
+    "runtime_red": "/private/tmp/tidb-catalog-snapshot-red-v2.log",
+    "runtime_green": "/private/tmp/tidb-catalog-snapshot-final-green.log",
+    "fixture_correction": "red.log used nonexistent TypeCode/I64 fixture names; corrected to existing FieldTypeCode/Datum::Int. Only red-v2 is behavioral evidence.",
+    "regression": "Snapshot clones share table-name allocations, mutations preserve untouched database maps, and row updates, cross-database rename, drop and version changes remain private.",
+    "executor_command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib <scope>",
+    "executor_scopes": {"snapshot_tests::": 1, "driver::tests::catalog_version::": 1},
+    "session_command": "cargo test --offline --locked --release -j12 -p tidb-session --lib <scope>",
+    "session_scopes": {
+      "tests_core::transactions::": 12,
+      "tests_savepoint::": 14,
+      "tests_statement_rollback::": 6,
+      "tests_temporary_tables::": 23,
+      "tests_sequence::": 11,
+      "tests_prepared_plan_cache::": 6,
+      "tests_views::": 20,
+      "tests_union_scan::": 11,
+      "tests_core::ddl::": 31,
+      "tests_load_stats::": 5
+    },
+    "passed": 141,
+    "ignored": "One existing manual pre-lock classification benchmark; no functional case ignored."
+  },
+  "build": {
+    "session": 13635,
+    "command": "cargo build --offline --locked --release -j12 -p tidb-server",
+    "log": "/private/tmp/tidb-catalog-snapshot-build.log",
+    "status": "complete",
+    "exit": 0,
+    "seconds": 95
+  },
+  "after": {
+    "port": 53050,
+    "pid": 28926,
+    "server_session": 12701,
+    "sha256": "701d7abb16bd8b88feffa1014d0fbec78c1049bab007ec52d00836196bbd1d7a",
+    "server_log": "/private/tmp/tidb-catalog-snapshot-server.log"
+  },
+  "live": {
+    "commands": [
+      "python3 /private/tmp/tidb-dirty-order-live.py --ports 45000 53050 --report-mutations",
+      "python3 /private/tmp/tidb-distinct-live.py --ports 45000 53050"
+    ],
+    "overlay_cases": 11,
+    "distinct_having_cases": 48,
+    "affected_rows_match_go": true,
+    "all_results_match_go": true,
+    "mutations_rolled_back": true,
+    "logs_prefix": "/private/tmp/tidb-catalog-snapshot-"
+  },
+  "sysbench": {
+    "command": "python3 rust/scripts/compare-sysbench.py --server before:53049 --server after:53050 --server go:45000 --database perf_sysbench_locking_v2 --workload oltp_read_write --threads 2 --seconds 20 --rounds 3 --table-size 100000 --output /private/tmp/tidb-catalog-snapshot-sysbench",
+    "results": "/private/tmp/tidb-catalog-snapshot-sysbench/results.json",
+    "samples": 9,
+    "errors": 0,
+    "reconnects": 0,
+    "round_tps": {
+      "before": [
+        409.20792821615134,
+        366.386420209735,
+        396.8944347791309
+      ],
+      "after": [
+        400.49787304237424,
+        387.8049877779944,
+        370.22410405866793
+      ],
+      "go": [
+        393.3154371810061,
+        389.2318844202265,
+        389.94540764293
+      ]
+    },
+    "medians": {
+      "before": 396.8944347791309,
+      "after": 387.8049877779944,
+      "go": 389.94540764293
+    },
+    "median_change_percent": -2.2901422153209783,
+    "paired_change_percent": [
+      -2.12851574302253,
+      5.84589558641353,
+      -6.719754267984335
+    ],
+    "interpretation": "Mixed paired directions and a slower median; no sysbench speedup claim."
+  },
+  "tpcc": {
+    "command": "python3 /private/tmp/tidb-agg-tpcc-compare.py --server before:53049 --server after:53050 --server go:45000 --output /private/tmp/tidb-catalog-snapshot-tpcc",
+    "results": "/private/tmp/tidb-catalog-snapshot-tpcc/results.json",
+    "measured_transactions": 180000,
+    "warmup_transactions": 6000,
+    "errors": 0,
+    "groups": [
+      {
+        "threads": 2,
+        "round_tps": {
+          "before": [
+            502.1973298909126,
+            426.03039235297683,
+            379.2101103433884
+          ],
+          "after": [
+            489.38059404029633,
+            431.35941228670526,
+            416.1980045796094
+          ],
+          "go": [
+            393.1967847138393,
+            430.8233352205434,
+            377.7135484279752
+          ]
+        },
+        "medians": {
+          "before": 426.03039235297683,
+          "after": 431.35941228670526,
+          "go": 393.1967847138393
+        },
+        "median_change_percent": 1.250854406019286,
+        "paired_change_percent": [
+          -2.5521314208102885,
+          1.250854406019286,
+          9.753931455763954
+        ]
+      },
+      {
+        "threads": 8,
+        "round_tps": {
+          "before": [
+            581.1224915563578,
+            522.0032606631576,
+            498.99053797542825
+          ],
+          "after": [
+            568.7216958329092,
+            538.7323037625797,
+            439.2727006682769
+          ],
+          "go": [
+            614.7061657402716,
+            459.70050554858733,
+            525.1300217012524
+          ]
+        },
+        "medians": {
+          "before": 522.0032606631576,
+          "after": 538.7323037625797,
+          "go": 525.1300217012524
+        },
+        "median_change_percent": 3.2047775100426446,
+        "paired_change_percent": [
+          -2.1339383526933986,
+          3.2047775100426446,
+          -11.967729398125782
+        ]
+      }
+    ],
+    "interpretation": "Nominal median gains have mixed paired directions at both client counts. A host CPU snapshot during timing showed TiKV at 830.3% and several older retained Rust servers at 16-18% each. Preserve every sample; no causal or broad performance win claim. Awaiting user approval to stop older task-owned benchmark servers, excluding Go/PD/TiKV and ports 53049/53050."
+  },
+  "postcheck": {
+    "commands": [
+      "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc tpcc check -H 127.0.0.1 -P 45000 -U root -D perf_tpcc_locking_v1 --warehouses 1 -T 1",
+      "mysql --protocol=tcp -h127.0.0.1 -P45000 -uroot --plugin-dir=/opt/homebrew/opt/mysql-client/lib/plugin perf_tpcc_locking_v1 < /private/tmp/tidb-tpcc-locking-balance-check.sql"
+    ],
+    "conditions_passed": 11,
+    "customers_checked": 30000,
+    "bad_balances": 0,
+    "bad_delivery_counts": 0,
+    "logs": ["/private/tmp/tidb-catalog-snapshot-tpcc-check.log", "/private/tmp/tidb-catalog-snapshot-balances.tsv"]
+  },
+  "quiet_cpu_interval": {
+    "elapsedSeconds": 66.451,
+    "before": "14165 1068:47.58   2.8\n28926   3:36.69   0.2\n30944   9:22.50   0.1\n43140  10:28.01   0.1\n",
+    "after": "14165 1069:31.19   7.3\n28926   3:37.46   0.2\n30944   9:23.32   0.2\n43140  10:28.82   0.2\n",
+    "intervals": {
+      "14165": {
+        "cpuSeconds": 43.61000000000058,
+        "percent": 65.62730432950683
+      },
+      "28926": {
+        "cpuSeconds": 0.7700000000000102,
+        "percent": 1.158748551564326
+      },
+      "30944": {
+        "cpuSeconds": 0.82000000000005,
+        "percent": 1.2339919640036268
+      },
+      "43140": {
+        "cpuSeconds": 0.8100000000000591,
+        "percent": 1.2189432815157923
+      }
+    }
+  },
+  "idle_profile": {
+    "command": "/usr/bin/sample 43140 15 1 -file /private/tmp/tidb-retained-idle-53049.sample.txt",
+    "sampler_exit": 0,
+    "interpretation": "After timed workloads ended, sampled stacks were overwhelmingly waits and ps reported about 0.1% for retained baseline/older server. The earlier high CPU observation is load-dependent, not proof of a sustained idle busy loop or the cause of timing variation."
+  },
+  "remaining": "All catalog-increment test, build, live, benchmark, profile and postcheck handles are terminal. No server has been stopped. The controlled CPU follow-up in type-read-baseline.json measures all 34 other Rust servers together at 12.70-15.27% of one core, not 16-18% each; it does not reproduce the earlier suspected sustained load. No Ready/lint, package completion, commit or push. Rare 20-second stall and prior planner estimate/EXPLAIN gaps remain unresolved."
+}

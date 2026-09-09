@@ -1,0 +1,372 @@
+{
+  "status": "Measured aggregate-key increment; the full sysbench/TPC-C performance goal remains active. See per-case deltas and validation limitations.",
+  "change": "Cache one existing word-wise fingerprint per pipeline group key. Reuse it for worker routing, map lookup, growth and merging; retain full typed-key equality and charge the extra retained u64. Remove the separate FNV routing loop and temporary integer-routing allocation.",
+  "correctness_fix": "Restore the compact-bytes tag in the shared collation-aware group-key encoder. NULL and empty strings remain distinct in serial/parallel aggregation and other consumers.",
+  "go_source": [
+    "pkg/executor/aggregate/agg_util.go",
+    "pkg/executor/aggregate/agg_hash_partial_worker.go",
+    "pkg/util/codec/codec.go"
+  ],
+  "go_binary_revision": "23bff313186b8ceb61fcbe9faac43ae700e7fb14",
+  "go_source_verification": "All three files match the exact running Go binary revision. Go vectorizes key generation, batches accounting and uses murmur3 routing plus its string map. Rust already batches pipeline accounting; this change eliminates repeated byte-wise hashing rather than changing SQL aggregation semantics.",
+  "binaries": {
+    "before": {
+      "pid": 27177,
+      "port": 53061,
+      "command": [
+        "/private/tmp/tidb-batching-candidate-g8nbe7jt/tidb-server",
+        "--path",
+        "127.0.0.1:43379",
+        "--store",
+        "tikv",
+        "--host",
+        "127.0.0.1",
+        "--cluster-session",
+        "--lease-ms",
+        "2000",
+        "--max-connections",
+        "32",
+        "--load-privileges",
+        "--port",
+        "53061"
+      ],
+      "sha256": "61bf481f07f434483da88f1d06d7059a0035edb2b735753e5788034455b15f18",
+      "grpc_connection_count_env": "4"
+    },
+    "after": {
+      "pid": 48546,
+      "port": 53062,
+      "command": [
+        "/private/tmp/tidb-batching-candidate-a_x4nes5/tidb-server",
+        "--path",
+        "127.0.0.1:43379",
+        "--store",
+        "tikv",
+        "--host",
+        "127.0.0.1",
+        "--cluster-session",
+        "--lease-ms",
+        "2000",
+        "--max-connections",
+        "32",
+        "--load-privileges",
+        "--port",
+        "53062"
+      ],
+      "sha256": "1115a1db4976a53fa53462db851eeac87d26afa5175d34718eaa8db53b721b23",
+      "grpc_connection_count_env": "4"
+    }
+  },
+  "method": {
+    "fixture": "perf_sysbench_locking_v2.sbtest1",
+    "threads": [
+      1,
+      8,
+      32
+    ],
+    "events": {
+      "1": 3000,
+      "8": 12000,
+      "32": 24000
+    },
+    "pairs_per_concurrency": 3,
+    "seed": 1,
+    "prepared_statements": "auto",
+    "workload_writes": 0,
+    "ignored_errors": 0,
+    "reconnects": 0,
+    "fixture_reset": false
+  },
+  "measurements": {
+    "range_reads": {
+      "raw_results": "/private/tmp/tidb-agg-fingerprint-range-pairs/results.json",
+      "medians": [
+        {
+          "threads": 1,
+          "before": {
+            "tps": 881.11,
+            "sql_cpu_ms_per_transaction": 0.7399999999999712,
+            "tikv_cpu_ms_per_transaction": 0.5966666666663514,
+            "commands_per_request_batch": 2.0932311621966795,
+            "commands_per_transaction": 8.742666666666667
+          },
+          "after": {
+            "tps": 896.67,
+            "sql_cpu_ms_per_transaction": 0.7133333333333335,
+            "tikv_cpu_ms_per_transaction": 0.6099999999999758,
+            "commands_per_request_batch": 2.117941675418047,
+            "commands_per_transaction": 8.749
+          },
+          "tps_change_percent": 1.7659543076346873,
+          "sql_cpu_change_percent": -3.6036036035998364,
+          "tikv_cpu_change_percent": 2.2346368715583376,
+          "paired_tps_changes_percent": [
+            1.7435537227534548,
+            1.407537945540338,
+            1.7659543076346873
+          ]
+        },
+        {
+          "threads": 8,
+          "before": {
+            "tps": 4242.97,
+            "sql_cpu_ms_per_transaction": 1.1858333333333348,
+            "tikv_cpu_ms_per_transaction": 1.0641666666665515,
+            "commands_per_request_batch": 2.0859677870588706,
+            "commands_per_transaction": 8.70025
+          },
+          "after": {
+            "tps": 4294.16,
+            "sql_cpu_ms_per_transaction": 1.1525000000000005,
+            "tikv_cpu_ms_per_transaction": 1.0874999999999393,
+            "commands_per_request_batch": 2.0994128528914984,
+            "commands_per_transaction": 8.701666666666666
+          },
+          "tps_change_percent": 1.2064662253091551,
+          "sql_cpu_change_percent": -2.8109627547435845,
+          "tikv_cpu_change_percent": 2.1926389976560934,
+          "paired_tps_changes_percent": [
+            1.3017282459459656,
+            0.5599851047732862,
+            1.2018432658866374
+          ]
+        },
+        {
+          "threads": 32,
+          "before": {
+            "tps": 6365.1,
+            "sql_cpu_ms_per_transaction": 1.2375000000000018,
+            "tikv_cpu_ms_per_transaction": 0.7758333333333667,
+            "commands_per_request_batch": 2.919271598204171,
+            "commands_per_transaction": 8.696875
+          },
+          "after": {
+            "tps": 6306.52,
+            "sql_cpu_ms_per_transaction": 1.205416666666667,
+            "tikv_cpu_ms_per_transaction": 0.8041666666667121,
+            "commands_per_request_batch": 2.8542071418798742,
+            "commands_per_transaction": 8.696791666666666
+          },
+          "tps_change_percent": -0.9203311809712345,
+          "sql_cpu_change_percent": -2.592592592592702,
+          "tikv_cpu_change_percent": 3.6519871106351243,
+          "paired_tps_changes_percent": [
+            -0.9949920720890293,
+            -0.9880441784103966,
+            0.4146854094388308
+          ]
+        }
+      ]
+    },
+    "read_only": {
+      "raw_results": "/private/tmp/tidb-agg-fingerprint-readonly-pairs/results.json",
+      "medians": [
+        {
+          "threads": 1,
+          "before": {
+            "tps": 440.98,
+            "sql_cpu_ms_per_transaction": 1.2900000000000016,
+            "tikv_cpu_ms_per_transaction": 1.1233333333329938,
+            "commands_per_request_batch": 1.3211697661874722,
+            "commands_per_transaction": 18.775666666666666
+          },
+          "after": {
+            "tps": 445.84,
+            "sql_cpu_ms_per_transaction": 1.2633333333333305,
+            "tikv_cpu_ms_per_transaction": 1.129999999999806,
+            "commands_per_request_batch": 1.3192296879392746,
+            "commands_per_transaction": 18.77
+          },
+          "tps_change_percent": 1.1020907977685956,
+          "sql_cpu_change_percent": -2.06718346253264,
+          "tikv_cpu_change_percent": 0.5934718101021641,
+          "paired_tps_changes_percent": [
+            2.899152874916333,
+            0.9550104100660928,
+            1.1020907977685956
+          ]
+        },
+        {
+          "threads": 8,
+          "before": {
+            "tps": 1996.09,
+            "sql_cpu_ms_per_transaction": 2.19416666666667,
+            "tikv_cpu_ms_per_transaction": 2.0583333333332425,
+            "commands_per_request_batch": 1.504291773598054,
+            "commands_per_transaction": 18.709
+          },
+          "after": {
+            "tps": 2020.41,
+            "sql_cpu_ms_per_transaction": 2.1650000000000014,
+            "tikv_cpu_ms_per_transaction": 2.0516666666667334,
+            "commands_per_request_batch": 1.5087317318998825,
+            "commands_per_transaction": 18.710333333333335
+          },
+          "tps_change_percent": 1.2183819366862192,
+          "sql_cpu_change_percent": -1.3292821876187744,
+          "tikv_cpu_change_percent": -0.3238866396684803,
+          "paired_tps_changes_percent": [
+            1.7550467008134785,
+            0.5104980236362078,
+            0.26649595045260543
+          ]
+        },
+        {
+          "threads": 32,
+          "before": {
+            "tps": 3179.64,
+            "sql_cpu_ms_per_transaction": 2.1662500000000002,
+            "tikv_cpu_ms_per_transaction": 1.7874999999999848,
+            "commands_per_request_batch": 2.3401437109523586,
+            "commands_per_transaction": 18.712666666666667
+          },
+          "after": {
+            "tps": 3177.48,
+            "sql_cpu_ms_per_transaction": 2.1470833333333346,
+            "tikv_cpu_ms_per_transaction": 1.8283333333333,
+            "commands_per_request_batch": 2.4240228892247893,
+            "commands_per_transaction": 18.715333333333334
+          },
+          "tps_change_percent": -0.06793221874173971,
+          "sql_cpu_change_percent": -0.8847855356798884,
+          "tikv_cpu_change_percent": 2.2843822843813033,
+          "paired_tps_changes_percent": [
+            -0.10563247444071999,
+            1.221613403857713,
+            -0.6214540010818781
+          ]
+        }
+      ]
+    }
+  },
+  "profiles": {
+    "before": {
+      "weighted_stacks": "/private/tmp/tidb-agg-fingerprint-sql-cpu32/before.stacks.json",
+      "samples": 97434,
+      "total_weight_ns": 97434000000,
+      "pipeline_fold_cpu_percent": 4.250056448467681,
+      "pipeline_map_entry_cpu_percent": 1.9849333908081368,
+      "fast_bytes_fingerprint_cpu_percent": 0,
+      "go_GetGroupKey_cpu_percent": 0,
+      "go_getPartialResultsOfEachRow_cpu_percent": 0
+    },
+    "after": {
+      "weighted_stacks": "/private/tmp/tidb-agg-fingerprint-sql-cpu32/after.stacks.json",
+      "samples": 95039,
+      "total_weight_ns": 95039000000,
+      "pipeline_fold_cpu_percent": 1.9602478982312523,
+      "pipeline_map_entry_cpu_percent": 0.17887393596313092,
+      "fast_bytes_fingerprint_cpu_percent": 0,
+      "go_GetGroupKey_cpu_percent": 0,
+      "go_getPartialResultsOfEachRow_cpu_percent": 0
+    },
+    "go": {
+      "weighted_stacks": "/private/tmp/tidb-agg-fingerprint-sql-cpu32/go.stacks.json",
+      "samples": 84699,
+      "total_weight_ns": 84699000000,
+      "pipeline_fold_cpu_percent": 0,
+      "pipeline_map_entry_cpu_percent": 0,
+      "fast_bytes_fingerprint_cpu_percent": 0,
+      "go_GetGroupKey_cpu_percent": 0.743810434597811,
+      "go_getPartialResultsOfEachRow_cpu_percent": 1.9032101913836055
+    },
+    "note": "Fingerprint work is inlined into callers; a zero standalone fast_bytes_fingerprint frame is not zero hashing work. Rust fold and Go GetGroupKey/mapper boundaries differ and must not be directly ranked."
+  },
+  "validation": {
+    "profile": "Ready scoped checks, release build and lint; one known aggregate plan expectation still fails",
+    "tests": {
+      "hash_aggregate": 48,
+      "shuffle": 17,
+      "window_constants": 2,
+      "aggregate_driver_passed": 35,
+      "aggregate_driver_failed": 1,
+      "table_scan": 15
+    },
+    "red_hash_log": "/private/tmp/tidb-agg-fingerprint-red.log",
+    "red_hash": "Derived key hashing wrote 16 bytes even for an empty key; expected one cached 8-byte fingerprint.",
+    "red_group_log": "/private/tmp/tidb-agg-fingerprint-green.log",
+    "red_group": "The unchanged serial fold merged NULL with empty string: 7 groups instead of 8. Restore the missing Go compact-bytes type tag in the shared encoder.",
+    "green_log": "/private/tmp/tidb-agg-fingerprint-hash-agg.log",
+    "collision_test": "402 distinct typed keys forced to one fingerprint, grown and merged three times; all groups, counts and earliest row sequences remain exact.",
+    "composite_test": "Binary and case-insensitive collation, NULL, empty/NUL/1024-byte strings, signed extremes, composite keys, one-row/partial/full chunks, inline execution and different worker counts.",
+    "memory_test": "Actual fold charges the retained 8-byte fingerprint once per unique group, for raw integer and encoded keys.",
+    "known_failure": {
+      "test": "driver::tests::aggregates::tpcc_condition_six_simplifies_and_pushes_through_derived_tables",
+      "detail": "Extra Sort(Build) above StreamAgg, identical to the prior independently retained log.",
+      "prior_log": "/private/tmp/tidb-retain-aggregate-suite.log",
+      "current_log": "/private/tmp/tidb-agg-fingerprint-driver__tests__aggregates__.log",
+      "expectation_changed": false
+    },
+    "build_log": "/private/tmp/tidb-agg-fingerprint-build.log",
+    "lint_log": "/private/tmp/tidb-agg-fingerprint-lint.log",
+    "prepared_results": "/private/tmp/tidb-agg-fingerprint-prepared-results.json",
+    "text_results": "/private/tmp/tidb-agg-fingerprint-text-results.json",
+    "edge_results": "/private/tmp/tidb-agg-fingerprint-edge-results.json",
+    "post_prepared_results": "/private/tmp/tidb-agg-fingerprint-post-prepared-results.json",
+    "post_text_results": "/private/tmp/tidb-agg-fingerprint-post-text-results.json",
+    "post_edge_results": "/private/tmp/tidb-agg-fingerprint-post-edge-results.json",
+    "consumer_results": "/private/tmp/tidb-agg-fingerprint-consumers-results.json",
+    "consumer_log": "/private/tmp/tidb-agg-fingerprint-consumers.log",
+    "consumer_checks": {
+      "stream_aggregate": "Six ordered groups match Go; EXPLAIN confirms StreamAgg in both Rust binaries.",
+      "window": "Candidate partition counts match Go by row id, but ORDER BY id is violated. The control also violates ordering and has wrong NULL/empty partition counts. Ordered equality remains a reported failure.",
+      "source_cause": "window::compute_windows reorders rows; driver.rs retains the old order_satisfied scan property and skips the outer Sort. The fix must also audit earlier limit/demand propagation, not only add a late sort.",
+      "candidate_matches": 1,
+      "window_before_ordered_by_id": false,
+      "window_after_ordered_by_id": false
+    },
+    "commands": [
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib pipeline_key_hash",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib hash_agg::parallel::tests::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib hash_agg::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib stream_agg::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib shuffle::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib window::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib driver::tests::aggregates::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib kv_table::table_scan::",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib driver::tests::window",
+      "cd rust && cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "python3 /private/tmp/tidb-prepared-path-results.py --control-port 53061 --candidate-port 53062 --output /private/tmp/tidb-agg-fingerprint-prepared-results.json",
+      "python3 /private/tmp/tidb-shared-admission-results.py --control-port 53061 --candidate-port 53062 --output /private/tmp/tidb-agg-fingerprint-text-results.json",
+      "python3 /private/tmp/tidb-agg-fingerprint-results.py --control-port 53061 --candidate-port 53062 --output /private/tmp/tidb-agg-fingerprint-edge-results.json",
+      "python3 /private/tmp/tidb-prepared-path-results.py --control-port 53061 --candidate-port 53062 --output /private/tmp/tidb-agg-fingerprint-post-prepared-results.json",
+      "python3 /private/tmp/tidb-shared-admission-results.py --control-port 53061 --candidate-port 53062 --output /private/tmp/tidb-agg-fingerprint-post-text-results.json",
+      "python3 /private/tmp/tidb-agg-fingerprint-results.py --control-port 53061 --candidate-port 53062 --output /private/tmp/tidb-agg-fingerprint-post-edge-results.json",
+      "python3 /private/tmp/tidb-agg-fingerprint-results.py --control-port 53061 --candidate-port 53062 --consumers --output /private/tmp/tidb-agg-fingerprint-consumers-results.json",
+      "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-a_x4nes5/manifest.json --output /private/tmp/tidb-agg-fingerprint-range-pairs --case range_reads --pair-only --pair-threads 1 8 32",
+      "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-a_x4nes5/manifest.json --output /private/tmp/tidb-agg-fingerprint-readonly-pairs --pair-only --pair-threads 1 8 32",
+      "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-a_x4nes5/manifest.json --output /private/tmp/tidb-agg-fingerprint-sql-cpu32 --case range_reads --profile \"Time Profiler\" --profile-target sql --profile-threads 32 --profile-servers before after go"
+    ]
+  },
+  "files_changed": [
+    "rust/crates/tidb-executor/src/hash_agg.rs",
+    "rust/crates/tidb-executor/src/hash_agg/parallel.rs",
+    "rust/docs/transport-batching-execplan.md",
+    "rust/benchmarks/aggregate-key-fingerprint-baseline.json"
+  ],
+  "limitations": [
+    "Internal group encodings change; no persisted storage key or SQL wire format changes. The extra retained 8 bytes per pipeline group are tracked.",
+    "Shared local host and TiKV; only matched within-window comparisons support performance deltas.",
+    "Running CPU weights are not blocked time or per-transaction latency; profiled TPS is diagnostic, not acceptance timing.",
+    "stream_agg:: and driver::tests::window filters matched zero unit tests. Other scoped suites and live SQL comparisons are reported separately.",
+    "The independent point_get estimate mismatch recorded in prepared-range-replay-baseline.json remains open and was not rerun in this increment.",
+    "Live window ordering remains incorrect in both control and candidate. Its corrected partition counts are not a claim that the entire window query passes.",
+    "TPC-C mixed-write runs remain unapproved and unverified. No fixture reset, commit or push occurred.",
+    "Result comparisons and COUNT/SUM checks are not a full-table content hash. No whole-package completion is claimed."
+  ],
+  "outcome": {
+    "range_tps_changes_percent": [
+      1.7659543076346873,
+      1.2064662253091551,
+      -0.9203311809712345
+    ],
+    "read_only_tps_changes_percent": [
+      1.1020907977685956,
+      1.2183819366862192,
+      -0.06793221874173971
+    ],
+    "interpretation": "All one/eight-client pairs improve in both workloads. Two of three 32-client pairs regress in each workload. Lower aggregate CPU is confirmed, but this is not a general high-concurrency performance acceptance.",
+    "next": "Fix the source-proven stale order/demand contract around window materialization; then continue tracing high-concurrency SQL/TiKV scheduling and batching with matched evidence."
+  }
+}

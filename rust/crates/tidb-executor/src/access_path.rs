@@ -75,9 +75,7 @@ use crate::kv_table::{
     IndexRange, IndexRangeCursor, KvTable, RemoteIndexHandleCursor, RemoteRowCursor, RowCursor,
     TableHandle,
 };
-use crate::predicate_pushdown::{
-    ScanColumnComparison, ScanComparison, ScanComparisonOp, ScanPredicate,
-};
+use crate::predicate_pushdown::ScanPredicate;
 use crate::remote_scan::{
     PushdownAggregateKind, PushdownPartialAggregate, PushdownRowStream, PushdownStatementContext,
 };
@@ -109,6 +107,9 @@ impl SharedIndexJoinProbes {
 /// at `MaxUint64` are two different snapshots.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StatementReadShape {
+    /// A locking SELECT needs a current statement snapshot in a pessimistic
+    /// transaction, even when an older snapshot would find no rows to lock.
+    LockingRead,
     /// Nothing is claimed. The snapshot spends a timestamp at its first read,
     /// which is every statement's answer unless it earned the other one.
     #[default]
@@ -116,13 +117,6 @@ pub enum StatementReadShape {
     /// The statement's whole read is one point get on the clustered handle,
     /// reading one row once, with no second read of any kind.
     AutocommitPointGet,
-    /// The statement reads at most one row from a clustered table through a
-    /// single table-range request.  It is safe to use the connection-local
-    /// latest-read transaction for this shape: unlike a point get it keeps the
-    /// normal range plan, but the statement has no second read whose snapshot
-    /// it has to agree with.  This is the bounded single-row scan shape used
-    /// by YCSB workload E (`LIMIT 1`).
-    AutocommitSingleRowRead,
     /// An autocommit UPDATE or DELETE whose first storage read can overlap
     /// opening its ordinary timestamped snapshot with AST planning.  This is
     /// not a max-ts claim: the read and any eventual prewrite still use the
@@ -130,85 +124,45 @@ pub enum StatementReadShape {
     AutocommitWrite,
 }
 
-/// The record keys one pessimistic point write locks BEFORE it runs.
-///
-/// The entry the cluster-session layer calls with the statement it is about to
-/// execute: a single-table `UPDATE`/`DELETE` whose whole read is one
-/// handle-pinned row returns that row's encoded record keys (Go's
-/// `tryUpdatePointPlan`/`tryDeletePointPlan` shape, folded with
-/// `InitReturnValues`/`SetPessimisticLockCache`,
-/// `pkg/executor/point_get.go:612-624`); everything else returns an empty
-/// vector and keeps today's read-then-lock order. Both statement shapes are
-/// read from ONE walker, so an EXECUTE template (`?` markers against
-/// `params`) and an already-bound tree classify identically.
-#[must_use]
-
-/// The pre-lock keys for one single-table locking SELECT: the encoded row
-/// keys its WHERE pins. Everything else declines -- Go's `SelectLockExec`
-/// handles multi-table / non-point shapes through the ordinary executor's
-/// own locking walk.
-pub fn pessimistic_write_point_keys(
+/// Borrow the candidate predicate for Go's single-table point-write fold
+/// (`tryUpdatePointPlan`/`tryDeletePointPlan`). Key binding separately proves
+/// that the predicate pins the complete clustered handle.
+fn pessimistic_write_predicate(
     stmt: &tidb_ast::Stmt,
-    params: &[Datum],
-    catalog: &crate::driver::Catalog,
-    current_db: &str,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Vec<Vec<u8>> {
+) -> Option<(&tidb_ast::TableRef, &tidb_ast::Expr)> {
     let tidb_ast::Stmt::Dml(dml) = stmt else {
-        return Vec::new();
+        return None;
     };
     let (table_ref, where_clause) = match dml.as_ref() {
         tidb_ast::DmlStmt::Update(update) => match (&update.kind, update.where_clause.as_ref()) {
             (tidb_ast::UpdateKind::Single(table_ref), Some(where_clause)) => {
                 (table_ref, where_clause)
             }
-            _ => return Vec::new(),
+            _ => return None,
         },
         tidb_ast::DmlStmt::Delete(delete) => match (&delete.kind, delete.where_clause.as_ref()) {
             (tidb_ast::DeleteKind::Single(table_ref), Some(where_clause)) => {
                 (table_ref, where_clause)
             }
-            _ => return Vec::new(),
+            _ => return None,
         },
-        _ => return Vec::new(),
+        _ => return None,
     };
-    let Some(table) = single_table_entry(table_ref, catalog, current_db) else {
-        return Vec::new();
-    };
-    crate::driver::access::point_write_prelock_keys(&table, where_clause, params, zone)
+    Some((table_ref, where_clause))
 }
 
-/// The record keys one pessimistic point locking read locks BEFORE it runs.
-///
-/// Go folds a `SELECT ... FOR UPDATE` whose whole read is one clustered
-/// handle-pinned row into its own lock exactly as it folds a point write:
-/// `TryFastPlan` builds a `PointGetPlan` with `Lock=true`, and the
-/// `PointGetExecutor`'s lock arm asks TiKV to answer the row WITH the lock
-/// (`getAndLock`, `pkg/executor/point_get.go`). This is that statement
-/// shape's classifier: a single-table `SELECT FOR UPDATE` whose WHERE pins
-/// every clustered-primary-key column returns the row's encoded record keys;
-/// everything else returns an empty vector and keeps today's read-then-lock
-/// order.
-///
-/// The refusals mirror the write arm plus two read-only ones:
-///
-/// * `FOR SHARE` keeps today's path -- its lock strength differs and no
-///   measured workload pays for folding it yet.
-/// * A non-default wait (`NOWAIT` / `SKIP LOCKED` / `WAIT n`) keeps today's
-///   path, because the pre-lock acquires with the session's lock-wait timeout
-///   and would silently turn a fail-fast wait into a blocking one.
-#[must_use]
-pub fn pessimistic_read_lock_point_keys(
+/// Borrow a single-table FOR UPDATE predicate eligible for point/batch locks.
+/// Other plan shapes retain selected-row locking. Non-default wait policies
+/// cannot use the session-timeout pre-lock path; FOR SHARE has a different
+/// lock strength. The session separately excludes read-committed reads.
+fn pessimistic_read_predicate(
     stmt: &tidb_ast::Stmt,
-    catalog: &crate::driver::Catalog,
-    current_db: &str,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Vec<Vec<u8>> {
+) -> Option<(&tidb_ast::TableRef, &tidb_ast::Expr)> {
     let tidb_ast::Stmt::Query(query) = stmt else {
-        return Vec::new();
+        return None;
     };
     let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
-        return Vec::new();
+        return None;
     };
     // Go's TryFastPlan refuses every query whose root plan is not a bare
     // point get; these syntactic guards refuse the same shapes before any
@@ -226,57 +180,103 @@ pub fn pessimistic_read_lock_point_keys(
         || select.limit.is_some()
         || select.lock.is_none()
     {
-        return Vec::new();
+        return None;
     }
     let lock = select.lock.as_ref().expect("checked above");
     if lock.kind != tidb_ast::LockKind::Update || lock.wait != tidb_ast::LockWait::Default {
-        return Vec::new();
+        return None;
     }
     // One table, no join: `FROM t` parses as the single-table wrapper.
     let Some(from) = &select.from else {
-        return Vec::new();
+        return None;
     };
     if from.right.is_some() || from.on.is_some() || !from.using.is_empty() || from.natural {
-        return Vec::new();
+        return None;
     }
     let tidb_ast::JoinNode::Table(table_ref) = &from.left else {
-        return Vec::new();
+        return None;
     };
     let Some(where_clause) = &select.where_clause else {
-        return Vec::new();
+        return None;
     };
-    let Some(table) = single_table_entry(table_ref, catalog, current_db) else {
-        return Vec::new();
-    };
-    crate::driver::access::point_write_prelock_keys(&table, where_clause, &[], zone)
+    Some((table_ref, where_clause))
 }
 
-/// Both pre-lock arms at once, for a caller holding only SQL text: the write
-/// arm ([`pessimistic_write_point_keys`]) and the locking-read arm
-/// ([`pessimistic_read_lock_point_keys`]). Empty output means "no fold".
-#[must_use]
-pub fn pessimistic_statement_prelock_keys(
-    stmt: &tidb_ast::Stmt,
-    catalog: &crate::driver::Catalog,
-    current_db: &str,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> Vec<Vec<u8>> {
-    let keys = pessimistic_write_point_keys(stmt, &[], catalog, current_db, zone);
-    if !keys.is_empty() {
-        return keys;
+/// The borrowed part of a statement that can determine its pre-lock keys.
+/// Shape classification needs neither catalog access nor parameter binding;
+/// projections and assignment values are never copied for this decision.
+pub struct PessimisticPrelock<'a> {
+    table: &'a tidb_ast::TableRef,
+    predicate: &'a tidb_ast::Expr,
+    locking_read: bool,
+}
+
+impl<'a> PessimisticPrelock<'a> {
+    /// Borrow an eligible predicate, or reject the statement without binding it.
+    #[must_use]
+    pub fn from_statement(stmt: &'a tidb_ast::Stmt) -> Option<Self> {
+        let locking_read = matches!(stmt, tidb_ast::Stmt::Query(_));
+        let (table, predicate) = if locking_read {
+            pessimistic_read_predicate(stmt)?
+        } else {
+            pessimistic_write_predicate(stmt)?
+        };
+        Some(Self { table, predicate, locking_read })
     }
-    pessimistic_read_lock_point_keys(stmt, catalog, current_db, zone)
+
+    #[must_use]
+    /// Whether repeatable-read admission is required before speculative locks.
+    pub fn is_locking_read(&self) -> bool {
+        self.locking_read
+    }
+
+    /// Resolve only the key predicate after the session refreshed its catalog
+    /// and captured transaction isolation. A refusal keeps normal execution.
+    #[must_use]
+    pub fn bind_keys(
+        &self,
+        params: &[Datum],
+        catalog: &crate::driver::Catalog,
+        current_db: &str,
+        zone: &tidb_datatype::SessionTimeZone,
+    ) -> Vec<Vec<u8>> {
+        let Some(table) = single_table_entry(self.table, catalog, current_db) else {
+            return Vec::new();
+        };
+        let bound;
+        let predicate = if params.is_empty() {
+            self.predicate
+        } else {
+            let Ok(value) = crate::driver::bind_prelock_predicate(self.predicate, params) else {
+                return Vec::new();
+            };
+            bound = value;
+            &bound
+        };
+        if self.locking_read {
+            if let Ok(Some(batch)) = crate::driver::access::primary_batch_point_lookup(
+                predicate, table, zone,
+            ) {
+                return batch.into_handles().into_iter().map(|handle| {
+                    tidb_codec::table_key::encode_row_key_with_handle(
+                        table.table_id, &handle.record_handle(),
+                    )
+                }).collect();
+            }
+        }
+        crate::driver::access::point_write_prelock_keys(table, predicate, &[], zone)
+    }
 }
 
 /// Resolves one single-table reference to its KV table, refusing partitioned
 /// tables: which record key one handle names then depends on pruning this
 /// predicate does not do. A refusal costs one extra round trip, never a wrong
 /// lock.
-fn single_table_entry(
+fn single_table_entry<'a>(
     table_ref: &tidb_ast::TableRef,
-    catalog: &crate::driver::Catalog,
+    catalog: &'a crate::driver::Catalog,
     current_db: &str,
-) -> Option<crate::kv_table::KvTable> {
+) -> Option<&'a crate::kv_table::KvTable> {
     let (database, table_name) = match table_ref.name.as_slice() {
         [name] if !current_db.is_empty() => (current_db, name.as_str()),
         [database, name] => (database.as_str(), name.as_str()),
@@ -284,7 +284,7 @@ fn single_table_entry(
     };
     match catalog.get_in(database, table_name) {
         Some(crate::driver::TableEntry::Kv(table)) if table.partition().is_none() => {
-            Some(table.clone())
+            Some(table)
         }
         _ => None,
     }
@@ -316,10 +316,10 @@ fn single_table_entry(
 ///   (`driver::access::try_point_get`) is exactly that double read, and it
 ///   READS the index while deciding, which a declaration made before the first
 ///   read cannot do anyway. Refusing it is both halves at once.
-/// * `LIMIT` is refused. Go allows `LIMIT n` (`n > 0`, no offset) inside
-///   `tryPointGetPlan`, but evaluating the bound is work this predicate would
-///   have to duplicate to stay read-free, and a refusal costs one timestamp
-///   rather than a wrong row.
+/// * A retained `LIMIT` operator is refused. Go folds a positive, zero-offset
+///   limit into `tryPointGetPlan`; literal bounds permit the same proof here
+///   without evaluating an expression. The complete handle-key proof still
+///   runs below, so a bounded range never gains MaxTS merely from its limit.
 ///
 /// The conditions this function does NOT own, because the caller owns them
 /// structurally -- see `ClusterSnapshot::declare_autocommit_point_get`:
@@ -366,13 +366,22 @@ pub fn statement_read_shape(
     let tidb_ast::QueryStmt::Select(select) = &**query else {
         return StatementReadShape::Unknown;
     };
-    let single_row_scan = !select_is_bare_point_read(select)
-        && select_is_bare_single_row_read(select)
-        && select
-            .where_clause
-            .as_ref()
-            .is_none_or(|where_clause| where_clause.flags() & tidb_ast::FLAG_HAS_SUBQUERY == 0);
-    if !select_is_bare_point_read(select) && !single_row_scan {
+    if select.lock.as_ref().is_some_and(|lock| lock.kind == tidb_ast::LockKind::Update) {
+        return StatementReadShape::LockingRead;
+    }
+    // Go's tryPointGetPlan permits a positive LIMIT with zero offset, but
+    // IsPointGetWithPKOrUniqueKeyByAutoCommit still requires a complete point
+    // key. A row-count bound alone does not prove one snapshot-consistent read.
+    if !select_is_bare_read(select, true)
+        || select.limit.as_ref().is_some_and(|limit| {
+            !matches!(&limit.count, tidb_ast::Expr::Int(value)
+                if value.parse::<u64>().is_ok_and(|count| count > 0))
+                || limit.offset.as_ref().is_some_and(|offset| {
+                    !matches!(offset, tidb_ast::Expr::Int(value)
+                        if value.parse::<u64>() == Ok(0))
+                })
+        })
+    {
         return StatementReadShape::Unknown;
     }
     let Some(table_ref) = crate::driver::access::single_table_ref(&select.from) else {
@@ -390,15 +399,6 @@ pub fn statement_read_shape(
     // predicate does not resolve; a refusal costs one timestamp.
     if table.partition().is_some() {
         return StatementReadShape::Unknown;
-    }
-    if single_row_scan {
-        // The admitted predicate is already a clustered-handle range, so this
-        // path issues one table request even when unrelated secondary indexes
-        // exist. A table without any clustered handle cannot make that claim.
-        if table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty() {
-            return StatementReadShape::Unknown;
-        }
-        return StatementReadShape::AutocommitSingleRowRead;
     }
     let columns: Vec<(String, FieldType)> = table
         .visible_columns()
@@ -457,35 +457,6 @@ pub fn statement_read_shape(
         .unwrap_or(StatementReadShape::Unknown)
 }
 
-/// Classifies a retained binary-protocol template without cloning it merely
-/// to replace parameter markers. The cached point-read shape is recognized
-/// here by the SAME analyzer that builds its plan (`usize::MAX` leaves every
-/// marker order admissible; each execute's own parameters are validated when
-/// the plan binds); every other prepared statement keeps the ordinary
-/// bound-tree classifier.
-#[must_use]
-pub fn prepared_statement_read_shape(
-    stmt: &tidb_ast::Stmt,
-    _params: &[Datum],
-    catalog: &crate::driver::Catalog,
-    current_db: &str,
-    zone: &tidb_datatype::SessionTimeZone,
-) -> StatementReadShape {
-    if crate::driver::access::build_prepared_point_get_plan(
-        stmt,
-        usize::MAX,
-        catalog,
-        current_db,
-        zone,
-    )
-    .is_some()
-    {
-        return StatementReadShape::AutocommitPointGet;
-    }
-    let _ = _params;
-    StatementReadShape::Unknown
-}
-
 #[cfg(test)]
 mod common_handle_shape_tests {
     use super::*;
@@ -538,7 +509,7 @@ mod common_handle_shape_tests {
     }
 
     #[test]
-    fn a_single_row_cluster_scan_is_admitted_without_secondary_indexes() {
+    fn a_limit_bound_does_not_replace_the_complete_point_key_proof() {
         let mut table = crate::driver::Catalog::default();
         table.create_database("test");
         let mut kv = crate::kv_table::KvTable::new(
@@ -569,16 +540,28 @@ mod common_handle_shape_tests {
         kv.set_name("t");
         kv.set_common_handle_offsets(vec![0]);
         table.register_kv_in("test", "t", kv).unwrap();
-        let stmt = tidb_parser::parse("SELECT v FROM t WHERE k >= 'x' LIMIT 1").unwrap();
-        assert_eq!(
-            statement_read_shape(
-                &stmt,
-                &table,
-                "test",
-                &tidb_datatype::SessionTimeZone::utc(),
-            ),
-            StatementReadShape::AutocommitSingleRowRead
-        );
+        for (sql, expected) in [
+            ("SELECT v FROM t WHERE k >= 'x' LIMIT 1", StatementReadShape::Unknown),
+            ("SELECT v FROM t LIMIT 1", StatementReadShape::Unknown),
+            ("SELECT v FROM t WHERE v = 1 LIMIT 1", StatementReadShape::Unknown),
+            ("SELECT v FROM t WHERE k = 'x' LIMIT 1", StatementReadShape::AutocommitPointGet),
+            ("SELECT v FROM t WHERE k = 'x' LIMIT 2", StatementReadShape::AutocommitPointGet),
+            ("SELECT v FROM t WHERE k = 'x' LIMIT 1 OFFSET 0", StatementReadShape::AutocommitPointGet),
+            ("SELECT v FROM t WHERE k = 'x' LIMIT 0", StatementReadShape::Unknown),
+            ("SELECT v FROM t WHERE k = 'x' LIMIT 1 OFFSET 1", StatementReadShape::Unknown),
+        ] {
+            let stmt = tidb_parser::parse(sql).unwrap();
+            assert_eq!(
+                statement_read_shape(
+                    &stmt,
+                    &table,
+                    "test",
+                    &tidb_datatype::SessionTimeZone::utc(),
+                ),
+                expected,
+                "{sql}",
+            );
+        }
     }
 
     /// DML gets its own ordinary-snapshot shape so the session can start the
@@ -626,17 +609,6 @@ mod common_handle_shape_tests {
 /// subquery in it is a second read, and an aggregate is a root `HashAgg`.
 pub(crate) fn select_is_bare_point_read(select: &tidb_ast::SelectStmt) -> bool {
     select_is_bare_read(select, false)
-}
-
-/// The same root shape as [`select_is_bare_point_read`], with an optional
-/// literal `LIMIT 1` for a one-row range read.
-fn select_is_bare_single_row_read(select: &tidb_ast::SelectStmt) -> bool {
-    let Some(limit) = select.limit.as_ref() else {
-        return false;
-    };
-    limit.offset.is_none()
-        && matches!(&limit.count, tidb_ast::Expr::Int(value) if value == "1")
-        && select_is_bare_read(select, true)
 }
 
 fn select_is_bare_read(select: &tidb_ast::SelectStmt, allow_limit: bool) -> bool {
@@ -1110,6 +1082,7 @@ pub struct IndexRangeSourceExec {
     /// index. This is an execution hint; the ordinary row filter remains as
     /// a semantic check after the table lookup.
     index_filter: bool,
+    native_bindings: Option<Box<crate::physical_builder::ReaderBindings>>,
     /// A bounded TopN that can run on the index stream before table lookup.
     top_n: Option<crate::remote_scan::PushdownTopN>,
     /// A pushed row cap (`offset + count`); see [`Executor::accept_scan_limit`].
@@ -1329,6 +1302,15 @@ fn calculate_lookup_batch_size(
 }
 
 impl IndexRangeSourceExec {
+    pub(crate) fn bind_native_reader(
+        &mut self,
+        bindings: crate::physical_builder::ReaderBindings,
+        index_filter: bool,
+    ) {
+        self.native_bindings = Some(Box::new(bindings));
+        self.index_filter = index_filter;
+    }
+
     /// Builds a source over `ranges` with an explicit row-decode context.
     #[must_use]
     pub fn new_with_context(
@@ -1411,6 +1393,7 @@ impl IndexRangeSourceExec {
             filter: None,
             pushed: Vec::new(),
             index_filter: false,
+            native_bindings: None,
             top_n: None,
             limit: None,
             lookup_offset: 0,
@@ -2240,7 +2223,7 @@ impl IndexRangeSourceExec {
                 }
                 Ok(vec![vec![Datum::Int(count)]])
             }
-            PushdownPartialAggregate::Global { functions } => {
+            PushdownPartialAggregate::Global { functions, .. } => {
                 enum PartialValue {
                     Count(i64),
                     SumDecimal(Option<Decimal>),
@@ -2639,6 +2622,23 @@ impl IndexRangeSourceExec {
 
 impl Executor for IndexRangeSourceExec {
     fn open(&mut self) -> Result<(), ExecError> {
+        if let Some(bindings) = self.native_bindings.as_mut() {
+            if let Some(ranges) = bindings.ranges()? {
+                self.ranges = ranges;
+            }
+            if let Some(predicates) = bindings.filter()? {
+                self.pushed = predicates.clone();
+                if let Some(probe) = &mut self.filter {
+                    probe.replace_predicates(predicates);
+                } else {
+                    self.filter = Some(crate::predicate_pushdown::ScanFilterProbe::new(
+                        bindings.new_filter(predicates),
+                        bindings.context().clone(),
+                        self.meta.new_chunk(),
+                    ));
+                }
+            }
+        }
         self.next_range = if self.descending {
             self.ranges.len()
         } else {
@@ -2700,7 +2700,9 @@ impl Executor for IndexRangeSourceExec {
         // a servable request is refused into the local cursor only by the
         // semantic guards above.
         let lowered: &[crate::predicate_pushdown::ScanPredicate] =
-            if self.index_filter || self.top_n.is_some() {
+            if let Some(bindings) = &self.native_bindings {
+                &bindings.index_predicates
+            } else if self.index_filter || self.top_n.is_some() {
                 &self.pushed
             } else {
                 &[]
@@ -2719,6 +2721,10 @@ impl Executor for IndexRangeSourceExec {
             && self.limit.is_none()
             && self.lookup_offset == 0;
         if let Some(aggregate) = self.partial_aggregate.as_ref() {
+            let context = self
+                .partial_context
+                .as_ref()
+                .ok_or_else(|| ExecError::internal("partial aggregate has no execution context"))?;
             self.partial_remote = self
                 .table
                 .pushdown_index_partial_aggregate_cursor(
@@ -2727,6 +2733,7 @@ impl Executor for IndexRangeSourceExec {
                     &self.keep,
                     &self.pushed,
                     aggregate,
+                    context,
                     self.decode_context.zone(),
                     &self.statement,
                 )
@@ -2922,6 +2929,9 @@ impl Executor for IndexRangeSourceExec {
                     req.append_datum(column, value);
                 }
                 self.produced.set(self.produced.get() + 1);
+                if req.num_cols() == 0 {
+                    req.set_num_virtual_rows(req.num_rows() + 1);
+                }
             }
             return Ok(());
         }
@@ -2968,6 +2978,9 @@ impl Executor for IndexRangeSourceExec {
                 req.append_datum(c, value);
             }
             self.produced.set(self.produced.get() + 1);
+            if req.num_cols() == 0 {
+                req.set_num_virtual_rows(req.num_rows() + 1);
+            }
         }
         Ok(())
     }
@@ -3092,8 +3105,8 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         accepted
     }
 
-    fn accept_partial_aggregate(
-        &mut self,
+    fn supports_partial_aggregate(
+        &self,
         aggregate: &PushdownPartialAggregate,
         ctx: &crate::StmtContext,
     ) -> bool {
@@ -3144,6 +3157,17 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
             || self.partial_aggregate.is_some()
             || self.limit.is_some()
         {
+            return false;
+        }
+        true
+    }
+
+    fn accept_partial_aggregate(
+        &mut self,
+        aggregate: &PushdownPartialAggregate,
+        ctx: &crate::StmtContext,
+    ) -> bool {
+        if !self.supports_partial_aggregate(aggregate, ctx) {
             return false;
         }
         let input_types = self.meta.ret_field_types().to_vec();
@@ -4367,7 +4391,8 @@ impl IndexJoinLookupExec {
                 .decode_offsets
                 .clone()
                 .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>());
-            let remote_predicates = scan_predicates_for_filters(&self.filters, &keep);
+            let remote_predicates =
+                scan_predicates_for_filters(&self.filters, &keep, self.filter_context.as_ref());
             let remote_cursor = self
                 .table
                 .pushdown_row_cursor_with_context(
@@ -4380,7 +4405,6 @@ impl IndexJoinLookupExec {
                     None,
                     false,
                     false,
-                    crate::remote_scan::DEFAULT_SCAN_READ_AHEAD_BATCHES,
                     &self.decode_context,
                     &self.statement,
                 )
@@ -4424,7 +4448,8 @@ impl IndexJoinLookupExec {
             .decode_offsets
             .clone()
             .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>());
-        let remote_predicates = scan_predicates_for_filters(&self.filters, &keep);
+        let remote_predicates =
+            scan_predicates_for_filters(&self.filters, &keep, self.filter_context.as_ref());
         let remote_cursor = self
             .table
             .pushdown_row_cursor_with_context(
@@ -4437,7 +4462,6 @@ impl IndexJoinLookupExec {
                 None,
                 false,
                 false,
-                crate::remote_scan::INDEX_JOIN_READ_AHEAD_BATCHES,
                 &self.decode_context,
                 &self.statement,
             )
@@ -4506,7 +4530,8 @@ impl IndexJoinLookupExec {
             .decode_offsets
             .clone()
             .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>());
-        let predicates = scan_predicates_for_filters(&self.filters, &keep);
+        let predicates =
+            scan_predicates_for_filters(&self.filters, &keep, self.filter_context.as_ref());
         let Ok(Some(staged)) = self.table.stage_rows_by_handles_filtered(
             handles,
             &keep,
@@ -4670,66 +4695,24 @@ pub(crate) fn expression_column_offsets(expressions: &[Expression]) -> Vec<usize
     offsets.into_iter().collect()
 }
 
-/// Describes the comparison forms Go lowers into a coprocessor Selection.
-/// Index-join filters are already resolved executor expressions rather than
-/// AST predicates, so this adapter keeps the same fail-closed shape:
-/// unsupported expressions remain client-side filters.
-fn scan_predicate_from_expression(expression: &Expression) -> Option<ScanPredicate> {
-    let Expression::ScalarFunction(function) = expression else {
-        return None;
+/// Go ExprToPB evaluates execution-bound leaves; descriptor offsets alone
+/// are remapped to the scan projection. A refused description remains in
+/// the complete local filter, as does a constant whose PB evaluation fails.
+fn scan_predicates_for_filters(
+    filters: &[Expression],
+    keep: &[usize],
+    context: Option<&crate::StmtContext>,
+) -> Vec<ScanPredicate> {
+    let Some(context) = context else {
+        return Vec::new();
     };
-    let function_name = function.func_name.lowercase();
-    let operation = match function_name.as_ref() {
-        "eq" => ScanComparisonOp::Eq,
-        "ne" => ScanComparisonOp::Ne,
-        "lt" => ScanComparisonOp::Lt,
-        "le" => ScanComparisonOp::Le,
-        "gt" => ScanComparisonOp::Gt,
-        "ge" => ScanComparisonOp::Ge,
-        _ => return None,
-    };
-    let [left, right] = function.args.as_slice() else {
-        return None;
-    };
-    if let (Expression::Column(left), Expression::Column(right)) = (left, right) {
-        return Some(ScanPredicate::ColumnCompare(ScanColumnComparison {
-            left_offset: u32::try_from(left.index).ok()?,
-            left_type: left.get_static_type()?.clone(),
-            right_offset: u32::try_from(right.index).ok()?,
-            right_type: right.get_static_type()?.clone(),
-            op: operation,
-        }));
-    }
-    let (column, constant, column_on_left) = match (left, right) {
-        (Expression::Column(column), Expression::Constant(constant)) => (column, constant, true),
-        (Expression::Constant(constant), Expression::Column(column)) => (column, constant, false),
-        _ => return None,
-    };
-    let literal = constant.value.clone();
-    (!matches!(literal, Datum::Null)).then(|| {
-        Some(ScanPredicate::Compare(ScanComparison {
-            column_offset: u32::try_from(column.index).ok()?,
-            // The column's, which is the derived collation whenever no
-            // argument is explicit; `adopt_refined_literals` replaces it with
-            // the built expression's for a conjunct that goes through
-            // `split_scan_predicates`.
-            collation: column.get_static_type()?.collation(),
-            column_type: column.get_static_type()?.clone(),
-            literal_type: constant.get_static_type()?.clone(),
-            op: operation,
-            literal,
-            column_on_left,
-        }))
-    })?
-}
-
-fn scan_predicates_for_filters(filters: &[Expression], keep: &[usize]) -> Vec<ScanPredicate> {
     filters
         .iter()
         .filter_map(|filter| {
-            let mut filter = filter.clone();
-            crate::predicate_pushdown::remap_expression(&mut filter, keep)?;
-            scan_predicate_from_expression(&filter)
+            let mut predicate =
+                crate::predicate_pushdown::describe_execution_condition(filter, context).ok()?;
+            crate::predicate_pushdown::remap_scan_predicate(&mut predicate, keep)?;
+            Some(predicate)
         })
         .collect()
 }
@@ -4994,6 +4977,83 @@ mod tests {
     }
 
     const ROWS: i64 = 5000;
+
+    #[test]
+    fn batch_writes_fetch_records_in_one_storage_request() {
+        let ctx = crate::StmtContext::for_query();
+        for (ddl, insert, predicate, expected) in [
+            (
+                "CREATE TABLE t (a BIGINT PRIMARY KEY, v BIGINT)",
+                "INSERT INTO t VALUES (1,10),(2,20),(3,30)",
+                "a IN (3,1,1,99)",
+                vec![
+                    vec![Datum::Int(1), Datum::Int(11)],
+                    vec![Datum::Int(2), Datum::Int(20)],
+                    vec![Datum::Int(3), Datum::Int(31)],
+                ],
+            ),
+            (
+                "CREATE TABLE t (a BIGINT, b BIGINT, v BIGINT, PRIMARY KEY(a,b) CLUSTERED)",
+                "INSERT INTO t VALUES (1,1,10),(2,2,20),(3,3,30)",
+                "(a,b) IN ((3,3),(1,1),(1,1),(99,99))",
+                vec![
+                    vec![Datum::Int(1), Datum::Int(1), Datum::Int(11)],
+                    vec![Datum::Int(2), Datum::Int(2), Datum::Int(20)],
+                    vec![Datum::Int(3), Datum::Int(3), Datum::Int(31)],
+                ],
+            ),
+        ] {
+            let mut catalog = Catalog::default();
+            crate::run_create_table_on(ddl, &mut catalog).unwrap();
+            let store = CountingStorage::default();
+            let gets = Arc::clone(&store.gets);
+            let entries = Arc::clone(&store.entries);
+            let Some(crate::driver::TableEntry::Kv(table)) =
+                catalog.get_mut_in(crate::driver::DEFAULT_DATABASE, "t")
+            else {
+                panic!("test table must be byte-backed");
+            };
+            let _ = table.replace_storage(Box::new(store));
+            crate::run_insert_on(insert, &mut catalog, &ctx).unwrap();
+            gets.store(0, Ordering::Relaxed);
+            entries.store(0, Ordering::Relaxed);
+            let changed = crate::run_update_on(
+                &format!("UPDATE t SET v=v+1 WHERE {predicate}"),
+                &mut catalog,
+                &ctx,
+            )
+            .unwrap();
+            assert_eq!(changed, 2, "duplicate and absent handles must not add writes");
+            assert_eq!(
+                gets.load(Ordering::Relaxed), 1,
+                "batch UPDATE must batch the record fetch"
+            );
+            assert_eq!(entries.load(Ordering::Relaxed), 0, "no fallback scan");
+            assert_eq!(
+                run_select_on("SELECT * FROM t ORDER BY a", &catalog, &ctx).unwrap(),
+                expected
+            );
+            gets.store(0, Ordering::Relaxed);
+            entries.store(0, Ordering::Relaxed);
+            assert_eq!(
+                crate::run_delete_on(
+                    &format!("DELETE FROM t WHERE {predicate}"),
+                    &mut catalog,
+                    &ctx,
+                ).unwrap(),
+                2
+            );
+            assert_eq!(
+                gets.load(Ordering::Relaxed), 1,
+                "batch DELETE must batch the record fetch"
+            );
+            assert_eq!(entries.load(Ordering::Relaxed), 0, "no fallback scan");
+            assert_eq!(
+                run_select_on("SELECT * FROM t ORDER BY a", &catalog, &ctx).unwrap(),
+                vec![expected[1].clone()]
+            );
+        }
+    }
 
     /// A table-side residual must not spend the output LIMIT as a raw-handle
     /// budget. This is the small arithmetic contract behind Go's expanding

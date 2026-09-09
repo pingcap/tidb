@@ -1,0 +1,40 @@
+{
+  "workload": "select_random_ranges",
+  "scope": "Local range-planning measurement; not full sysbench or TPC-C acceptance",
+  "base_commit": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "change": "Skip table-path derivation when available paths exclude it",
+  "machine": "Apple M4 Max, 128 GiB RAM, Darwin 24.6.0",
+  "compiler": "rustc 1.100.0-nightly (c656540d6 2026-08-21)",
+  "build": "cargo build --offline --locked --release -j12 -p tidb-server",
+  "sysbench_version": "1.0.20",
+  "cluster": "One local PD, TiKV, Go TiDB; v9.0.0-beta.2.pre-nightly",
+  "data": {"tables": 1, "rows": 100000, "analyzed": true},
+  "protocol": "prepared",
+  "threads": 2,
+  "sample_seconds": 30,
+  "rounds": 3,
+  "random_seed": 1,
+  "server_options": "--store tikv --cluster-session --lease-ms 2000 --max-connections 32 --load-privileges",
+  "order": [["before", "after", "go"], ["after", "go", "before"], ["go", "before", "after"]],
+  "before": {
+    "binary_sha256": "9ae472c61398fff4d6ace7f343df736fbf59c98382671e1babbdecc1887754a9",
+    "transactions": [67968, 67718, 68379],
+    "seconds": [30.0018, 30.0014, 30.0015],
+    "median_tps": 2265.4640721556707
+  },
+  "after": {
+    "binary_sha256": "f6ae0232a14fb03bca3dcfe1e8ed665a2e4638a261d0325c03b0a7452cbebec3",
+    "transactions": [73703, 75568, 75357],
+    "seconds": [30.0061, 30.0016, 30.0015],
+    "median_tps": 2511.774411279436
+  },
+  "go": {
+    "transactions": [187876, 187247, 186885],
+    "seconds": [30.0013, 30.0011, 30.0012],
+    "median_tps": 6241.337817613354
+  },
+  "errors": 0,
+  "reconnects": 0,
+  "reproduce": "python3 rust/scripts/compare-sysbench.py --server before:53000 --server after:53001 --server go:45000 --database perf_sysbench --workload select_random_ranges --threads 2 --seconds 30 --rounds 3 --table-size 100000",
+  "prerequisite": "Start the specified binaries on one cluster, prepare perf_sysbench using stock sysbench oltp_read_only prepare with one 100000-row table, and analyze the table before measurement."
+}

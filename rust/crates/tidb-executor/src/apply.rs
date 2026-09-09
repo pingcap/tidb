@@ -48,6 +48,7 @@
 //! choreography; the cache itself remains thread-safe.
 
 use crate::apply_cache::ApplyCache;
+pub mod native;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::mem_quota::StatementMemory;
 use std::sync::Arc;

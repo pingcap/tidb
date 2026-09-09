@@ -108,7 +108,7 @@ use tidb_txnkv::Key;
 pub(crate) fn build_handle_ranges<'a>(
     table: &KvTable,
     where_clause: &'a tidb_ast::Expr,
-    zone: &tidb_datatype::SessionTimeZone,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
 ) -> Option<IndexRanges<'a>> {
     let common_offsets = table.common_handle_offsets();
     if !common_offsets.is_empty() {
@@ -125,7 +125,7 @@ pub(crate) fn build_handle_ranges<'a>(
         return crate::index_range::detach_cond_and_build_range_for_index(
             &columns,
             where_clause,
-            zone,
+            resolver,
         );
     }
     let column = handle_column(table)?;
@@ -137,7 +137,7 @@ pub(crate) fn build_handle_ranges<'a>(
             column.field_type.clone(),
         )],
         where_clause,
-        zone,
+        resolver,
     )?;
     // Go `points2TableRanges` (`pkg/util/ranger/ranger.go:466`) calls
     // `convertPointsInPlace` with `skipNull = true`, and that function DROPS
@@ -255,7 +255,9 @@ fn build_common_handle_ranges<'a>(
     if columns.len() != index.column_offsets.len() {
         return None;
     }
-    crate::index_range::detach_cond_and_build_range_for_index(&columns, where_clause, zone)
+    crate::index_range::detach_cond_and_build_range_for_index(
+        &columns, where_clause, &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
+    )
 }
 
 /// The primary-key column that IS the row handle, when the table has one and

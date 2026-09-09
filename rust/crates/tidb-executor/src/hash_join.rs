@@ -368,7 +368,7 @@ pub(crate) fn split_equi(conditions: &[Expression], left_width: usize) -> EquiSp
     EquiSplit { keys, equal_mask }
 }
 
-fn equi_key(conjunct: &Expression, left_width: usize) -> Option<EquiKey> {
+pub(crate) fn equi_key(conjunct: &Expression, left_width: usize) -> Option<EquiKey> {
     let Expression::ScalarFunction(f) = conjunct else {
         return None;
     };
@@ -990,6 +990,19 @@ impl BuildTable {
         types: &[FieldType],
         build_is_left: bool,
     ) -> Result<(), BuildError> {
+        self.index_chunk_selected(chunk, keys, types, build_is_left, &[])
+    }
+
+    /// Go `PutChunkSelected` keeps every build row for the preserved-side
+    /// scan but indexes only rows accepted by the outer-side filter.
+    pub(crate) fn index_chunk_selected(
+        &mut self,
+        chunk: Chunk,
+        keys: &[EquiKey],
+        types: &[FieldType],
+        build_is_left: bool,
+        selected: &[bool],
+    ) -> Result<(), BuildError> {
         let offset = |key: &EquiKey| if build_is_left { key.left } else { key.right };
         let exact_int = self.exact_int_buckets.as_ref().and_then(|_| {
             keys.first()
@@ -1007,6 +1020,9 @@ impl BuildTable {
                 .push(bitmap);
         }
         for row_idx in 0..chunk.num_rows() {
+            if !selected.is_empty() && !selected[row_idx] {
+                continue;
+            }
             let chunk_row = chunk.get_row(row_idx);
             // An ordinary equality key containing NULL is not indexed. A
             // NULL-safe key is indexed under row_key's dedicated NULL

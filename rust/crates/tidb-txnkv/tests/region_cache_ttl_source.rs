@@ -69,7 +69,7 @@ impl RegionLoader for Loader {
 
 #[test]
 fn strict_expiry_and_near_boundary_renewal_match_go() {
-    let mut state = CacheEntryState::new(102);
+    let state = CacheEntryState::new(102);
     assert!(state.check_and_renew(102, 2, 104));
     assert_eq!(state.expires_at_seconds(), 104);
     assert!(!state.check_and_renew(105, 2, 107));

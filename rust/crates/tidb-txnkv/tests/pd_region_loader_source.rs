@@ -679,6 +679,105 @@ fn unknown_leader_role_reaches_the_raw_context_domain() {
 }
 
 #[test]
+fn epoch_recovery_reuses_canonical_stores_across_split_children() {
+    use tidb_txnkv::region::{RegionAttempt, RegionBackoffBudget, StoreLiveness};
+
+    // Both children share the known stores and, in the second case, one
+    // newly discovered store. Go newRegion/Store.initResolve reuse resolved
+    // stores and resolve the new store once for the whole cache.
+    for (add_store, stale_follower) in [(false, false), (true, false), (false, true)] {
+        let mut state = valid_state();
+        let initial = state.region.region.as_mut().unwrap();
+        initial.start_key = encoded(b"a");
+        initial.end_key = encoded(b"z");
+        initial.peers.truncate(2);
+        let mut replacement = initial.clone();
+        replacement.region_epoch.as_mut().unwrap().version += 1;
+        state.region.buckets = None;
+        state.region.down_peers.clear();
+        state.region.pending_peers.clear();
+        if add_store {
+            replacement
+                .peers
+                .push(peer(16, 105, metapb::PeerRole::Voter, false));
+            state.stores.insert(
+                105,
+                store_response(105, metapb::StoreState::Up, metapb::NodeState::Serving),
+            );
+        }
+        let server = Server::start(state);
+        let loader = PdRegionLoader::connect(&server.address, Duration::from_secs(2)).unwrap();
+        let mut cache = RegionCache::new(loader);
+        let location = cache.locate_key(b"k").unwrap().clone();
+        let leader = location
+            .peers
+            .iter()
+            .find(|peer| Some(peer.id) == location.leader_peer_id)
+            .unwrap();
+        let store = cache.store_state(leader.store_id).unwrap();
+        let attempt = RegionAttempt {
+            region: location.region,
+            peer_id: leader.id,
+            store_id: store.id(),
+            address: store.address().to_owned(),
+            store_epoch: store.epoch(),
+        };
+        if stale_follower {
+            let follower = cache.store_state(102).unwrap();
+            let failed = RegionAttempt {
+                region: location.region,
+                peer_id: 12,
+                store_id: 102,
+                address: follower.address().to_owned(),
+                store_epoch: follower.epoch(),
+            };
+            cache
+                .on_send_failure(&failed, StoreLiveness::Unreachable)
+                .unwrap();
+        }
+        let follower_state = cache.store_state(102).unwrap().clone();
+        server.state.lock().unwrap().store_requests.clear();
+        let mut left = replacement.clone();
+        left.id = 8;
+        left.end_key = encoded(b"m");
+        replacement.start_key = encoded(b"m");
+        let error = tidb_proto::errorpb::Error {
+            epoch_not_match: Some(tidb_proto::errorpb::EpochNotMatch {
+                current_regions: vec![left, replacement],
+            }),
+            ..Default::default()
+        };
+        cache
+            .on_region_error(
+                &error,
+                attempt,
+                &mut RegionBackoffBudget::new(Duration::from_secs(1)),
+            )
+            .unwrap();
+        assert_eq!(
+            cache.store_state(102).unwrap(),
+            &follower_state,
+            "reusing cached metadata must not masquerade as a successful store refresh"
+        );
+        assert_eq!(cache.locate_key(b"k").unwrap().region.id, 8);
+        assert_eq!(cache.locate_key(b"s").unwrap().region.id, 7);
+        let requests: Vec<_> = server
+            .state
+            .lock()
+            .unwrap()
+            .store_requests
+            .iter()
+            .map(|request| request.store_id)
+            .collect();
+        assert_eq!(
+            requests,
+            if add_store { vec![105] } else { vec![] },
+            "epoch recovery must not re-fetch resolved stores or resolve a shared new store twice"
+        );
+    }
+}
+
+#[test]
 fn current_region_hydration_reresolves_stores_and_preserves_unknown_roles() {
     let mut state = valid_state();
     state
@@ -711,7 +810,7 @@ fn current_region_hydration_reresolves_stores_and_preserves_unknown_roles() {
         ],
     };
 
-    let hydrated = loader.hydrate_region(&metadata, 101).unwrap();
+    let hydrated = loader.hydrate_region(&metadata, 101, &mut Default::default()).unwrap();
     assert_eq!(hydrated.start_key, b"split-start");
     assert_eq!(hydrated.end_key, b"split-end");
     assert_eq!(hydrated.leader_peer_id, Some(21));
@@ -756,7 +855,7 @@ fn split_child_without_old_store_keeps_client_go_first_usable_peer() {
         ],
     };
 
-    let hydrated = loader.hydrate_region(&metadata, 101).unwrap();
+    let hydrated = loader.hydrate_region(&metadata, 101, &mut Default::default()).unwrap();
     assert_eq!(hydrated.leader_peer_id, Some(22));
     assert_eq!(
         hydrated
@@ -792,7 +891,7 @@ fn epoch_hydration_never_preserves_a_witness_as_the_observed_leader() {
         ],
     };
 
-    let hydrated = loader.hydrate_region(&metadata, 103).unwrap();
+    let hydrated = loader.hydrate_region(&metadata, 103, &mut Default::default()).unwrap();
     assert_eq!(hydrated.leader_peer_id, Some(14));
     assert_eq!(
         hydrated

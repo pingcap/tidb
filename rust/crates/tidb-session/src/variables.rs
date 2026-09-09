@@ -1117,37 +1117,6 @@ pub(crate) fn statement_hints(stmt: &Stmt) -> Option<&[Hint]> {
     }
 }
 
-/// Fix 52592 as it will be seen by this statement's planner, computed before
-/// the statement-local overlay is installed.
-///
-/// The first direct-AST SET_VAR for this name owns the slot even when its
-/// value is invalid; in that case execution keeps the persistent value, so
-/// classification must do the same. Binding-injected hints are deliberately
-/// outside this helper and belong to `pkg/bindinfo`.
-pub(crate) fn effective_fix_52592(
-    stmt: &Stmt,
-    persistent: &tidb_planner::fix_control::OptimizerFixControl,
-) -> bool {
-    let persistent = persistent.get_bool_with_default(tidb_planner::fix_control::FIX_52592, false);
-    let Some(hints) = statement_hints(stmt) else {
-        return persistent;
-    };
-    for hint in hints {
-        let tidb_ast::HintKind::SetVar { var_name, value } = &hint.kind else {
-            continue;
-        };
-        if !var_name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL) {
-            continue;
-        }
-        return tidb_planner::fix_control::OptimizerFixControl::parse(value)
-            .map(|(overlay, _warnings)| {
-                overlay.get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
-            })
-            .unwrap_or(persistent);
-    }
-    persistent
-}
-
 fn dml_hints(dml: &DmlStmt) -> Option<&[Hint]> {
     match dml {
         DmlStmt::With { statement, .. } => dml_hints(statement),

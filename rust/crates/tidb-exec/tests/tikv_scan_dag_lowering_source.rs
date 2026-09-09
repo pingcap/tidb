@@ -102,6 +102,82 @@ fn timezone_and_empty_table_scan_match_go_wire() {
 }
 
 #[test]
+fn aggregate_dag_accepts_global_functions_or_group_only_dedup() {
+    use tidb_exec::dag_request::construct_grouped_aggregate_read_only_dag_req_with_conditions;
+    use tidb_proto::tipb::{Expr, ExprType};
+
+    let table = PhysicalTableScanPlan::init(1, 0, TiKvTableScanSpec::new(1, vec![]));
+    let encoded_int = |value| {
+        let mut bytes = Vec::new();
+        tidb_codec::encode_int(&mut bytes, value);
+        bytes
+    };
+    let count = Expr {
+        tp: Some(ExprType::Count as i32),
+        children: vec![Expr {
+            tp: Some(ExprType::Int64 as i32),
+            val: Some(encoded_int(1)),
+            ..Expr::default()
+        }],
+        ..Expr::default()
+    };
+    let group = Expr {
+        tp: Some(ExprType::ColumnRef as i32),
+        val: Some(encoded_int(0)),
+        ..Expr::default()
+    };
+    for streamed in [false, true] {
+        for (functions, groups) in [
+            (vec![count.clone()], vec![]),
+            (vec![], vec![group.clone()]),
+            (vec![count.clone()], vec![group.clone()]),
+        ] {
+            let offsets: Vec<u32> = (0..(functions.len() + groups.len()) as u32).collect();
+            let request = construct_grouped_aggregate_read_only_dag_req_with_conditions(
+                &default_context(),
+                TiKvScanPlan::Table(&table),
+                &[],
+                &functions,
+                &groups,
+                streamed,
+                &offsets,
+            )
+            .unwrap();
+            let executor = request.executors.last().unwrap();
+            assert_eq!(
+                executor.tp,
+                Some(if streamed {
+                    ExecType::TypeStreamAgg as i32
+                } else {
+                    ExecType::TypeAggregation as i32
+                })
+            );
+            let aggregate = executor.aggregation.as_ref().unwrap();
+            assert_eq!(aggregate.agg_func, functions);
+            assert_eq!(aggregate.group_by, groups);
+            assert_eq!(aggregate.streamed, None);
+            assert_eq!(request.output_offsets, offsets);
+            assert_eq!(
+                DagRequest::decode(request.encode_to_vec().as_slice()).unwrap(),
+                request
+            );
+        }
+        assert_eq!(
+            construct_grouped_aggregate_read_only_dag_req_with_conditions(
+                &default_context(),
+                TiKvScanPlan::Table(&table),
+                &[],
+                &[],
+                &[],
+                streamed,
+                &[],
+            ),
+            Err(DagRequestBuildError::EmptyAggregation),
+        );
+    }
+}
+
+#[test]
 fn table_scan_preserves_pre_resolved_column_and_common_handle_metadata() {
     // physical_table_scan.go:780-784,809-822 and tables.BuildTableScanFromInfos
     let column = ScanColumnInfo {

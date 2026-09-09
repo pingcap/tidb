@@ -20,6 +20,7 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }
+tokio.workspace = true
 
 [[test]]
 name = "all"

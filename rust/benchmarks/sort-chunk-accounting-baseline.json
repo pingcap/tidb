@@ -1,0 +1,297 @@
+{
+  "status": "Ready scoped correctness and reduced sort accounting CPU. Range TPS +0.37/+1.11/+0.98%; full read-only TPS +0.77/+0.95/-0.30% at 1/8/32 clients. Not a universal speedup; full sysbench/TPC-C goal remains active.",
+  "change": "Evaluate and commit complete sort-key chunks, then charge the retained chunk, row handles and keys in one tracker update. Failed key evaluation retains neither handles nor a charge.",
+  "go_source": [
+    "pkg/executor/sortexec/sort_partition.go:110-126",
+    "pkg/executor/sortexec/sort.go:729-757"
+  ],
+  "go_binary_revision": "23bff313186b8ceb61fcbe9faac43ae700e7fb14",
+  "go_source_verification": "go version -m identifies the running distribution's clean VCS revision; git diff from that revision to HEAD is empty for both cited sort source files.",
+  "binaries": {
+    "before": {
+      "pid": 88828,
+      "port": 53059,
+      "command": [
+        "/private/tmp/tidb-batching-candidate-52y9d9z2/tidb-server",
+        "--path",
+        "127.0.0.1:43379",
+        "--store",
+        "tikv",
+        "--host",
+        "127.0.0.1",
+        "--cluster-session",
+        "--lease-ms",
+        "2000",
+        "--max-connections",
+        "32",
+        "--load-privileges",
+        "--port",
+        "53059"
+      ],
+      "sha256": "1e94d4e0c0b9a336c2df4b26de8740b8388418d62e1d5b1e36dc99a9301b689a",
+      "grpc_connection_count_env": "4"
+    },
+    "after": {
+      "pid": 7428,
+      "port": 53060,
+      "command": [
+        "/private/tmp/tidb-batching-candidate-y32gx0kp/tidb-server",
+        "--path",
+        "127.0.0.1:43379",
+        "--store",
+        "tikv",
+        "--host",
+        "127.0.0.1",
+        "--cluster-session",
+        "--lease-ms",
+        "2000",
+        "--max-connections",
+        "32",
+        "--load-privileges",
+        "--port",
+        "53060"
+      ],
+      "sha256": "4460a3ffe62c9257f5879c7de7c14a826d779875ad9941700d4e2d18f522500a",
+      "grpc_connection_count_env": "4"
+    }
+  },
+  "method": {
+    "fixture": "perf_sysbench_locking_v2.sbtest1",
+    "driver": "/opt/homebrew/share/sysbench/oltp_read_only.lua",
+    "threads": [
+      1,
+      8,
+      32
+    ],
+    "events": {
+      "1": 3000,
+      "8": 12000,
+      "32": 24000
+    },
+    "pairs_per_concurrency": 3,
+    "seed": 1,
+    "prepared_statements": "auto",
+    "workload_writes": 0,
+    "ignored_errors": 0,
+    "reconnects": 0,
+    "setup_or_cleanup": false,
+    "limitations": [
+      "Shared local TiKV and host background activity; compare matched trials within each window.",
+      "The SQL Time Profiler captures are diagnostic, not throughput acceptance trials. Running CPU samples are not blocked wall time.",
+      "Point-triple final rotation shifted during host background activity; do not treat its Go ranking as stable.",
+      "COUNT/SUM and ten selected result sets are not a full-table content hash.",
+      "TPC-C mixed writes are not authorized by the current evidence and have not been run."
+    ]
+  },
+  "diagnostic": {
+    "point_triples": "/private/tmp/tidb-point-cost-triples/results.json",
+    "range_triples": "/private/tmp/tidb-range-cost-triples/results.json",
+    "rust_profile": "/private/tmp/tidb-range-sql-cpu32/after.stacks.json",
+    "go_profile": "/private/tmp/tidb-range-sql-cpu32/go.stacks.json",
+    "rust_running_samples": 102587,
+    "tracker_inclusive_cpu_percent": 4.0394981820308615,
+    "causal_source_difference": "Go charges each sort input chunk once; old Rust charges once for the chunk and once per key row. Tracker stacks enter the shared memory arbitrator.",
+    "paired_profiles": {
+      "before": {
+        "weighted_stacks": "/private/tmp/tidb-sort-charge-sql-cpu32/before.stacks.json",
+        "running_samples": 103182,
+        "sort_add_inclusive_cpu_percent": 4.321490182396154,
+        "sort_accounting_inclusive_cpu_percent": 3.4269543137368923,
+        "all_tracker_inclusive_cpu_percent": 3.727394312961563
+      },
+      "after": {
+        "weighted_stacks": "/private/tmp/tidb-sort-charge-sql-cpu32/after.stacks.json",
+        "running_samples": 97370,
+        "sort_add_inclusive_cpu_percent": 0.6993940638800452,
+        "sort_accounting_inclusive_cpu_percent": 0.07086371572352881,
+        "all_tracker_inclusive_cpu_percent": 0.23210434425387697
+      }
+    },
+    "paired_profile_workloads": "/private/tmp/tidb-sort-charge-sql-cpu32/results.json"
+  },
+  "measurements": {
+    "range_reads": {
+      "raw_results": "/private/tmp/tidb-sort-charge-range-pairs/results.json",
+      "medians": [
+        {
+          "threads": 1,
+          "before": {
+            "tps": 846.88,
+            "sql_cpu_ms_per_transaction": 0.7900000000000015,
+            "tikv_cpu_ms_per_transaction": 0.6100000000002789,
+            "commands_per_request_batch": 2.25232826554167,
+            "commands_per_transaction": 9.41
+          },
+          "after": {
+            "tps": 850.03,
+            "sql_cpu_ms_per_transaction": 0.7766666666666661,
+            "tikv_cpu_ms_per_transaction": 0.6433333333334303,
+            "commands_per_request_batch": 2.244299674267101,
+            "commands_per_transaction": 9.421666666666667
+          },
+          "tps_change_percent": 0.3719535235216398,
+          "sql_cpu_change_percent": -1.6877637130804257,
+          "paired_tps_changes_percent": [
+            1.963630256939286,
+            -1.8092909535452284,
+            2.4501700358964706
+          ]
+        },
+        {
+          "threads": 8,
+          "before": {
+            "tps": 4069.39,
+            "sql_cpu_ms_per_transaction": 1.2649999999999957,
+            "tikv_cpu_ms_per_transaction": 1.1283333333333303,
+            "commands_per_request_batch": 2.200614024795651,
+            "commands_per_transaction": 9.378166666666667
+          },
+          "after": {
+            "tps": 4114.38,
+            "sql_cpu_ms_per_transaction": 1.2266666666666666,
+            "tikv_cpu_ms_per_transaction": 1.168333333333294,
+            "commands_per_request_batch": 2.210449813396189,
+            "commands_per_transaction": 9.380083333333333
+          },
+          "tps_change_percent": 1.105571105251646,
+          "sql_cpu_change_percent": -3.0303030303027056,
+          "paired_tps_changes_percent": [
+            0.4880485931993084,
+            1.1947736638660889,
+            0.9854622836707794
+          ]
+        },
+        {
+          "threads": 32,
+          "before": {
+            "tps": 5979.02,
+            "sql_cpu_ms_per_transaction": 1.3362500000000022,
+            "tikv_cpu_ms_per_transaction": 0.8083333333333181,
+            "commands_per_request_batch": 3.079294008106036,
+            "commands_per_transaction": 9.366125
+          },
+          "after": {
+            "tps": 6037.78,
+            "sql_cpu_ms_per_transaction": 1.2708333333333333,
+            "tikv_cpu_ms_per_transaction": 0.8454166666666652,
+            "commands_per_request_batch": 2.9551015575668282,
+            "commands_per_transaction": 9.36
+          },
+          "tps_change_percent": 0.9827697515646161,
+          "sql_cpu_change_percent": -4.895541004053793,
+          "paired_tps_changes_percent": [
+            -0.04616141106736915,
+            1.162286102998955,
+            1.107406191377347
+          ]
+        }
+      ]
+    },
+    "read_only": {
+      "raw_results": "/private/tmp/tidb-sort-charge-readonly-pairs/results.json",
+      "medians": [
+        {
+          "threads": 1,
+          "before": {
+            "tps": 434.08,
+            "sql_cpu_ms_per_transaction": 1.3366666666666636,
+            "tikv_cpu_ms_per_transaction": 1.1400000000000243,
+            "commands_per_request_batch": 1.3665297500293392,
+            "commands_per_transaction": 19.411666666666665
+          },
+          "after": {
+            "tps": 437.44,
+            "sql_cpu_ms_per_transaction": 1.3166666666666629,
+            "tikv_cpu_ms_per_transaction": 1.1533333333333455,
+            "commands_per_request_batch": 1.365960743801653,
+            "commands_per_transaction": 19.394666666666666
+          },
+          "tps_change_percent": 0.7740508661997714,
+          "sql_cpu_change_percent": -1.4962593516209988,
+          "paired_tps_changes_percent": [
+            0.7562752285064755,
+            0.1799421451837091,
+            0.7740508661997714
+          ]
+        },
+        {
+          "threads": 8,
+          "before": {
+            "tps": 1975.19,
+            "sql_cpu_ms_per_transaction": 2.2749999999999964,
+            "tikv_cpu_ms_per_transaction": 2.101666666666612,
+            "commands_per_request_batch": 1.5429767306110536,
+            "commands_per_transaction": 19.382916666666667
+          },
+          "after": {
+            "tps": 1993.9,
+            "sql_cpu_ms_per_transaction": 2.2466666666666675,
+            "tikv_cpu_ms_per_transaction": 2.1083333333333485,
+            "commands_per_request_batch": 1.5452594369397803,
+            "commands_per_transaction": 19.384833333333333
+          },
+          "tps_change_percent": 0.9472506442418149,
+          "sql_cpu_change_percent": -1.2454212454210523,
+          "paired_tps_changes_percent": [
+            0.583656606115035,
+            1.1292963186359195,
+            0.25060880219118786
+          ]
+        },
+        {
+          "threads": 32,
+          "before": {
+            "tps": 3105.31,
+            "sql_cpu_ms_per_transaction": 2.2649999999999957,
+            "tikv_cpu_ms_per_transaction": 1.8312499999999925,
+            "commands_per_request_batch": 2.409505005907593,
+            "commands_per_transaction": 19.37525
+          },
+          "after": {
+            "tps": 3096.12,
+            "sql_cpu_ms_per_transaction": 2.2258333333333313,
+            "tikv_cpu_ms_per_transaction": 1.851250000000012,
+            "commands_per_request_batch": 2.4011070720423002,
+            "commands_per_transaction": 19.375333333333334
+          },
+          "tps_change_percent": -0.2959446882919936,
+          "sql_cpu_change_percent": -1.7292126563648758,
+          "paired_tps_changes_percent": [
+            -0.2804872943442005,
+            -0.6497944724150218,
+            0.14670876852076464
+          ]
+        }
+      ]
+    }
+  },
+  "validation": {
+    "profile": "Ready scoped correctness; ongoing performance goal",
+    "risks": "Quota actions now run once per complete input chunk, matching Go's admission boundary; retained byte totals, failed-key rollback, spill and cancellation are covered. No SQL/API configuration switch was added. Full-mix 32-client throughput regressed 0.30% and TiKV CPU increased; do not infer a universal speedup.",
+    "red": [
+      "Quota observer saw [266,548,744] instead of one charge per chunk [266,744].",
+      "Failed second key left two row handles instead of the one previously admitted row."
+    ],
+    "tests_passed": 15,
+    "commands": [
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib sort::tests::sort_partition_",
+      "cd rust && cargo test --offline --locked --release -j12 -p tidb-executor --lib sort::tests::",
+      "cd rust && cargo build --offline --locked --release -j12 -p tidb-server --bin tidb-server",
+      "GOMAXPROCS=12 GOFLAGS='-p=12' make -j12 lint",
+      "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-y32gx0kp/manifest.json --output /private/tmp/tidb-sort-charge-sql-cpu32 --case range_reads --profile \"Time Profiler\" --profile-target sql --profile-threads 32 --profile-servers before after",
+      "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-y32gx0kp/manifest.json --output /private/tmp/tidb-sort-charge-range-pairs --case range_reads --pair-only --pair-threads 1 8 32",
+      "python3 /private/tmp/tidb-batch-measure.py --manifest /private/tmp/tidb-batching-candidate-y32gx0kp/manifest.json --output /private/tmp/tidb-sort-charge-readonly-pairs --pair-only --pair-threads 1 8 32",
+      "python3 /private/tmp/tidb-shared-admission-results.py --candidate-port 53060 --control-port 53059 --output /private/tmp/tidb-sort-charge-post-results.json"
+    ],
+    "logs": [
+      "/private/tmp/tidb-sort-charge-red.log",
+      "/private/tmp/tidb-sort-charge-final-tests.log",
+      "/private/tmp/tidb-sort-charge-build.log",
+      "/private/tmp/tidb-sort-charge-lint.log"
+    ],
+    "selected_results": "/private/tmp/tidb-sort-charge-post-results.json",
+    "fixture_row_count": 100013,
+    "fixture_sum_k": 5011271921,
+    "unverified": "Mixed-write TPC-C, multi-TiKV topology, and full rewrite completion."
+  }
+}

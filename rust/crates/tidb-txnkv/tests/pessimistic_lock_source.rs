@@ -167,6 +167,7 @@ impl RegionRecoveryLoader for SingleRegion {
         &mut self,
         _metadata: &RegionMetadata,
         _leader_store_id: u64,
+        _resolved_stores: &mut std::collections::BTreeMap<u64, Option<tidb_txnkv::region::StoreMetadata>>,
     ) -> Result<RegionLocation, RegionLoadError> {
         Err(RegionLoadError::new(
             "unexpected-hydration",
@@ -226,6 +227,9 @@ struct ScriptedTikv {
     /// `lock_version` is this timestamp. Every later Prewrite succeeds.
     prewrite_blocked_by: Arc<Mutex<Option<u64>>>,
     recorded: Arc<Mutex<Recorded>>,
+    /// Hold rollback replies until every region in the round is published.
+    rollback_batch_width: usize,
+    rollback_responses: Arc<Mutex<Vec<KvrpcPessimisticRollbackResponse>>>,
 }
 
 impl ScriptedTikv {
@@ -234,6 +238,8 @@ impl ScriptedTikv {
             locks: Arc::new(Mutex::new(locks)),
             prewrite_blocked_by: Arc::new(Mutex::new(None)),
             recorded: Arc::new(Mutex::new(Recorded::default())),
+            rollback_batch_width: 1,
+            rollback_responses: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -394,9 +400,11 @@ impl Tikv for ScriptedTikv {
         let mut inbound = request.into_inner();
         let (responses, response_rx) = tokio::sync::mpsc::channel(8);
         tokio::spawn(async move {
+            let mut rollback_packets = Vec::new();
             while let Ok(Some(packet)) = inbound.message().await {
                 for (request_id, request) in packet.request_ids.into_iter().zip(packet.requests) {
                     let Some(cmd) = request.cmd else { continue };
+                    let rollback = matches!(&cmd, RequestCmd::PessimisticRollback(_));
                     let response = match service.answer(cmd) {
                         Ok(response) => response,
                         Err(status) => {
@@ -412,7 +420,17 @@ impl Tikv for ScriptedTikv {
                         transport_layer_load: 0,
                         ..BatchCommandsResponse::default()
                     };
-                    if responses.send(Ok(packet)).await.is_err() {
+                    if rollback {
+                        rollback_packets.push(packet);
+                        if rollback_packets.len() < service.rollback_batch_width {
+                            continue;
+                        }
+                        for packet in rollback_packets.drain(..) {
+                            if responses.send(Ok(packet)).await.is_err() {
+                                return;
+                            }
+                        }
+                    } else if responses.send(Ok(packet)).await.is_err() {
                         return;
                     }
                 }
@@ -456,7 +474,14 @@ impl ScriptedTikv {
                     .pessimistic_rollbacks
                     .push(request);
                 Ok(ResponseCmd::PessimisticRollback(
-                    KvrpcPessimisticRollbackResponse::default().encode_to_vec(),
+                    {
+                        let mut responses = self.rollback_responses.lock().unwrap();
+                        if responses.is_empty() {
+                            KvrpcPessimisticRollbackResponse::default()
+                        } else {
+                            responses.remove(0)
+                        }
+                    }.encode_to_vec(),
                 ))
             }
             RequestCmd::Prewrite(body) => {
@@ -1243,6 +1268,105 @@ fn commit_declares_a_for_update_ts_constraint_for_a_lock_taken_with_conflict() {
 // -----------------------------------------------------------------------------
 // Releasing locks and committing
 // -----------------------------------------------------------------------------
+
+#[test]
+fn rollback_publishes_every_region_before_waiting_for_a_response() {
+    let mut service = ScriptedTikv::new(Vec::new());
+    service.rollback_batch_width = 2;
+    let recorded = Arc::clone(&service.recorded);
+    let server = TestServer::start(service);
+    let mut transaction = transaction(SingleRegion::new_split(server.store_address(), SECOND_KEY));
+    let keys = vec![PRIMARY_KEY.to_vec(), SECOND_KEY.to_vec()];
+    transaction
+        .acquire_locks(&keys, &no_presumption(), LockWaitTime::AlwaysWait, &call())
+        .unwrap();
+
+    transaction
+        .pessimistic_rollback(
+            &keys,
+            &UnaryCallContext::with_timeout(Duration::from_secs(3)),
+        )
+        .expect("both regions must be published before either response is needed");
+    assert!(transaction.locked_keys().is_empty());
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.pessimistic_rollbacks.len(), 2);
+    assert!(recorded
+        .pessimistic_rollbacks
+        .iter()
+        .all(|request| request.start_version == START_TS && request.for_update_ts == START_TS));
+}
+
+#[test]
+fn rollback_remembers_failed_keys_and_forgets_successful_sibling_regions() {
+    let service = ScriptedTikv::new(Vec::new());
+    service
+        .rollback_responses
+        .lock()
+        .unwrap()
+        .push(KvrpcPessimisticRollbackResponse {
+            errors: vec![KvrpcKeyError {
+                abort: "scripted rollback rejection".to_owned(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+    let recorded = Arc::clone(&service.recorded);
+    let server = TestServer::start(service);
+    let mut transaction = transaction(SingleRegion::new_split(server.store_address(), SECOND_KEY));
+    let keys = vec![PRIMARY_KEY.to_vec(), SECOND_KEY.to_vec()];
+    transaction
+        .acquire_locks(&keys, &no_presumption(), LockWaitTime::AlwaysWait, &call())
+        .unwrap();
+    transaction
+        .pessimistic_rollback(&keys, &call())
+        .expect_err("one region rejected rollback");
+    assert_eq!(transaction.locked_keys(), vec![PRIMARY_KEY.to_vec()]);
+    assert_eq!(recorded.lock().unwrap().pessimistic_rollbacks.len(), 2);
+    transaction
+        .pessimistic_rollback(&transaction.locked_keys(), &call())
+        .unwrap();
+    assert!(transaction.locked_keys().is_empty());
+}
+
+#[test]
+fn rollback_retries_only_the_region_that_requested_recovery() {
+    let service = ScriptedTikv::new(Vec::new());
+    service
+        .rollback_responses
+        .lock()
+        .unwrap()
+        .push(KvrpcPessimisticRollbackResponse {
+            region_error: Some(errorpb::Error {
+                recovery_in_progress: Some(errorpb::RecoveryInProgress {
+                    region_id: REGION_ID,
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+    let recorded = Arc::clone(&service.recorded);
+    let server = TestServer::start(service);
+    let mut transaction = transaction(SingleRegion::new_split(server.store_address(), SECOND_KEY));
+    let keys = vec![PRIMARY_KEY.to_vec(), SECOND_KEY.to_vec()];
+    transaction
+        .acquire_locks(&keys, &no_presumption(), LockWaitTime::AlwaysWait, &call())
+        .unwrap();
+    transaction.pessimistic_rollback(&keys, &call()).unwrap();
+    assert!(transaction.locked_keys().is_empty());
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(
+        recorded
+            .pessimistic_rollbacks
+            .iter()
+            .map(|r| r.keys.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            vec![PRIMARY_KEY.to_vec()],
+            vec![SECOND_KEY.to_vec()],
+            vec![PRIMARY_KEY.to_vec()]
+        ]
+    );
+}
 
 /// A statement that fails after locking must not leave its locks behind.
 #[test]

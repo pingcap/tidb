@@ -31,6 +31,59 @@ fn two_sessions_sharing_globals() -> (Session, Session, vars::GlobalSysvars) {
     (first, second, globals)
 }
 
+#[test]
+fn builtin_globals_stay_live_under_the_statement_selected_owner() {
+    let (mut writer, mut reader, globals) = two_sessions_sharing_globals();
+    let query = reader.statement_context(false);
+    let dml = reader.statement_context(true);
+    let score = |ctx: &tidb_executor::StmtContext| {
+        tidb_executor::driver::run_select_on(
+            "SELECT VALIDATE_PASSWORD_STRENGTH('!Abc87654321')",
+            &Catalog::default(),
+            ctx,
+        )
+        .unwrap()
+    };
+    assert_eq!(score(&query), vec![vec![Datum::Int(0)]]);
+    writer
+        .run("SET GLOBAL validate_password.enable = ON")
+        .unwrap();
+    for ctx in [&query, &dml, &query.clone()] {
+        assert_eq!(
+            score(ctx),
+            vec![vec![Datum::Int(100)]],
+            "Go evaluates through the live accessor"
+        );
+    }
+
+    let scratch = vars::GlobalSysvars::from_cluster_rows(globals.overrides());
+    scratch
+        .set("validate_password.dictionary", "8765".to_owned())
+        .unwrap();
+    let live = reader.swap_globals(scratch.clone());
+    let staged = reader.statement_context(false);
+    reader.swap_globals(live);
+    assert_eq!(score(&staged), vec![vec![Datum::Int(75)]]);
+    assert_eq!(
+        score(&reader.statement_context(false)),
+        vec![vec![Datum::Int(100)]]
+    );
+
+    writer
+        .run("SET GLOBAL validate_password.enable = OFF")
+        .unwrap();
+    assert_eq!(score(&query), vec![vec![Datum::Int(0)]]);
+    assert_eq!(
+        score(&staged),
+        vec![vec![Datum::Int(75)]],
+        "the scratch statement did not capture the live table"
+    );
+    scratch
+        .set("validate_password.enable", "OFF".to_owned())
+        .unwrap();
+    assert_eq!(score(&staged), vec![vec![Datum::Int(0)]]);
+}
+
 /// The MySQL inheritance rule, captured end to end through `SET`/`SELECT`
 /// rather than the unit-level `vars` module: `SET GLOBAL` on one session is
 /// visible to a peer's `@@global.x` immediately, but the peer's own plain

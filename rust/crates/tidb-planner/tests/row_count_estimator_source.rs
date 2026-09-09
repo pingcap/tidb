@@ -1044,6 +1044,74 @@ fn empty_histogram_with_positive_ndv_estimates_the_whole_table() {
 }
 
 #[test]
+fn selectivity_estimates_only_conditions_left_uncovered_by_statistics() {
+    for (mask, partial, expected, calls) in [
+        (0b111, false, 0.2, vec![]),
+        (0b111, true, 0.16, vec![]),
+        (0b101, false, 0.05, vec![1]),
+        (0, false, 0.015625, vec![0, 1, 2]),
+    ] {
+        let mut nodes = vec![StatsNode {
+            selectivity: 0.2,
+            partial_cover: partial,
+            ..StatsNode::new(StatsNodeType::Index, 1, mask, 3)
+        }];
+        let mut evaluated = Vec::new();
+        let result = combine_selectivity(
+            &mut nodes,
+            3,
+            1.0,
+            10000,
+            SelectivityDefaults::default(),
+            |index| {
+                evaluated.push(index);
+                ConditionKind::Disjunction(Some(0.25))
+            },
+        );
+        assert_eq!(
+            evaluated, calls,
+            "covered predicates must not run recursive fallback estimation"
+        );
+        assert_close(
+            result,
+            expected,
+            "coverage product and partial-cover default are unchanged",
+        );
+    }
+    for (count, rows) in [(0, 10000), (3, 0)] {
+        assert_eq!(
+            combine_selectivity(
+                &mut [],
+                count,
+                0.3,
+                rows,
+                SelectivityDefaults::default(),
+                |_| panic!("empty input must not estimate any fallback"),
+            ),
+            1.0
+        );
+    }
+    let mut nodes = [StatsNode {
+        selectivity: 0.5,
+        ..StatsNode::new(StatsNodeType::Index, 1, i64::MAX & !(1_i64 << 62), 1)
+    }];
+    let mut evaluated = Vec::new();
+    let result = combine_selectivity(
+        &mut nodes,
+        63,
+        1.0,
+        10000,
+        SelectivityDefaults::default(),
+        |index| {
+            evaluated.push(index);
+            ConditionKind::Other
+        },
+    );
+    assert_eq!(evaluated, vec![62]);
+    assert_close(result, 0.4, "last usable mask bit keeps the default tail");
+}
+
+#[test]
 fn selectivity_combines_greedy_cover_and_leftover_defaults() {
     // Two column nodes, one bit each, both fully covered: the result is the
     // plain product of their selectivities.
@@ -1060,10 +1128,11 @@ fn selectivity_combines_greedy_cover_and_leftover_defaults() {
     let conditions = [ConditionKind::Other, ConditionKind::Other];
     let combined = combine_selectivity(
         &mut nodes,
-        &conditions,
+        conditions.len(),
         1.0,
         REALTIME,
         SelectivityDefaults::default(),
+        |index| conditions[index],
     );
     assert_close(combined, 0.125, "product of covered nodes");
 
@@ -1084,10 +1153,11 @@ fn selectivity_combines_greedy_cover_and_leftover_defaults() {
     ];
     let combined = combine_selectivity(
         &mut nodes,
-        &conditions,
+        conditions.len(),
         1.0,
         REALTIME,
         SelectivityDefaults::default(),
+        |index| conditions[index],
     );
     assert_close(combined, 0.2, "index node covers both conditions");
 
@@ -1103,10 +1173,11 @@ fn selectivity_combines_greedy_cover_and_leftover_defaults() {
     ];
     let combined = combine_selectivity(
         &mut nodes,
-        &conditions,
+        conditions.len(),
         1.0,
         REALTIME,
         SelectivityDefaults::default(),
+        |index| conditions[index],
     );
     assert_close(combined, 0.2 * 0.8, "leftover condition takes 0.8");
 
@@ -1123,10 +1194,11 @@ fn selectivity_combines_greedy_cover_and_leftover_defaults() {
     ];
     let combined = combine_selectivity(
         &mut nodes,
-        &conditions,
+        conditions.len(),
         1.0,
         REALTIME,
         SelectivityDefaults::default(),
+        |index| conditions[index],
     );
     assert_close(combined, 1.0 / REALTIME as f64, "one-row floor");
 }

@@ -513,6 +513,9 @@ pub struct KvTable {
     /// global read at each key/value call: one entry must never combine a
     /// legacy key with a new-collation restored-data value, or vice versa.
     use_new_collation: bool,
+    /// Whether every loaded column is public. Point-read planning must not
+    /// bypass the ordinary reader while a column is in a DDL transition.
+    all_columns_public: bool,
     /// Go `TableInfo.ForeignKeys`: the constraints this table DECLARES, i.e.
     /// the child side. The parent side is found by scanning the catalog for
     /// the tables whose foreign keys name this one, as Go's
@@ -576,9 +579,9 @@ pub struct KvTable {
 
 /// The staged-write mark, interior-mutable ON PURPOSE: a staged-undo image
 /// walks SHARED `Arc<TableEntry>` handles to reset it without detaching
-/// entries, which is only safe because a write DETACHES its entry
-/// (`Arc::make_mut`) before ever setting the flag -- a cell still shared
-/// between catalogs can hold only `false`.
+/// entries. A write DETACHES its entry (`Arc::make_mut`) before setting the
+/// flag, so another transaction cannot reset that writer's private mark.
+/// Committed snapshots may retain marks until a fresh transaction clears them.
 ///
 /// `Clone` snapshots the VALUE rather than sharing the cell, so a detached
 /// copy's future flips never leak back into the table it was cloned from.
@@ -786,6 +789,7 @@ impl KvTable {
             cache_status: tidb_model::TableCacheStatusType::DISABLE,
             temp_table_type: tidb_model::TempTableType::NONE,
             use_new_collation,
+            all_columns_public: true,
             foreign_keys: Vec::new(),
             max_foreign_key_id: 0,
             partition: None,
@@ -812,6 +816,16 @@ impl KvTable {
     #[must_use]
     pub const fn use_new_collation(&self) -> bool {
         self.use_new_collation
+    }
+
+    /// Carries the source catalog's column publication state into planning.
+    pub fn set_all_columns_public(&mut self, public: bool) {
+        self.all_columns_public = public;
+    }
+
+    /// Go isPointGetConvertableSchema's public-column prerequisite.
+    pub const fn all_columns_public(&self) -> bool {
+        self.all_columns_public
     }
 
     /// Go `session.HasDirtyContent(tid)`: whether the open transaction has
@@ -984,6 +998,19 @@ impl KvTable {
                     KvTableError::Decode(error)
                 }
             })
+    }
+
+    /// Encodes the selected row's lock identity without rereading storage.
+    pub(crate) fn row_lock_key(
+        &self,
+        handle: &TableHandle,
+        row: &[Datum],
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<Vec<u8>, KvTableError> {
+        Ok(encode_row_key_with_handle(
+            self.record_physical_id(row, ctx)?,
+            &handle.record_handle(),
+        ))
     }
 
     /// Verifies the partition selected for one INSERT row.
@@ -2071,7 +2098,7 @@ impl KvTable {
                 *physical_id,
                 &handle.record_handle(),
             ));
-            self.write_index_entries(row, handle, *physical_id, zone)?;
+            self.write_index_entries(row, handle, *physical_id, zone, false)?;
             self.store
                 .set(key, value)
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -2434,8 +2461,8 @@ impl KvTable {
 
     /// [`Self::insert_row_with_row_id_checked`] for a normal clustered INSERT
     /// whose caller already proved every record key absent in one batch read.
-    /// Secondary-index tables never reach this method (the proof helper
-    /// refuses them), so their unique-entry checks remain eager.
+    /// The batch proof helper refuses secondary-index tables; their ordinary
+    /// insert path chooses record and index duplicate checking together.
     pub(crate) fn insert_row_with_row_id_checked_without_primary_duplicate_check(
         &mut self,
         row: &[Datum],
@@ -2515,18 +2542,8 @@ impl KvTable {
         // this transaction, and the reinsert overwrites it without any
         // presumption -- Go's own `len(v) == 0` arm.
         let duplicated = if lazy_dup_check {
-            match self.store.get_local(&key) {
-                Ok(value) => !value.is_empty(),
-                Err(StorageError::NotFound) => {
-                    self.store.mark_presume_key_not_exists_with_hint(
-                        &key,
-                        &duplicate_value,
-                        &duplicate_key,
-                    );
-                    false
-                }
-                Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
-            }
+            self.check_insert_key(&key, &duplicate_value, &duplicate_key, true)?;
+            false
         } else if skip_primary_duplicate_check {
             false
         } else {
@@ -2540,7 +2557,7 @@ impl KvTable {
         }
         // Go writes the row first, then its index entries; a duplicate on a
         // unique index aborts the statement.
-        self.write_index_entries(row, &handle, physical_id, &zone)?;
+        self.write_index_entries(row, &handle, physical_id, &zone, lazy_dup_check)?;
         self.store
             .set(key, value)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -3004,23 +3021,23 @@ impl KvTable {
                         // Restore every entry the failed update disturbed, so a
                         // rejected statement leaves the index as it found it.
                         self.delete_index_entries(old, handle, old_physical_id, &zone)?;
-                        self.write_index_entries(old, handle, old_physical_id, &zone)?;
+                        self.write_index_entries(old, handle, old_physical_id, &zone, false)?;
                         return Err(error);
                     }
                 }
                 Some(old) => {
                     self.delete_index_entries(old, handle, old_physical_id, &zone)?;
                     if let Err(error) =
-                        self.write_index_entries(row, &new_handle, new_physical_id, &zone)
+                        self.write_index_entries(row, &new_handle, new_physical_id, &zone, false)
                     {
                         // Restore the entries the failed update removed, so a
                         // rejected statement leaves the index as it found it.
-                        self.write_index_entries(old, handle, old_physical_id, &zone)?;
+                        self.write_index_entries(old, handle, old_physical_id, &zone, false)?;
                         return Err(error);
                     }
                 }
                 None => {
-                    self.write_index_entries(row, &new_handle, new_physical_id, &zone)?;
+                    self.write_index_entries(row, &new_handle, new_physical_id, &zone, false)?;
                 }
             }
         }

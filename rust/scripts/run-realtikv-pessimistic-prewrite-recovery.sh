@@ -1,18 +1,13 @@
 #!/usr/bin/env bash
 
-# The cluster proof for TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY (cde12e0033).
+# Real-TiKV prewrite lock recovery and live-owner safety checks.
 #
 # Three claims against a real TiKV, none of which a scripted store can answer:
 #   * an EXPIRED pessimistic lock is resolved by an optimistic Prewrite and the
-#     writer commits (the availability gap the gate holds shut),
+#     writer commits,
 #   * a LIVE pessimistic lock is refused, NOT rolled back, and its owner still
-#     commits its own value afterwards (the safety claim the gate exists for),
-#   * with the gate unset the same fixture reproduces the recorded refusal.
-#
-# The gate is read once per process (std::sync::LazyLock), so the first two
-# claims and the third CANNOT share a `cargo test` invocation: this runs the
-# test binary twice against one playground, once with the variable set and once
-# without.
+#     commits its own value afterwards,
+#   * an orphaned secondary becomes readable and writable again.
 #
 # Starts an owned TiUP playground (PD + 3 TiKV, no TiDB), runs the ignored
 # Rust proofs against it, then unconditionally tears the playground down and
@@ -33,8 +28,7 @@ KV_HIGHEST_PORT=$((20182 + PORT_OFFSET))
 PD_ADDR="127.0.0.1:${PD_PORT}"
 TAG_DIR="${TIUP_HOME:-${HOME}/.tiup}/data/${TAG}"
 PLAYGROUND_LOG="${TMPDIR:-/tmp}/${TAG}-playground.log"
-RUST_ON_LOG="${TMPDIR:-/tmp}/${TAG}-rust-gate-on.log"
-RUST_OFF_LOG="${TMPDIR:-/tmp}/${TAG}-rust-gate-off.log"
+RUST_LOG="${TMPDIR:-/tmp}/${TAG}-rust.log"
 PLAYGROUND_PID=
 RUST_PID=
 STORE_ADDRESSES=
@@ -111,9 +105,9 @@ cleanup() {
   trap - EXIT INT TERM
   cleanup_resources || cleanup_status=$?
   if [[ "${cleanup_status}" -eq 0 ]] && [[ "${original_status}" -eq 0 ]]; then
-    rm -f -- "${PLAYGROUND_LOG}" "${RUST_ON_LOG}" "${RUST_OFF_LOG}"
+    rm -f -- "${PLAYGROUND_LOG}" "${RUST_LOG}"
   else
-    echo "prewrite-recovery retained logs: ${PLAYGROUND_LOG} ${RUST_ON_LOG} ${RUST_OFF_LOG}" >&2
+    echo "prewrite-recovery retained logs: ${PLAYGROUND_LOG} ${RUST_LOG}" >&2
   fi
   if [[ "${cleanup_status}" -ne 0 ]]; then
     exit "${cleanup_status}"
@@ -173,65 +167,38 @@ fi
 
 cd "${RUST_ROOT}"
 
-# Pass 1: the gate is ON. Both claims run in one process, single-threaded so
-# the two fixtures cannot interleave their PD timestamps.
+# Run sequentially so fixtures cannot interleave their PD timestamps.
 PESSIMISTIC_PREWRITE_RECOVERY_PD_ADDR="${PD_ADDR}" \
-  TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY=1 \
-  CARGO_BUILD_JOBS=12 cargo test --offline --locked -j12 -p tidb-txnkv \
+  CARGO_BUILD_JOBS=12 cargo test --offline --locked --release -j12 -p tidb-txnkv \
     --test all \
     pessimistic_prewrite_recovery_realtikv_source:: \
-    -- --ignored --nocapture --test-threads 1 \
-    --skip the_gate_off_run_reproduces_the_recorded_refusal >"${RUST_ON_LOG}" 2>&1 &
+    -- --ignored --nocapture --test-threads 1 >"${RUST_LOG}" 2>&1 &
 RUST_PID=$!
 wait "${RUST_PID}" || {
   RUST_PID=
-  echo "gate-ON pessimistic prewrite recovery proof failed" >&2
-  tail -220 "${RUST_ON_LOG}" >&2
+  echo "pessimistic prewrite recovery proof failed" >&2
+  tail -220 "${RUST_LOG}" >&2
   exit 1
 }
 RUST_PID=
 
-# Pass 2: the gate is OFF, in a NEW process -- the flag is read once per
-# process, so this cannot be folded into pass 1.
-env -u TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY \
-  PESSIMISTIC_PREWRITE_RECOVERY_PD_ADDR="${PD_ADDR}" \
-  CARGO_BUILD_JOBS=12 cargo test --offline --locked -j12 -p tidb-txnkv \
-    --test all \
-    pessimistic_prewrite_recovery_realtikv_source::the_gate_off_run_reproduces_the_recorded_refusal \
-    -- --ignored --exact --nocapture --test-threads 1 >"${RUST_OFF_LOG}" 2>&1 &
-RUST_PID=$!
-wait "${RUST_PID}" || {
-  RUST_PID=
-  echo "gate-OFF pessimistic prewrite recovery proof failed" >&2
-  tail -220 "${RUST_OFF_LOG}" >&2
-  exit 1
-}
-RUST_PID=
-
-RESOLVED=$(grep 'pessimistic_prewrite_recovery status=passed claim=expired_resolved ' "${RUST_ON_LOG}" | tail -1 || true)
-SURVIVED=$(grep 'pessimistic_prewrite_recovery status=passed claim=live_lock_survived ' "${RUST_ON_LOG}" | tail -1 || true)
-GATED=$(grep 'pessimistic_prewrite_recovery status=passed claim=gate_off_refusal ' "${RUST_OFF_LOG}" | tail -1 || true)
-PHASES=$(cat "${RUST_ON_LOG}" "${RUST_OFF_LOG}" | grep 'pessimistic_prewrite_recovery phase=' || true)
+RESOLVED=$(grep 'pessimistic_prewrite_recovery status=passed claim=expired_resolved ' "${RUST_LOG}" | tail -1 || true)
+SURVIVED=$(grep 'pessimistic_prewrite_recovery status=passed claim=live_lock_survived ' "${RUST_LOG}" | tail -1 || true)
+PHASES=$(grep 'pessimistic_prewrite_recovery phase=' "${RUST_LOG}" || true)
 
 if [[ "${RESOLVED}" != *"cluster_id="* ]] \
   || [[ "${RESOLVED}" != *"lock_start_ts="* ]] \
   || [[ "${RESOLVED}" != *"commit_ts="* ]]; then
   echo "receipt omitted the expired-lock recovery evidence" >&2
-  tail -220 "${RUST_ON_LOG}" >&2
+  tail -220 "${RUST_LOG}" >&2
   exit 1
 fi
 if [[ "${SURVIVED}" != *"holder_commit_ts="* ]] \
   || [[ "${PHASES}" != *"phase=refused key=live"* ]]; then
   echo "receipt omitted the live-lock survival evidence, which is the safety claim" >&2
-  tail -220 "${RUST_ON_LOG}" >&2
-  exit 1
-fi
-if [[ "${GATED}" != *"outside bounded recovery"* ]]; then
-  echo "receipt omitted the gate-off refusal evidence" >&2
-  tail -220 "${RUST_OFF_LOG}" >&2
+  tail -220 "${RUST_LOG}" >&2
   exit 1
 fi
 
 echo "pessimistic prewrite recovery proved: ${RESOLVED}"
 echo "pessimistic prewrite recovery safety proved: ${SURVIVED}"
-echo "pessimistic prewrite recovery gate proved: ${GATED}"

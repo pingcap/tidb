@@ -398,7 +398,7 @@ where
     F::Transport: tidb_distsql::query_runtime::QueryTransport
         + tidb_exec::real_tikv_read::TransportEvidenceSource
         + 'static,
-    <F::Transport as tidb_distsql::query_runtime::QueryTransport>::Response: 'static,
+    <F::Transport as tidb_distsql::query_runtime::QueryTransport>::Response: Send + 'static,
     S: tidb_txnkv::lock::TimestampSource + Clone + Send + Sync + 'static,
     C: StoreWriteClient,
     L: StoreWriteLoader,
@@ -523,7 +523,7 @@ where
     F::Transport: tidb_distsql::query_runtime::QueryTransport
         + tidb_exec::real_tikv_read::TransportEvidenceSource
         + 'static,
-    <F::Transport as tidb_distsql::query_runtime::QueryTransport>::Response: 'static,
+    <F::Transport as tidb_distsql::query_runtime::QueryTransport>::Response: Send + 'static,
     S: tidb_txnkv::lock::TimestampSource + Clone + Send + Sync + 'static,
     C: StoreWriteClient,
     L: StoreWriteLoader,
@@ -602,7 +602,7 @@ where
     T: tidb_distsql::query_runtime::QueryTransport
         + tidb_exec::real_tikv_read::TransportEvidenceSource
         + 'static,
-    T::Response: 'static,
+    T::Response: Send + 'static,
     S: tidb_txnkv::lock::TimestampSource + Clone + Send + Sync + 'static,
     C: StoreWriteClient,
     L: StoreWriteLoader,
@@ -1078,7 +1078,7 @@ where
     T: tidb_distsql::query_runtime::QueryTransport
         + tidb_exec::real_tikv_read::TransportEvidenceSource
         + 'static,
-    T::Response: 'static,
+    T::Response: Send + 'static,
     S: tidb_txnkv::lock::TimestampSource + Clone + Send + Sync + 'static,
     C: StoreWriteClient,
     L: StoreWriteLoader,

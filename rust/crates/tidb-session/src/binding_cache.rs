@@ -76,10 +76,9 @@
 //!   Neither ported cache in the workspace fits: `tidb_util::sieve::Sieve` is
 //!   the SIEVE policy with no reject-on-oversize and no per-drop callback, and
 //!   `tidb_util::kvcache` is only a memory-tracker surface, not a store.
-//! * **Locking.** Go guards both maps with a `sync.RWMutex` and the store is
-//!   internally concurrent. This crate's session is single-threaded (`Rc` /
-//!   `RefCell` throughout [`crate::Session`]), so the mutex is dropped and
-//!   mutation takes `&mut self`.
+//! * **Locking.** Cache construction takes `&mut self`. Cluster sessions pin
+//!   immutable images through [`SharedBindingCache`]; the storage owner
+//!   serializes reloads and publishes a complete image under one short lock.
 //! * **`pkg/metrics`.** `metrics.BindingCacheMemUsage` /
 //!   `BindingCacheMemLimit` / `BindingCacheNumBindings` are dropped by name;
 //!   this workspace has no Prometheus registry.
@@ -93,16 +92,13 @@
 //! * **`p.ParseOneStmt(BindSQL, Charset, Collation)`** becomes
 //!   [`tidb_parser::parse`]; this tier's parser takes no charset/collation
 //!   pair.
-//! * **`BindingCacheUpdater` / `bindingCacheUpdater`** (Go lines 39-164) is
-//!   SKIPPED: it is storage plumbing over `util.DestroyableSessionPool`,
-//!   `readBindingsFromStorage` and `pickCachedBinding` (both in other files of
-//!   the package), plus a `lastUpdateTime` watermark and the metrics gauges
-//!   above. This tier has no session pool and no background reload -- global
-//!   bindings are read straight from `mysql.bind_info` by
-//!   [`crate::Session`]'s binding arm.
+//! * **Storage refresh** lives in `tidb-server::cluster_binding_seam`. It
+//!   reads committed bindings outside user transactions on Go's binding lease
+//!   and after local binding-record commits. It reloads the full table; Go's
+//!   incremental watermark and metrics are not implemented here.
 
 use std::collections::{HashMap, VecDeque};
-use std::rc::Rc;
+use std::sync::{Arc, RwLock};
 
 use tidb_executor::DriverError;
 
@@ -375,7 +371,31 @@ impl BindingStore for CostLruStore {
 /// Go's `rejectOrEvict` hook, narrowed to the half the tests observe: the
 /// `bindingCacheTestKey` callback. The `bindingLogger().Warn` beside it is
 /// dropped (see the module narrowings).
-pub type EvictCallback = Rc<dyn Fn(&Binding)>;
+pub type EvictCallback = Arc<dyn Fn(&Binding) + Send + Sync>;
+
+/// One immutable global-binding image shared by a node's sessions.
+#[derive(Clone)]
+pub struct SharedBindingCache(Arc<RwLock<Arc<BindingCache>>>);
+
+impl Default for SharedBindingCache {
+    fn default() -> Self {
+        Self(Arc::new(RwLock::new(Arc::new(BindingCache::new(
+            tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_BINDING_CACHE,
+        )))))
+    }
+}
+
+impl SharedBindingCache {
+    /// Pin the published image without holding a lock during planning.
+    pub fn load(&self) -> Arc<BindingCache> {
+        Arc::clone(&self.0.read().unwrap_or_else(|error| error.into_inner()))
+    }
+
+    /// Publish a fully loaded image. The storage owner serializes refreshes.
+    pub fn publish(&self, cache: BindingCache) {
+        *self.0.write().unwrap_or_else(|error| error.into_inner()) = Arc::new(cache);
+    }
+}
 
 /// Go `bindingCache` (lines 292-299): the digest bi-map plus the cost-bounded
 /// store.
@@ -391,6 +411,35 @@ pub struct BindingCache<S: BindingStore = CostLruStore> {
 }
 
 impl BindingCache<CostLruStore> {
+    /// Build a committed image, resolving tombstones with Go's latest-update rule.
+    pub fn from_storage_rows(rows: Vec<Vec<tidb_datatype::Datum>>, max_cost: i64) -> Self {
+        let mut bindings = rows
+            .iter()
+            .filter_map(|row| Binding::from_storage_row(row, tidb_parser::SqlMode::default()))
+            .collect::<Vec<_>>();
+        bindings.sort_by(|left, right| {
+            (&left.update_time, &left.create_time).cmp(&(&right.update_time, &right.create_time))
+        });
+        let mut latest = std::collections::BTreeMap::<String, Binding>::new();
+        for binding in bindings {
+            let replace = latest.get(&binding.sql_digest).is_none_or(|old| {
+                binding.update_time > old.update_time
+                    || (binding.update_time == old.update_time
+                        && old.status == crate::binding::STATUS_DELETED)
+            });
+            if replace {
+                latest.insert(binding.sql_digest.clone(), binding);
+            }
+        }
+        let mut cache = Self::new(max_cost);
+        for binding in latest.into_values() {
+            if binding.status != crate::binding::STATUS_DELETED {
+                cache.insert_prepared(binding);
+            }
+        }
+        cache
+    }
+
     /// Go `newBindingCache(ctx, maxCost)`. The `ctx` argument exists in Go
     /// only to smuggle the test callback in; use
     /// [`BindingCache::set_evict_callback`] for that.
@@ -477,7 +526,7 @@ impl<S: BindingStore> BindingCache<S> {
     /// Go's note survives verbatim in behaviour: due to eviction the store may
     /// hold fewer digests than the bi-map, and that is acceptable because the
     /// optimizer reloads on a cache miss.
-    pub fn set_binding(&mut self, sql_digest: &str, binding: Binding) -> Result<(), DriverError> {
+    pub fn set_binding(&mut self, sql_digest: &str, mut binding: Binding) -> Result<(), DriverError> {
         let stmt = tidb_parser::parse(&binding.bind_sql).map_err(|err| {
             DriverError::unsupported(format!(
                 "cannot parse binding SQL {:?}: {}",
@@ -485,13 +534,19 @@ impl<S: BindingStore> BindingCache<S> {
                 err.compatibility_message(&binding.bind_sql)
             ))
         })?;
-        let no_db_digest = crate::binding::no_db_digest(&stmt);
-        self.digest_bi_map.add(&no_db_digest, sql_digest);
-        let dropped = self.store.set(sql_digest, binding);
+        binding.no_db_digest = crate::binding::no_db_digest(&stmt);
+        binding.sql_digest = sql_digest.to_owned();
+        self.insert_prepared(binding);
+        Ok(())
+    }
+
+    fn insert_prepared(&mut self, binding: Binding) {
+        let digest = binding.sql_digest.clone();
+        self.digest_bi_map.add(&binding.no_db_digest, &digest);
+        let dropped = self.store.set(&digest, binding);
         for binding in &dropped {
             self.reject_or_evict(binding);
         }
-        Ok(())
     }
 
     /// Go `RemoveBinding` (lines 401-406).
@@ -544,7 +599,7 @@ impl<S: BindingStore> BindingCache<S> {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
 
@@ -560,6 +615,79 @@ mod tests {
             sql_digest: sql_digest.to_owned(),
             ..Binding::default()
         }
+    }
+
+    #[test]
+    fn stored_binding_versions_publish_an_immutable_image() {
+        use tidb_datatype::Datum;
+        let row = |status: &str, updated: &str| {
+            [
+                "select * from test.t",
+                "SELECT * FROM test.t",
+                "test",
+                status,
+                "2026-09-07 00:00:00",
+                updated,
+                "utf8mb4",
+                "utf8mb4_bin",
+                "manual",
+                "digest",
+            ]
+            .into_iter()
+            .map(|value| Datum::new_string(value.to_owned()))
+            .collect::<Vec<_>>()
+        };
+        let old = "2026-09-07 00:00:00";
+        let new = "2026-09-07 00:00:01";
+        for reversed in [false, true] {
+            for (versions, expected) in [
+                (vec![row("enabled", old), row("deleted", new)], None),
+                (
+                    vec![row("deleted", old), row("enabled", new)],
+                    Some("enabled"),
+                ),
+                (
+                    vec![row("deleted", new), row("enabled", new)],
+                    Some("enabled"),
+                ),
+                (
+                    vec![row("enabled", old), row("disabled", new)],
+                    Some("disabled"),
+                ),
+            ] {
+                let mut versions = versions;
+                if reversed {
+                    versions.reverse();
+                }
+                let cache = BindingCache::from_storage_rows(versions, 1_000_000);
+                assert_eq!(
+                    cache.get_binding("digest").map(|binding| binding.status),
+                    expected
+                );
+            }
+        }
+        let shared = SharedBindingCache::default();
+        shared.publish(BindingCache::from_storage_rows(
+            vec![row("enabled", old)],
+            1_000_000,
+        ));
+        let pinned = shared.load();
+        shared.publish(BindingCache::from_storage_rows(
+            vec![row("deleted", new)],
+            1_000_000,
+        ));
+        assert_eq!(pinned.size(), 1);
+        assert_eq!(shared.load().size(), 0);
+        assert_eq!(
+            BindingCache::from_storage_rows(vec![row("enabled", old)], 1).size(),
+            0
+        );
+        let mut invalid = row("enabled", new);
+        invalid[1] = Datum::new_string("this is not SQL".to_owned());
+        assert_eq!(
+            BindingCache::from_storage_rows(vec![invalid], 1_000_000).size(),
+            0
+        );
     }
 
     /// Go `TestCrossDBBindingCache`.
@@ -705,8 +833,8 @@ mod tests {
     /// Go `TestBindingCacheEvictLog`.
     #[test]
     fn binding_cache_evict_log() {
-        let callback_count = Rc::new(Cell::new(0usize));
-        let counter = Rc::clone(&callback_count);
+        let callback_count = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&callback_count);
 
         let large = binding(
             &format!("SELECT * FROM t1 WHERE c = '{}'", "a".repeat(200)),
@@ -714,15 +842,15 @@ mod tests {
         );
         let one = binding("SELECT * FROM t1", "");
         let mut cache = BindingCache::new(binding_size(&one) * 3 - 1);
-        cache.set_evict_callback(Rc::new(move |_binding: &Binding| {
-            counter.set(counter.get() + 1);
+        cache.set_evict_callback(Arc::new(move |_binding: &Binding| {
+            counter.fetch_add(1, Ordering::Relaxed);
         }));
 
         cache.set_binding("0", large.clone()).unwrap();
-        assert_eq!(callback_count.get(), 1); // large binding, reject directly
+        assert_eq!(callback_count.load(Ordering::Relaxed), 1); // large binding, reject directly
         cache.set_binding("0", large).unwrap();
-        assert_eq!(callback_count.get(), 2); // large binding, reject directly
-        callback_count.set(0); // reset callback count
+        assert_eq!(callback_count.load(Ordering::Relaxed), 2); // large binding, reject directly
+        callback_count.store(0, Ordering::Relaxed); // reset callback count
 
         cache.set_binding("1", one.clone()).unwrap(); // insert the first binding four times
         cache.set_binding("1", one.clone()).unwrap();
@@ -730,23 +858,23 @@ mod tests {
         cache.set_binding("1", one.clone()).unwrap();
         assert_eq!(cache.size(), 1);
         assert_eq!(cache.mem_usage(), binding_size(&one));
-        assert_eq!(callback_count.get(), 0); // duplicated binding should not trigger eviction
+        assert_eq!(callback_count.load(Ordering::Relaxed), 0); // duplicated binding should not trigger eviction
 
         cache.set_binding("2", one.clone()).unwrap(); // insert the second binding
         cache.set_binding("2", one.clone()).unwrap();
-        assert_eq!(callback_count.get(), 0); // cache size is enough
+        assert_eq!(callback_count.load(Ordering::Relaxed), 0); // cache size is enough
 
         cache.set_binding("3", one.clone()).unwrap(); // insert the third binding, triggers eviction
-        assert_eq!(callback_count.get(), 1);
+        assert_eq!(callback_count.load(Ordering::Relaxed), 1);
 
         for i in 1..=10 {
             cache.set_binding(&format!("3-{i}"), one.clone()).unwrap();
-            assert_eq!(callback_count.get(), 1 + i);
+            assert_eq!(callback_count.load(Ordering::Relaxed), 1 + i);
         }
 
-        assert_eq!(callback_count.get(), 11);
+        assert_eq!(callback_count.load(Ordering::Relaxed), 11);
         cache.close(); // close doesn't trigger eviction log
-        assert_eq!(callback_count.get(), 11);
+        assert_eq!(callback_count.load(Ordering::Relaxed), 11);
     }
 
     /// New coverage: the bi-map's own `Del` contract when the last

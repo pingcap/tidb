@@ -131,6 +131,8 @@ pub enum EvalError {
     /// mode input -- but a strict `INSERT` does, so the condition needs an
     /// error spelling as well as a warning one.
     TruncatedWrongValue(String),
+    /// An original datatype error, retaining its registered SQL identity.
+    Conversion(tidb_error::terror::TerrorError),
     /// Go `expression.ErrCutValueGroupConcat` (1260) raised when
     /// `GROUP_CONCAT` exceeds `group_concat_max_len` in a statement whose
     /// truncate policy is `Error`. Reads and non-strict writes instead append
@@ -462,6 +464,12 @@ pub trait Columns {
     /// Returns the referenced column, matched by its final name segment.
     fn get(&self, path: &[String]) -> Option<Datum>;
 
+    /// Go `ParamValues.GetParamValue`: this execution's typed prepared value.
+    /// Absence is an invalid/unbound marker, never SQL NULL or a cached value.
+    fn param_value(&self, _order: usize) -> Result<Datum, EvalError> {
+        Err(EvalError::Unsupported("unbound prepared parameter"))
+    }
+
     /// The statement's connection charset/collation used by implicit casts.
     /// Go reads this from `BuildContext.GetCharsetInfo`; keeping it on the
     /// evaluation context prevents a cast built for one session from silently
@@ -607,6 +615,16 @@ pub trait Columns {
     /// is Go's own zero value for a fresh `StmtCtx`.
     fn truncate_level(&self) -> ErrorLevel {
         ErrorLevel::Warn
+    }
+
+    /// Datatype flags for evaluation. Sessionless resolvers use SELECT's
+    /// flags; statement contexts supply their own statement-class policy.
+    fn type_flags(&self) -> tidb_datatype::ConversionFlags {
+        tidb_datatype::DEFAULT_STATEMENT_FLAGS
+            .with_ignore_truncate_err(self.truncate_level() == ErrorLevel::Ignore)
+            .with_truncate_as_warning(self.truncate_level() == ErrorLevel::Warn)
+            .with_ignore_zero_in_date_err(true)
+            .with_ignore_invalid_date_err(self.date_modes().allow_invalid_dates)
     }
 
     /// Whether the session SQL mode contains either strict-mode flag.

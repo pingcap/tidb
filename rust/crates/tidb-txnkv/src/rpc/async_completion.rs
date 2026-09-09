@@ -12,18 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Source-shaped completion boundary for client-go asynchronous requests.
+//! Go's explicit async callbacks and caller-driven completion queues.
 //!
-//! The production dispatcher is deliberately not implemented by the unary
-//! transport. Pinned client-go starts `SendRequestAsync` only through one
-//! BatchCommands connection; the later batch-stream owner must implement this
-//! contract without taking over RegionCache or RequestSelector policy.
+//! These callback semantics are separate from ordinary BatchCommands replies,
+//! which use native one-result channels. The pending-request interface permits
+//! nonblocking response consumption without moving RegionCache or selector
+//! policy into the transport.
 
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 use std::mem;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, Once, Weak};
+use std::task::Waker;
 
 use crate::client::{DirectUnaryRequest, DirectUnaryResponse};
 
@@ -332,15 +333,25 @@ pub struct CompletionRunLoop {
 /// non-blocking scan and the following wait cannot be lost.
 #[derive(Clone, Debug)]
 pub struct CompletionNotifier {
-    run_loop: CompletionRunLoop,
-    ready: Arc<Mutex<VecDeque<u64>>>,
+    queue: Arc<NotificationQueue>,
+}
+
+#[derive(Debug, Default)]
+struct NotificationQueue {
+    ready: Mutex<CompletionReady>,
+    changed: tokio::sync::Notify,
+}
+
+#[derive(Debug, Default)]
+struct CompletionReady {
+    tokens: VecDeque<u64>,
+    waker: Option<Waker>,
 }
 
 impl Default for CompletionNotifier {
     fn default() -> Self {
         Self {
-            run_loop: CompletionRunLoop::new(),
-            ready: Arc::new(Mutex::new(VecDeque::new())),
+            queue: Arc::new(NotificationQueue::default()),
         }
     }
 }
@@ -354,38 +365,61 @@ impl CompletionNotifier {
 
     /// Publishes one wakeup without blocking the completion producer.
     pub fn notify(&self, token: u64) {
-        self.ready
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push_back(token);
-        self.run_loop.append(|| {});
+        let waker = {
+            let mut ready = self.queue.ready.lock().unwrap_or_else(|p| p.into_inner());
+            ready.tokens.push_back(token);
+            ready.waker.clone()
+        };
+        if let Some(waker) = waker {
+            waker.wake();
+        } else {
+            self.queue.changed.notify_one();
+        }
+    }
+
+    /// Attaches an independent driver without transferring completion ownership.
+    /// A completion queued before registration must also wake the new driver.
+    pub fn set_waker(&self, waker: Waker) {
+        let pending = {
+            let mut ready = self.queue.ready.lock().unwrap_or_else(|p| p.into_inner());
+            ready.waker = Some(waker.clone());
+            !ready.tokens.is_empty()
+        };
+        if pending {
+            waker.wake();
+        }
     }
 
     /// Returns the oldest already-published completion without waiting.
     pub fn try_take(&self) -> Result<Option<u64>, CompletionError> {
-        let outcome = self.run_loop.execute_ready();
-        match outcome.error() {
-            Some(error) => Err(error),
-            None => Ok(self
-                .ready
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .pop_front()),
-        }
+        Ok(self
+            .queue
+            .ready
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .tokens
+            .pop_front())
     }
 
     /// Waits for the oldest completion token, caller cancellation, or the call
     /// deadline.
     pub fn wait(&self, call: &UnaryCallContext) -> Result<u64, CompletionError> {
-        loop {
-            if let Some(token) = self.try_take()? {
-                return Ok(token);
-            }
-            let outcome = self.run_loop.execute_with_call(call);
-            if let Some(error) = outcome.error() {
-                return Err(error);
-            }
+        if let Some(token) = self.try_take()? {
+            return Ok(token);
         }
+        super::execution::wait_with_call(
+            async {
+                loop {
+                    if let Some(token) = self.try_take()? {
+                        return Ok(token);
+                    }
+                    // Notify retains a publication between the queue check
+                    // and await; the queued token remains the only payload.
+                    self.queue.changed.notified().await;
+                }
+            },
+            call,
+        )?
     }
 }
 
@@ -645,47 +679,14 @@ impl CompletionCancellation {
 type CompletionTransform<T, E> = Box<dyn FnOnce(Result<T, E>) -> Result<T, E> + Send + 'static>;
 type CompletionTerminal<T, E> = Box<dyn FnOnce(Result<T, E>) + Send + 'static>;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CallbackPhase {
-    Open,
-    Executing,
-    Complete,
-}
-
 struct CallbackInner<T, E> {
-    phase: CallbackPhase,
     transforms: Vec<CompletionTransform<T, E>>,
     terminal: Option<CompletionTerminal<T, E>>,
 }
 
 struct CallbackState<T, E> {
     inner: Mutex<CallbackInner<T, E>>,
-    complete: Condvar,
-}
-
-struct OnceBodyGuard<T, E> {
-    state: Arc<CallbackState<T, E>>,
-}
-
-type ClaimedOnceBody<T, E> = (
-    Vec<CompletionTransform<T, E>>,
-    CompletionTerminal<T, E>,
-    OnceBodyGuard<T, E>,
-);
-
-impl<T, E> Drop for OnceBodyGuard<T, E> {
-    fn drop(&mut self) {
-        {
-            let mut inner = self
-                .state
-                .inner
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            debug_assert_eq!(inner.phase, CallbackPhase::Executing);
-            inner.phase = CallbackPhase::Complete;
-        }
-        self.state.complete.notify_all();
-    }
+    once: Once,
 }
 
 /// Once-only callback whose scheduled form is driven by a completion queue.
@@ -717,11 +718,10 @@ where
             run_loop,
             state: Arc::new(CallbackState {
                 inner: Mutex::new(CallbackInner {
-                    phase: CallbackPhase::Open,
                     transforms: Vec::new(),
                     terminal: Some(Box::new(terminal)),
                 }),
-                complete: Condvar::new(),
+                once: Once::new(),
             }),
         }
     }
@@ -745,7 +745,7 @@ where
             .inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if inner.phase != CallbackPhase::Open {
+        if inner.terminal.is_none() {
             return Err(CompletionError::AlreadyCompleted);
         }
         inner.transforms.push(Box::new(transform));
@@ -756,56 +756,37 @@ where
     /// Concurrent duplicate attempts wait for this full delivery to finish and
     /// then return silently, matching Go's `sync.Once.Do` ordering guarantee.
     pub fn invoke(&self, result: Result<T, E>) {
-        let Some((transforms, terminal, _once_body)) = self.begin_once_body() else {
-            return;
-        };
-        Self::deliver(result, transforms, terminal);
+        self.once(|transforms, terminal| Self::deliver(result, transforms, terminal));
     }
 
     /// Claims the callback and queues its terminal delivery for later driving.
     /// Concurrent duplicate attempts wait until the winning task is appended
     /// and then return silently, matching Go's `sync.Once.Do` ordering guarantee.
     pub fn schedule(&self, result: Result<T, E>) {
-        let Some((transforms, terminal, _once_body)) = self.begin_once_body() else {
-            return;
-        };
-        self.run_loop.append_task(Box::new(move || {
-            Self::deliver(result, transforms, terminal);
-        }));
+        self.once(|transforms, terminal| {
+            self.run_loop.append_task(Box::new(move || {
+                Self::deliver(result, transforms, terminal);
+            }));
+        });
     }
 
-    fn begin_once_body(&self) -> Option<ClaimedOnceBody<T, E>> {
-        let mut inner = self
-            .state
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        loop {
-            match inner.phase {
-                CallbackPhase::Open => break,
-                CallbackPhase::Executing => {
-                    inner = self
-                        .state
-                        .complete
-                        .wait(inner)
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
-                }
-                CallbackPhase::Complete => return None,
+    fn once(&self, action: impl FnOnce(Vec<CompletionTransform<T, E>>, CompletionTerminal<T, E>)) {
+        self.state.once.call_once_force(|state| {
+            // Go sync.Once considers a panicked body complete. Clear native
+            // poison without running the action again; duplicate callers still
+            // wait for the winning body before returning.
+            if state.is_poisoned() {
+                return;
             }
-        }
-        inner.phase = CallbackPhase::Executing;
-        let transforms = mem::take(&mut inner.transforms);
-        let terminal = inner
-            .terminal
-            .take()
-            .expect("unfulfilled callback must retain its terminal action");
-        Some((
-            transforms,
-            terminal,
-            OnceBodyGuard {
-                state: Arc::clone(&self.state),
-            },
-        ))
+            let (transforms, terminal) = {
+                let mut inner = self.state.inner.lock().unwrap_or_else(|p| p.into_inner());
+                (
+                    mem::take(&mut inner.transforms),
+                    inner.terminal.take().unwrap(),
+                )
+            };
+            action(transforms, terminal);
+        });
     }
 
     fn deliver(
@@ -825,7 +806,7 @@ struct PullState<T, E> {
     result: Option<Result<T, E>>,
     cancel_listeners: Vec<Box<dyn FnOnce() + Send + 'static>>,
     completion_announced: bool,
-    notifier: Option<(CompletionNotifier, u64)>,
+    wake: Option<(CompletionNotifier, u64)>,
 }
 
 /// Cloneable source-side authority for one asynchronous request.
@@ -943,15 +924,15 @@ where
     }
 
     fn announce_completion(&self) {
-        let notifier = {
+        let wake = {
             let mut inner = self
                 .inner
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             inner.completion_announced = true;
-            inner.notifier.clone()
+            inner.wake.take()
         };
-        if let Some((notifier, token)) = notifier {
+        if let Some((notifier, token)) = wake {
             notifier.notify(token);
         }
     }
@@ -979,7 +960,9 @@ impl<T, E> CompletionPull<T, E> {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let notify_now = inner.completion_announced;
-            inner.notifier = Some((notifier.clone(), token));
+            if !notify_now {
+                inner.wake = Some((notifier.clone(), token));
+            }
             notify_now
         };
         if notify_now {
@@ -1044,6 +1027,7 @@ impl<T, E> CompletionPull<T, E> {
                 .inner
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+            inner.wake = None;
             if inner.cancelled {
                 Vec::new()
             } else {
@@ -1084,7 +1068,7 @@ where
         result: None,
         cancel_listeners: Vec::new(),
         completion_announced: false,
-        notifier: None,
+        wake: None,
     }));
     let terminal_inner = Arc::clone(&inner);
     let callback = CompletionCallback::new(run_loop.clone(), move |result| {
@@ -1134,8 +1118,16 @@ impl PendingRequest for CompletionPull<DirectUnaryResponse, DirectUnaryClientErr
 
 /// One in-flight source request returned by [`AsyncRequestDispatcher::begin`].
 pub trait PendingRequest {
+    /// Reads already-published identity without waiting for transport admission.
+    /// Implementations with deferred admission must override this separately
+    /// from the explicit receipt barrier in [`Self::publication`].
+    fn try_publication(&self) -> Option<AsyncRequestPublication> {
+        self.publication()
+    }
+
     /// Returns publication evidence after the concrete transport has bound
     /// this pending request to exactly one physical stream.
+    /// This explicit observation may wait for admission, but not a response.
     ///
     /// Synchronous or injected pending implementations which cannot prove a
     /// transport publication remain `None`; callers must not invent identity.

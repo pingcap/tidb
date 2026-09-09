@@ -57,6 +57,7 @@ use crate::rpc::UnaryCallContext;
 
 use super::command_client::{
     PublishedCommand, TransactionCommandClient, TransactionPessimisticLockRequest,
+    TransactionPessimisticRollbackRequest,
 };
 use super::coordinator::{
     classify_key_error, PessimisticPrewritePlan, RealOptimisticTransaction, RecoveryPhase,
@@ -683,61 +684,79 @@ where
             return Ok(());
         }
         let mut queue = VecDeque::from(self.group(keys).map_err(unwrap_transaction_cause)?);
-        while let Some(batch) = queue.pop_front() {
-            let request = KvrpcPessimisticRollbackRequest {
-                start_version: self.start_ts(),
-                for_update_ts: self.rollback_for_update_ts(),
-                keys: batch.keys().to_vec(),
-                ..KvrpcPessimisticRollbackRequest::default()
-            };
-            let published = match self.two_pc.runtime().client().try_lock() {
-                Ok(mut client) => client.publish_pessimistic_rollback(
-                    batch.address(),
-                    &request,
-                    batch.context(),
-                    call,
-                ),
-                Err(_) => PublishedCommand::BeforePublication(
-                    "TiKV client is already borrowed while publishing PessimisticRollback"
+        let mut first_error = None;
+        while !queue.is_empty() {
+            let batches: Vec<_> = queue.drain(..).collect();
+            let requests: Vec<_> = batches
+                .iter()
+                .map(|batch| TransactionPessimisticRollbackRequest {
+                    address: batch.address(),
+                    context: batch.context().clone(),
+                    request: KvrpcPessimisticRollbackRequest {
+                        start_version: self.start_ts(),
+                        for_update_ts: self.rollback_for_update_ts(),
+                        keys: batch.keys().to_vec(),
+                        ..KvrpcPessimisticRollbackRequest::default()
+                    },
+                })
+                .collect();
+            let published =
+                match self.two_pc.runtime().client().try_lock() {
+                    Ok(mut client) => client.publish_pessimistic_rollbacks(&requests, call),
+                    Err(_) => return Err(TransactionCause::Transport {
+                        detail:
+                            "TiKV client is already borrowed while publishing PessimisticRollback"
+                                .to_owned(),
+                    }),
+                };
+            if published.len() != batches.len() {
+                return Err(TransactionCause::InvalidResponse {
+                    detail: "PessimisticRollback response count does not match the region round"
                         .to_owned(),
-                ),
-            };
-            match published {
-                PublishedCommand::BeforePublication(error)
-                | PublishedCommand::AfterPublication { error, .. } => {
-                    return Err(TransactionCause::Transport {
-                        detail: format!("PessimisticRollback failed: {error}"),
-                    });
-                }
-                PublishedCommand::Response(response) => {
-                    if let Some(region_error) = response.response.region_error.as_ref() {
-                        self.two_pc.recover_region_error(
-                            RecoveryPhase::Cleanup,
-                            region_error,
-                            batch.attempt(),
-                            call,
-                        )?;
-                        for regrouped in self
-                            .group(batch.keys())
-                            .map_err(unwrap_transaction_cause)?
-                            .into_iter()
-                            .rev()
-                        {
-                            queue.push_front(regrouped);
+                });
+            }
+            // Every region has already been published. Account for every
+            // result before returning an error; successful siblings no longer
+            // own locks, and only region-error batches need to be regrouped.
+            for (batch, published) in batches.iter().zip(published) {
+                let result = (|| -> Result<(), TransactionCause> {
+                    match published {
+                        PublishedCommand::BeforePublication(error)
+                        | PublishedCommand::AfterPublication { error, .. } => {
+                            return Err(TransactionCause::Transport {
+                                detail: format!("PessimisticRollback failed: {error}"),
+                            });
                         }
-                        continue;
-                    }
-                    if let Some(error) = response.response.errors.first() {
-                        return Err(classify_key_error(error));
-                    }
-                    for key in batch.keys() {
-                        self.locked_keys.remove(key);
-                        self.locked_with_conflict.remove(key);
-                    }
+                        PublishedCommand::Response(response) => {
+                            if let Some(region_error) = response.response.region_error.as_ref() {
+                                self.two_pc.recover_region_error(
+                                    RecoveryPhase::Cleanup,
+                                    region_error,
+                                    batch.attempt(),
+                                    call,
+                                )?;
+                                queue.extend(
+                                    self.group(batch.keys()).map_err(unwrap_transaction_cause)?,
+                                );
+                                return Ok(());
+                            }
+                            if let Some(error) = response.response.errors.first() {
+                                return Err(classify_key_error(error));
+                            }
+                            for key in batch.keys() {
+                                self.locked_keys.remove(key);
+                                self.locked_with_conflict.remove(key);
+                            }
+                        }
+                    };
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    first_error.get_or_insert(error);
                 }
             }
         }
-        Ok(())
+        first_error.map_or(Ok(()), Err)
     }
 
     /// Commits through the shared two-phase commit engine.

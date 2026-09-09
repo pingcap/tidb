@@ -244,9 +244,9 @@ impl SpilledRun {
     }
 
     /// Appends the cursor's row to `req` and advances past it.
-    pub fn take_head_into(&mut self, req: &mut Chunk) {
+    pub fn take_head_into(&mut self, req: &mut Chunk, columns: Option<&[usize]>) {
         let chunk = self.chunk.as_ref().expect("positioned chunk");
-        req.append_row(chunk.get_row(self.row));
+        req.append_row_by_col_idxs(chunk.get_row(self.row), columns);
         self.row += 1;
         self.head_key = None;
     }

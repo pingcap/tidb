@@ -12,15 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! BatchCommands scheduling authority.
-//!
-//! This first rotation owns pure priority, grouping, policy, and observation
-//! state. The exact streaming wire and connection lifecycle are added only
-//! after this authority and asynchronous completion are integrated.
+//! BatchCommands scheduling, streaming, and request-completion authority.
 
 mod batch_get;
 mod batch_rollback;
 mod commit;
+mod completion;
 mod coprocessor;
 mod get;
 mod inflight;
@@ -35,8 +32,12 @@ mod transport;
 mod txn_heart_beat;
 pub(crate) mod wire;
 
-pub(in crate::rpc) use transport::{BatchStreamEvent, BatchTransportState};
+pub(in crate::rpc) use transport::{
+    BatchStreamEvent, BatchSubmission, BatchTransportState, MAX_BATCH_COMMANDS,
+};
 
+pub use completion::BatchCommandCompletion;
+pub(in crate::rpc) use completion::{reply_pair, BatchReply};
 pub use coprocessor::BatchCoprocessorPending;
 
 pub(in crate::rpc) use batch_get::entry as batch_get_entry;
@@ -64,7 +65,7 @@ pub use scheduler::{
     BatchTrigger, ConsumedBatchGroups, ScheduledEntry, BATCH_POLICY_BASIC, BATCH_POLICY_CUSTOM,
     BATCH_POLICY_POSITIVE, BATCH_POLICY_STANDARD, DEFAULT_BATCH_POLICY, HIGH_TASK_PRIORITY,
 };
-pub use transport::{BatchCommandCompletion, BatchCommandEntry, BatchPublicationReceipt};
+pub use transport::{BatchCommandEntry, BatchPublicationReceipt};
 pub use wire::{
     BatchCommandTag, BatchEnvelopeKind, BatchWireError, BatchWireRequest, BatchWireResponse,
     OpaqueBatchCommand,

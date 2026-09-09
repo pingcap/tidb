@@ -1,0 +1,784 @@
+{
+  "status": "WIP: release, live regression and fixed-data measurements verified; mixed-workload validation and Ready remain.",
+  "change": "Reuse tuple-IN and OR-derived correlated point prefixes inside AND; preserve adjacency until appending suffix ranges, and retain written residual predicates for prefix indexes. Shared reads, writes, selectivity and partition consumers use the same ranger.",
+  "files_changed_in_increment": [
+    "rust/crates/tidb-executor/src/index_range.rs",
+    "rust/crates/tidb-executor/src/remote_scan.rs"
+  ],
+  "go_source": [
+    "pkg/util/ranger/detacher.go: extractBestCNFItemRanges and detachCNFCondAndBuildRangeForIndex suffix append",
+    "pkg/util/ranger/detacher.go: getCNFItemRangeResult and compareCNFItemRangeResult point-prefix preference"
+  ],
+  "before": {
+    "sha256": "9760a17f8483f0eb2da3e160bac6ddb33fd7097720260f5b26b3285045e928ed",
+    "port": 53046,
+    "pid": 17917,
+    "saved": "/private/tmp/tidb-cnf-range-before-7YsQrg/tidb-server"
+  },
+  "before_live_plan": {
+    "command": "python3 /private/tmp/tidb-cnf-range-plan.py --ports 45000 53046",
+    "log": "/private/tmp/tidb-cnf-range-before-plan.jsonl",
+    "finding": "Go plans Batch_Point_Get for the ten complete keys; Rust plans a full table scan for UPDATE and SELECT. The exact range UPDATE previously fails with memory error 8175 on both 84903e6c and 9760a17f while Go succeeds."
+  },
+  "validation": {
+    "profile": "WIP",
+    "command_cwd": "rust",
+    "passed": 99,
+    "known_failures": 1,
+    "preexisting_ignored": 2,
+    "commands": [
+      {
+        "command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib index_range::",
+        "log": "/private/tmp/tidb-cnf-range-ranger-final.log",
+        "passed": 15,
+        "failed": 0,
+        "ignored": 2
+      },
+      {
+        "command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib access_cost::tests::",
+        "log": "/private/tmp/tidb-cnf-range-cost-final.log",
+        "passed": 23,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib handle_range::",
+        "log": "/private/tmp/tidb-cnf-range-handle-final.log",
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib partition_pruning::tests::",
+        "log": "/private/tmp/tidb-cnf-range-partition-final.log",
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib driver::tests::point_get::",
+        "log": "/private/tmp/tidb-cnf-range-point-final.log",
+        "passed": 21,
+        "failed": 1,
+        "ignored": 0
+      },
+      {
+        "command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib remote_scan::tests::",
+        "log": "/private/tmp/tidb-cnf-range-remote-final.log",
+        "passed": 24,
+        "failed": 0,
+        "ignored": 0
+      }
+    ],
+    "controls": [
+      {
+        "command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib composite_cnf_items_supply_point_prefixes_for_suffix_ranges",
+        "log": "/private/tmp/tidb-cnf-range-red.log",
+        "result": "Original code returns no range instead of the two fully constrained keys."
+      },
+      {
+        "command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib composite_cnf_prefix_index_retains_written_residuals",
+        "log": "/private/tmp/tidb-cnf-range-residual-red-runtime.log",
+        "result": "Old residual mapping drops the original row-IN for a prefix index; runtime assertion fails. Initial fixture borrow compile error in residual-red.log was corrected and is not counted as red evidence."
+      },
+      {
+        "command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib residual_selection_uses_logical_rows_over_access_rows",
+        "log": "/private/tmp/tidb-cnf-range-estimate-control.log",
+        "result": "Disabling all new range selection and restoring old row-IN residual behavior still produces the same 9.49 vs 53.35 estimate failure. Control restored; expected value not changed."
+      }
+    ],
+    "final_control_restoration": {
+      "command": "cargo test --offline --locked --release -j12 -p tidb-executor --lib composite_cnf",
+      "log": "/private/tmp/tidb-cnf-range-composite-final.log",
+      "passed": 3,
+      "note": "Included in ranger/remote test counts, not additional tests."
+    },
+    "bounded_write_evidence": "The composite_cnf_writes_fetch_only_the_matching_keys fixture returns correct UPDATE/DELETE results and records two snapshot rows fetched rather than all sixteen."
+  },
+  "remaining": "Next: implement actual range-to-point task conversion at the shared access-path boundary, with storage-operation regressions and Go eligibility rules, then measure the combined change on mixed sysbench/TPC-C. Preserve 53acb9f4 as the before control. Existing estimate failure, two ignored range cases and dirty aggregate EXPLAIN placement remain open. No consistent mixed-workload win established; WIP only, no Ready/lint, package completion, commit or push.",
+  "after": {
+    "sha256": "53acb9f453cc0f1632bf0eef002854c9557a158cc2e366b75be134aea118b4ed",
+    "port": 53047,
+    "session": 15449,
+    "log": "/private/tmp/tidb-cnf-range-server.log",
+    "pid": 30944,
+    "saved": "/private/tmp/tidb-point-conversion-before-vYY819/tidb-server"
+  },
+  "release": {
+    "command": "cargo build --offline --locked --release -j12 -p tidb-server",
+    "log": "/private/tmp/tidb-cnf-range-build.log",
+    "result": "Finished release profile in 1m39s; warnings remain."
+  },
+  "live": {
+    "command": "python3 /private/tmp/tidb-dirty-order-live.py --ports 45000 53047 --report-mutations",
+    "log": "/private/tmp/tidb-cnf-range-live.jsonl",
+    "result": "All 11 result cases match Go, with 12 successful mutations across both endpoints. The exact formerly failing UPDATE and DELETE each affect ten rows on Go and Rust. Every transaction rolled back; memory quota unchanged.",
+    "plan_command": "python3 /private/tmp/tidb-cnf-range-plan.py --ports 45000 53047",
+    "plan_log": "/private/tmp/tidb-cnf-range-after-plan.jsonl",
+    "plan_result": "Rust now derives ten complete-key TableRangeScan ranges rather than a full table scan. Go uses Batch_Point_Get; no point-task parity claim.",
+    "timing_note": "Per-mutation diagnostic timings are single executions, not a throughput baseline.",
+    "extra_checks": [
+      {
+        "command": "python3 /private/tmp/tidb-dirty-order-live.py --ports 45000 53047 --database perf_tpcc_locking_v1 --hash-factor 1000 --stream-factor 1",
+        "log": "/private/tmp/tidb-cnf-range-stream-live.jsonl",
+        "result": "Four streaming-favoring result cases match Go after the original range mutations, rolled back."
+      },
+      {
+        "command": "python3 /private/tmp/tidb-distinct-live.py --ports 45000 53047",
+        "log": "/private/tmp/tidb-cnf-range-distinct-live.jsonl",
+        "result": "48 cases per endpoint: 45 successful query results plus three matching Go errors. Rust retains six EXPLAIN errors (three shared invalid queries and three empty-point refusals); no plan parity claim."
+      },
+      {
+        "command": "python3 /private/tmp/tidb-cop-handoff-dirty-plan.py --ports 45000 53047",
+        "log": "/private/tmp/tidb-cnf-range-dirty-plan.jsonl",
+        "result": "Clean/dirty SUM results match Go; no query/EXPLAIN/ANALYZE errors. Known dirty aggregate placement discrepancy is not resolved by this check."
+      }
+    ]
+  },
+  "fixed_data": {
+    "command": "/private/tmp/tidb-aggregate-isolation -before-port 53046 -after-port 53047 -modes sum,dirty-sum -count 2000 -rounds 3",
+    "log": "/private/tmp/tidb-cnf-range-sum.jsonl",
+    "samples": [
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 1088.8502483157017,
+        "round": 0,
+        "seconds": 1.836799875,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 1082.15382718935,
+        "round": 0,
+        "seconds": 1.848166083,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 1633.8532765038317,
+        "round": 0,
+        "seconds": 1.224100125,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 1198.3458632876109,
+        "round": 1,
+        "seconds": 1.6689672500000001,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 1742.4745343314785,
+        "round": 1,
+        "seconds": 1.147792958,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 1127.1415423016542,
+        "round": 1,
+        "seconds": 1.774400042,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 1836.9512854296238,
+        "round": 2,
+        "seconds": 1.0887605,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 1213.468253812357,
+        "round": 2,
+        "seconds": 1.648168375,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 2000,
+        "ops_per_second": 1200.5130988182295,
+        "round": 2,
+        "seconds": 1.665954334,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 5533.583978103282,
+        "round": 0,
+        "seconds": 2.891435291,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 5642.251709374903,
+        "round": 0,
+        "seconds": 2.835747291,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 6069.350580910347,
+        "round": 0,
+        "seconds": 2.636196375,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 5580.227395563772,
+        "round": 1,
+        "seconds": 2.867266666,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 5799.188509983136,
+        "round": 1,
+        "seconds": 2.7590067080000003,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 5663.657254538153,
+        "round": 1,
+        "seconds": 2.8250297079999998,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 6027.825289954841,
+        "round": 2,
+        "seconds": 2.654356958,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 5569.326019678624,
+        "round": 2,
+        "seconds": 2.872879042,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 16000,
+        "ops_per_second": 5569.993861560415,
+        "round": 2,
+        "seconds": 2.872534584,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 1050.1842814543527,
+        "round": 0,
+        "seconds": 1.9044276660000001,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 1014.0324559279262,
+        "round": 0,
+        "seconds": 1.972323458,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 1258.5008784729412,
+        "round": 0,
+        "seconds": 1.589192375,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 1032.4329344096964,
+        "round": 1,
+        "seconds": 1.9371718329999998,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 1238.7976235468805,
+        "round": 1,
+        "seconds": 1.614468709,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 1016.4680530443853,
+        "round": 1,
+        "seconds": 1.9675975,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 1245.482692655739,
+        "round": 2,
+        "seconds": 1.605803125,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 1018.476673178457,
+        "round": 2,
+        "seconds": 1.9637170419999999,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 2000,
+        "ops_per_second": 1025.8327116893959,
+        "round": 2,
+        "seconds": 1.949635625,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 5467.933969859559,
+        "round": 0,
+        "seconds": 2.926150917,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 5493.6824797452655,
+        "round": 0,
+        "seconds": 2.91243625,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 5269.813200766791,
+        "round": 0,
+        "seconds": 3.03616075,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 5374.031094731698,
+        "round": 1,
+        "seconds": 2.977280875,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 5127.31373649519,
+        "round": 1,
+        "seconds": 3.120542417,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 5166.430921347385,
+        "round": 1,
+        "seconds": 3.0969155,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 4958.450316928262,
+        "round": 2,
+        "seconds": 3.226814625,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 5109.605358953078,
+        "round": 2,
+        "seconds": 3.131357292,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 16000,
+        "ops_per_second": 5106.318538613123,
+        "round": 2,
+        "seconds": 3.133372875,
+        "server": "after"
+      }
+    ],
+    "summary": [
+      {
+        "mode": "sum",
+        "clients": 1,
+        "medians": {
+          "before": 1127.1415423016542,
+          "after": 1198.3458632876109,
+          "go": 1742.4745343314785
+        },
+        "change_percent": 6.317247507403145,
+        "paired_percent": [
+          -0.6149992743915034,
+          6.317247507403145,
+          -1.0676138377272104
+        ]
+      },
+      {
+        "mode": "sum",
+        "clients": 8,
+        "medians": {
+          "before": 5569.326019678624,
+          "after": 5580.227395563772,
+          "go": 6027.825289954841
+        },
+        "change_percent": 0.19573958943377434,
+        "paired_percent": [
+          1.9637857074479292,
+          -1.4730739383554847,
+          0.011991430909796819
+        ]
+      },
+      {
+        "mode": "dirty-sum",
+        "clients": 1,
+        "medians": {
+          "before": 1018.476673178457,
+          "after": 1025.8327116893959,
+          "go": 1245.482692655739
+        },
+        "change_percent": 0.7222589092769516,
+        "paired_percent": [
+          -3.442426835446577,
+          1.5706230331091309,
+          0.7222589092769516
+        ]
+      },
+      {
+        "mode": "dirty-sum",
+        "clients": 8,
+        "medians": {
+          "before": 5166.430921347385,
+          "after": 5374.031094731698,
+          "go": 5127.31373649519
+        },
+        "change_percent": 4.018251217228541,
+        "paired_percent": [
+          0.47090016133402024,
+          4.018251217228541,
+          -0.06432630524384475
+        ]
+      }
+    ],
+    "measured_operations": 324000,
+    "result": "All results matched Go. Paired timing directions are mixed for every mode/client combination; no consistent gain claimed on these unchanged predicate shapes."
+  },
+  "suffixed_sum": {
+    "command": "/private/tmp/tidb-aggregate-isolation -before-port 53046 -after-port 53047 -modes suffixed-sum -count 30 -rounds 3 -clients 1",
+    "log": "/private/tmp/tidb-cnf-range-suffixed-sum.jsonl",
+    "samples": [
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "suffixed-sum",
+        "operations": 30,
+        "ops_per_second": 0.24573893482405618,
+        "round": 0,
+        "seconds": 122.080776583,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "suffixed-sum",
+        "operations": 30,
+        "ops_per_second": 1069.0216691405017,
+        "round": 0,
+        "seconds": 0.028063042,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "suffixed-sum",
+        "operations": 30,
+        "ops_per_second": 1054.90640131973,
+        "round": 0,
+        "seconds": 0.028438542,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "suffixed-sum",
+        "operations": 30,
+        "ops_per_second": 1091.8851965699082,
+        "round": 1,
+        "seconds": 0.027475416,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "suffixed-sum",
+        "operations": 30,
+        "ops_per_second": 1068.0860343300653,
+        "round": 1,
+        "seconds": 0.028087625,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "suffixed-sum",
+        "operations": 30,
+        "ops_per_second": 0.24709817113868918,
+        "round": 1,
+        "seconds": 121.409235292,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "suffixed-sum",
+        "operations": 30,
+        "ops_per_second": 926.3535925011305,
+        "round": 2,
+        "seconds": 0.032385042,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "suffixed-sum",
+        "operations": 30,
+        "ops_per_second": 0.24782377825735638,
+        "round": 2,
+        "seconds": 121.053759292,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "suffixed-sum",
+        "operations": 30,
+        "ops_per_second": 1049.3026387128245,
+        "round": 2,
+        "seconds": 0.028590417,
+        "server": "after"
+      }
+    ],
+    "summary": {
+      "medians": {
+        "before": 0.24709817113868918,
+        "after": 1069.0216691405017,
+        "go": 1054.90640131973
+      },
+      "median_latency_ms": {
+        "before": 4046.9745097333334,
+        "after": 0.9354347333333333,
+        "go": 0.9479514
+      },
+      "paired_speedup": [
+        4350.233185090911,
+        4418.831558073589,
+        4234.06763504009
+      ]
+    },
+    "measured_operations": 270,
+    "query": "SELECT ol_d_id,SUM(ol_amount) FROM order_line WHERE (ol_w_id,ol_d_id,ol_o_id) IN (ten parameterized triples: warehouse 1, districts 1 through 10, order 2101) AND ol_number=? GROUP BY ol_d_id",
+    "suffix_parameter": 1,
+    "method": "Five warmups, prepared statements, shared fixed dataset, one client, three rotating rounds. Every result matches Go. Fast samples span only 27-33ms: do not infer Rust-vs-Go performance equivalence from them.",
+    "candidate_repeat": {
+      "command": "/private/tmp/tidb-aggregate-isolation -before-port 53046 -after-port 53047 -modes suffixed-sum -count 5000 -rounds 3 -clients 1 -only-server after",
+      "log": "/private/tmp/tidb-cnf-range-suffixed-repeat.jsonl",
+      "samples": [
+        {
+          "clients": 1,
+          "go_results_match": true,
+          "mean_stage_ms": {},
+          "mode": "suffixed-sum",
+          "operations": 5000,
+          "ops_per_second": 1208.953399880275,
+          "round": 0,
+          "seconds": 4.135808709,
+          "server": "after"
+        },
+        {
+          "clients": 1,
+          "go_results_match": true,
+          "mean_stage_ms": {},
+          "mode": "suffixed-sum",
+          "operations": 5000,
+          "ops_per_second": 1191.9025243350284,
+          "round": 1,
+          "seconds": 4.194973916,
+          "server": "after"
+        },
+        {
+          "clients": 1,
+          "go_results_match": true,
+          "mean_stage_ms": {},
+          "mode": "suffixed-sum",
+          "operations": 5000,
+          "ops_per_second": 1202.4461965160783,
+          "round": 2,
+          "seconds": 4.158190208,
+          "server": "after"
+        }
+      ],
+      "measured_operations": 15000,
+      "median_ops_per_second": 1202.4461965160783,
+      "median_latency_ms": 0.8316380415999999,
+      "result": "All Go-checked results match. Confirms sub-millisecond candidate execution over longer samples, not a paired Go comparison."
+    }
+  },
+  "postchecks": {
+    "commands": [
+      "/private/tmp/tidb-tpcc-tool-OY7S5G/go-tpc tpcc check -H 127.0.0.1 -P 45000 -U root -D perf_tpcc_locking_v1 --warehouses 1 -T 1",
+      "mysql --protocol=tcp -h127.0.0.1 -P45000 -uroot --plugin-dir=/opt/homebrew/opt/mysql-client/lib/plugin perf_tpcc_locking_v1 < /private/tmp/tidb-tpcc-locking-balance-check.sql"
+    ],
+    "logs": [
+      "/private/tmp/tidb-cnf-range-check.log",
+      "/private/tmp/tidb-cnf-range-balances.tsv"
+    ],
+    "result": "All eleven conditions completed; 30000 customers checked, zero bad balances or delivery counts."
+  }
+}

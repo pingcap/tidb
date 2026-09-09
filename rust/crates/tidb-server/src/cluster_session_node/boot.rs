@@ -146,6 +146,12 @@ pub(crate) fn run_cluster_session_node_with_spill(
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     let sysvar_watcher = crate::real_tikv_node::spawn_sysvar_watch(&config, Some(&sysvar_reloader));
+    let (bindings, binding_reloader) = crate::cluster_binding_seam::start_binding_cache(
+        authority.transaction_opener(),
+        Arc::clone(&catalog),
+        users.global_vars(),
+        CONTROL_PLANE_TIMEOUT,
+    ).map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     // The node's coprocessor: base-table scans now carry their predicate,
     // their row cap and their column list to the region, and only the
     // surviving rows come back. The session's own staged writes are merged on
@@ -250,6 +256,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         )),
     )
     .with_cop_scans(cop_scans)
+    .with_bindings(bindings)
     .with_server_info(server_info)
     .with_schema_pins(schema_pins)
     .with_spill_storage(spill_storage);
@@ -277,6 +284,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             sysvar_watcher,
             sysvar_reloader,
             stats_reloader,
+            binding_reloader,
         ),
         authority,
         move |(
@@ -290,6 +298,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             sysvar_watcher,
             sysvar_reloader,
             stats_reloader,
+            binding_reloader,
         )| {
             let node =
                 ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
@@ -324,6 +333,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             drop(sysvar_watcher);
             drop(sysvar_reloader);
             drop(stats_reloader);
+            drop(binding_reloader);
             outcome
         },
     )

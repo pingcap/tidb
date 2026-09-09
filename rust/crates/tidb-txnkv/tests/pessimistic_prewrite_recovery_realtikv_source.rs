@@ -12,39 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The cluster proof `TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY` is waiting on.
+//! Real-TiKV recovery and safety checks for locks blocking Prewrite.
 //!
-//! `cde12e0033` let an optimistic Prewrite reach the pessimistic-lock resolver
-//! and then switched the pessimistic half OFF, because resolving a lock
-//! wrongly rolls back another transaction's work and the path had never run
-//! against a real TiKV. Everything the scripted suite can prove about it is
-//! already proved: the decode, the admission split, the gate's refusal string.
-//! What is left needs TiKV to be the one answering, because the three answers
-//! that matter -- "this lock is expired", "this lock is alive", and "this lock
-//! is now rolled back" -- are TiKV's, not ours.
-//!
-//! Three claims, and the third one is why the gate exists:
-//!
-//! 1. **Recovery.** An EXPIRED pessimistic lock left on a key is resolved by an
-//!    optimistic Prewrite that needs the key, and the writer commits. This is
-//!    the availability gap the gate is holding shut: a Go tidb-server sharing
-//!    the cluster leaves exactly this lock whenever `session.retry` replays an
-//!    autocommit DML, since `decideTxnMode` is unconditionally pessimistic
-//!    while retrying (`pkg/session/session.go:4921-4923`).
-//! 2. **Safety.** A LIVE pessimistic lock is NOT rolled back. The Prewrite must
-//!    fail, and the lock's owner must still be able to commit its own value
-//!    afterwards. A resolver that cleaned this lock would silently destroy a
-//!    committed transaction, which is strictly worse than the refusal the gate
-//!    currently gives, and no in-process test can distinguish the two: both
-//!    "resolved" outcomes look identical from this side of the RPC.
-//! 3. **The gate itself.** With the variable unset, the same expired-lock
-//!    fixture reproduces the exact refusal recorded before the wiring landed.
-//!
-//! `pessimistic_prewrite_recovery_enabled` reads the variable ONCE per process
-//! (`std::sync::LazyLock`), so claims 1-2 and claim 3 cannot share a test
-//! binary invocation. The runner therefore invokes `cargo test` twice; see
-//! `scripts/run-realtikv-pessimistic-prewrite-recovery.sh`, which is the only
-//! supported way to run this file.
+//! An expired pessimistic lock must yield to the writer; a live owner's lock
+//! must survive the contender's deadline and still permit the owner to commit.
+//! An orphaned optimistic secondary must become readable and writable again.
+//! Run with `scripts/run-realtikv-pessimistic-prewrite-recovery.sh`, or provide
+//! `PESSIMISTIC_PREWRITE_RECOVERY_PD_ADDR` for an existing test cluster.
 
 use std::time::Duration;
 
@@ -54,7 +28,6 @@ use tidb_proto::{
     KvrpcPeer, KvrpcPessimisticAction, KvrpcPessimisticLockRequest, KvrpcPrewriteRequest,
     KvrpcRegionEpoch, KvrpcRequestOrigin,
 };
-use tidb_txnkv::lock::pessimistic_prewrite_recovery_enabled;
 use tidb_txnkv::region::RegionCache;
 use tidb_txnkv::rpc::{TonicCoprocessorClient, UnaryCallContext};
 use tidb_txnkv::transaction::{
@@ -75,7 +48,6 @@ const LIVE_LOCK_TTL_MS: u64 = 120_000;
 /// another's outcome.
 const EXPIRED_LOCK_KEY: &[u8] = b"pessimistic-prewrite-recovery-expired";
 const LIVE_LOCK_KEY: &[u8] = b"pessimistic-prewrite-recovery-live";
-const GATED_LOCK_KEY: &[u8] = b"pessimistic-prewrite-recovery-gated";
 /// The secondary an orphaned transaction prewrote before it died.
 const ORPHAN_SECONDARY_KEY: &[u8] = b"pessimistic-prewrite-recovery-orphan-secondary";
 /// The primary that same transaction never got to prewrite, so no lock and no
@@ -99,6 +71,13 @@ struct Cluster {
     pd: PdClient,
     opener: RealOptimisticTransactionOpener,
     fixture: RealRuntime,
+    key_prefix: Vec<u8>,
+}
+
+impl Cluster {
+    fn key(&self, suffix: &[u8]) -> Vec<u8> {
+        [self.key_prefix.as_slice(), suffix].concat()
+    }
 }
 
 fn call() -> UnaryCallContext {
@@ -128,11 +107,16 @@ fn connect() -> Cluster {
     let fixture = read_opener
         .open_session()
         .expect("open the fixture session from the same authority");
+    // A fresh PD timestamp isolates repeated runs without deleting earlier
+    // fixtures or requiring a new cluster for each invocation.
+    let key_prefix = format!("recovery-test-{}-", pd.get_timestamp().expect("fixture namespace"))
+        .into_bytes();
     Cluster {
         authority: shared,
         pd,
         opener,
         fixture,
+        key_prefix,
     }
 }
 
@@ -302,16 +286,11 @@ fn read_back(opener: &RealOptimisticTransactionOpener, key: &[u8]) -> Option<Vec
 }
 
 /// Claim 1: an EXPIRED pessimistic lock is resolved and the writer commits.
-///
-/// Requires `TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY` to be SET.
 #[test]
-#[ignore = "requires run-realtikv-pessimistic-prewrite-recovery.sh (gate ON pass)"]
+#[ignore = "requires a real TiKV cluster"]
 fn an_expired_pessimistic_lock_is_resolved_and_the_writer_commits() {
-    assert!(
-        pessimistic_prewrite_recovery_enabled(),
-        "this pass must run with TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY set"
-    );
     let cluster = connect();
+    let key = cluster.key(EXPIRED_LOCK_KEY);
 
     let lock_start_ts = cluster
         .pd
@@ -319,7 +298,7 @@ fn an_expired_pessimistic_lock_is_resolved_and_the_writer_commits() {
         .expect("allocate the abandoned lock's start timestamp");
     hold_real_pessimistic_lock(
         &cluster.fixture,
-        EXPIRED_LOCK_KEY,
+        &key,
         lock_start_ts,
         EXPIRING_LOCK_TTL_MS,
     );
@@ -340,7 +319,7 @@ fn an_expired_pessimistic_lock_is_resolved_and_the_writer_commits() {
     let outcome = writer
         .commit(
             vec![
-                OptimisticMutation::insert(EXPIRED_LOCK_KEY.to_vec(), b"resolved-writer".to_vec())
+                OptimisticMutation::insert(key.clone(), b"resolved-writer".to_vec())
                     .unwrap(),
             ],
             &call(),
@@ -352,7 +331,7 @@ fn an_expired_pessimistic_lock_is_resolved_and_the_writer_commits() {
         );
     };
     assert_eq!(
-        read_back(&cluster.opener, EXPIRED_LOCK_KEY).as_deref(),
+        read_back(&cluster.opener, &key).as_deref(),
         Some(b"resolved-writer".as_slice()),
         "the writer's value must be what TiKV durably holds"
     );
@@ -368,19 +347,15 @@ fn an_expired_pessimistic_lock_is_resolved_and_the_writer_commits() {
 /// Claim 2, the safety half: a LIVE pessimistic lock is refused, not resolved,
 /// and its owner still commits its own value afterwards.
 ///
-/// Requires `TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY` to be SET. This is the
-/// claim that cannot be faked in process: a resolver that wrongly rolled the
+/// A resolver that wrongly rolled the
 /// lock back would look exactly like a correct one from the caller's side, and
 /// only the owner's later Prewrite -- which would come back
 /// `PessimisticLockNotFound` -- tells the two apart.
 #[test]
-#[ignore = "requires run-realtikv-pessimistic-prewrite-recovery.sh (gate ON pass)"]
+#[ignore = "requires a real TiKV cluster"]
 fn a_live_pessimistic_lock_survives_the_prewrite_and_still_commits() {
-    assert!(
-        pessimistic_prewrite_recovery_enabled(),
-        "this pass must run with TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY set"
-    );
     let cluster = connect();
+    let key = cluster.key(LIVE_LOCK_KEY);
 
     let lock_start_ts = cluster
         .pd
@@ -388,7 +363,7 @@ fn a_live_pessimistic_lock_survives_the_prewrite_and_still_commits() {
         .expect("allocate the live lock's start timestamp");
     hold_real_pessimistic_lock(
         &cluster.fixture,
-        LIVE_LOCK_KEY,
+        &key,
         lock_start_ts,
         LIVE_LOCK_TTL_MS,
     );
@@ -400,13 +375,15 @@ fn a_live_pessimistic_lock_survives_the_prewrite_and_still_commits() {
         .expect("allocate a writer newer than the live lock");
     assert!(writer.start_ts() > lock_start_ts);
     let writer_start_ts = writer.start_ts();
+    let wait_started = std::time::Instant::now();
+    let writer_call = UnaryCallContext::with_timeout(Duration::from_secs(5));
     let outcome = writer
         .commit(
             vec![
-                OptimisticMutation::insert(LIVE_LOCK_KEY.to_vec(), b"must-not-win".to_vec())
+                OptimisticMutation::insert(key.clone(), b"must-not-win".to_vec())
                     .unwrap(),
             ],
-            &call(),
+            &writer_call,
         )
         .expect("the Prewrite must reach a verdict, not a transport failure");
     let OptimisticCommitOutcome::RolledBack(refused) = outcome else {
@@ -420,6 +397,9 @@ fn a_live_pessimistic_lock_survives_the_prewrite_and_still_commits() {
         "the writer must lose to the live lock, not to something else: {:?}",
         refused.cause
     );
+    assert!(wait_started.elapsed() >= Duration::from_millis(4_500),
+        "a live lock waits for the deadline, not a fixed number of attempts: {:?}",
+        wait_started.elapsed());
     println!(
         "pessimistic_prewrite_recovery phase=refused key=live writer_start_ts={writer_start_ts}"
     );
@@ -433,13 +413,13 @@ fn a_live_pessimistic_lock_survives_the_prewrite_and_still_commits() {
     assert!(commit_ts > lock_start_ts);
     commit_real_pessimistic_txn(
         &cluster.fixture,
-        LIVE_LOCK_KEY,
+        &key,
         b"live-holder",
         lock_start_ts,
         commit_ts,
     );
     assert_eq!(
-        read_back(&cluster.opener, LIVE_LOCK_KEY).as_deref(),
+        read_back(&cluster.opener, &key).as_deref(),
         Some(b"live-holder".as_slice()),
         "the live owner's value must survive: anything else means its work was \
          destroyed by the resolver"
@@ -452,88 +432,23 @@ fn a_live_pessimistic_lock_survives_the_prewrite_and_still_commits() {
     );
 }
 
-/// Claim 3: with the gate OFF the same fixture reproduces the recorded
-/// refusal, so turning the variable off really does restore the previous
-/// behaviour rather than some third thing.
-///
-/// Requires `TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY` to be UNSET, which is
-/// why this is a separate `cargo test` invocation: the gate is read once per
-/// process.
-#[test]
-#[ignore = "requires run-realtikv-pessimistic-prewrite-recovery.sh (gate OFF pass)"]
-fn the_gate_off_run_reproduces_the_recorded_refusal() {
-    assert!(
-        !pessimistic_prewrite_recovery_enabled(),
-        "this pass must run with TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY unset"
-    );
-    let cluster = connect();
-
-    let lock_start_ts = cluster
-        .pd
-        .get_timestamp()
-        .expect("allocate the gated fixture's start timestamp");
-    hold_real_pessimistic_lock(
-        &cluster.fixture,
-        GATED_LOCK_KEY,
-        lock_start_ts,
-        EXPIRING_LOCK_TTL_MS,
-    );
-    std::thread::sleep(Duration::from_millis(EXPIRING_LOCK_TTL_MS * 3));
-
-    let writer = cluster
-        .opener
-        .begin(1, 128)
-        .expect("allocate a writer newer than the gated lock");
-    let writer_start_ts = writer.start_ts();
-    let outcome = writer
-        .commit(
-            vec![
-                OptimisticMutation::insert(GATED_LOCK_KEY.to_vec(), b"must-not-win".to_vec())
-                    .unwrap(),
-            ],
-            &call(),
-        )
-        .expect("the Prewrite must reach a verdict, not a transport failure");
-    let OptimisticCommitOutcome::RolledBack(refused) = outcome else {
-        panic!("the gate is off, so the writer must be refused: {outcome:?}");
-    };
-    let TransactionCause::InvalidResponse { detail } = &refused.cause else {
-        panic!("the gated refusal is an InvalidResponse: {:?}", refused.cause);
-    };
-    assert!(
-        detail.contains("pessimistic lock type") && detail.contains("outside bounded recovery"),
-        "the gated refusal must be the recorded one, not a new message: {detail}"
-    );
-    assert_eq!(
-        read_back(&cluster.opener, GATED_LOCK_KEY),
-        None,
-        "a refused writer must have written nothing"
-    );
-    println!(
-        "pessimistic_prewrite_recovery status=passed claim=gate_off_refusal \
-         cluster_id={} lock_start_ts={lock_start_ts} writer_start_ts={writer_start_ts} \
-         detail={detail}",
-        cluster.pd.cluster_id(),
-    );
-}
-
 /// Leaves the canonical orphan: an optimistic prewrite lock on a secondary key
 /// naming a primary that was never prewritten.
 ///
 /// This is what a coordinator that died between its secondary and primary
 /// batches leaves behind, and it is the exact state that makes TiKV answer
 /// CheckTxnStatus on the primary with `TxnNotFound`.
-fn hold_orphan_secondary_lock(runtime: &RealRuntime, start_ts: u64, ttl_ms: u64) {
-    let (address, context) = route(runtime, ORPHAN_SECONDARY_KEY);
+fn hold_orphan_secondary_lock(runtime: &RealRuntime, primary: &[u8], secondary: &[u8], start_ts: u64, ttl_ms: u64) {
+    let (address, context) = route(runtime, secondary);
     let request = KvrpcPrewriteRequest {
         mutations: vec![KvrpcMutation {
             op: KvrpcOp::Put as i32,
-            key: ORPHAN_SECONDARY_KEY.to_vec(),
+            key: secondary.to_vec(),
             value: b"orphaned".to_vec(),
             ..KvrpcMutation::default()
         }],
         // The primary is a key this fixture deliberately never prewrites.
-        primary_lock: ORPHAN_PRIMARY_KEY.to_vec(),
+        primary_lock: primary.to_vec(),
         start_version: start_ts,
         lock_ttl: ttl_ms,
         txn_size: 2,
@@ -559,7 +474,7 @@ fn hold_orphan_secondary_lock(runtime: &RealRuntime, start_ts: u64, ttl_ms: u64)
     );
 }
 
-/// Claim 4: the canonical orphan lock is recoverable, not permanent.
+/// The canonical orphan lock is recoverable, not permanent.
 ///
 /// A secondary prewrite landed and the coordinator died before the primary, so
 /// CheckTxnStatus on that primary answers `TxnNotFound` — there is no lock and
@@ -573,20 +488,18 @@ fn hold_orphan_secondary_lock(runtime: &RealRuntime, start_ts: u64, ttl_ms: u64)
 /// Only TiKV can prove this: the assertion is that TiKV, asked a second time
 /// with `rollback_if_not_exist`, really does write the rollback record. No
 /// scripted store can answer that, because scripting the answer is assuming it.
-///
-/// This claim is independent of `TIDB_RUST_PESSIMISTIC_PREWRITE_RECOVERY` — the
-/// orphan is an ordinary optimistic prewrite lock — and rides the gate-ON pass
-/// only because that is the pass which runs every ignored test in this module.
 #[test]
-#[ignore = "requires run-realtikv-pessimistic-prewrite-recovery.sh (gate ON pass)"]
+#[ignore = "requires a real TiKV cluster"]
 fn an_orphaned_secondary_prewrite_lock_is_recoverable_by_a_later_reader() {
     let cluster = connect();
+    let primary = cluster.key(ORPHAN_PRIMARY_KEY);
+    let secondary = cluster.key(ORPHAN_SECONDARY_KEY);
 
     let orphan_start_ts = cluster
         .pd
         .get_timestamp()
         .expect("allocate the orphaned transaction's start timestamp");
-    hold_orphan_secondary_lock(&cluster.fixture, orphan_start_ts, EXPIRING_LOCK_TTL_MS);
+    hold_orphan_secondary_lock(&cluster.fixture, &primary, &secondary, orphan_start_ts, EXPIRING_LOCK_TTL_MS);
     println!(
         "pessimistic_prewrite_recovery phase=orphaned key=orphan-secondary \
          orphan_start_ts={orphan_start_ts}"
@@ -597,7 +510,7 @@ fn an_orphaned_secondary_prewrite_lock_is_recoverable_by_a_later_reader() {
 
     // Pre-fix this read failed with a terminal KeyError carrying TxnNotFound,
     // and would have failed identically for every reader from then on.
-    let observed = read_back(&cluster.opener, ORPHAN_SECONDARY_KEY);
+    let observed = read_back(&cluster.opener, &secondary);
     assert_eq!(
         observed, None,
         "the orphaned transaction never committed, so its secondary must read \
@@ -614,7 +527,7 @@ fn an_orphaned_secondary_prewrite_lock_is_recoverable_by_a_later_reader() {
     let outcome = writer
         .commit(
             vec![OptimisticMutation::insert(
-                ORPHAN_SECONDARY_KEY.to_vec(),
+                secondary.clone(),
                 b"after-orphan-recovery".to_vec(),
             )
             .unwrap()],
@@ -627,10 +540,10 @@ fn an_orphaned_secondary_prewrite_lock_is_recoverable_by_a_later_reader() {
          writer: {outcome:?}"
     );
     assert_eq!(
-        read_back(&cluster.opener, ORPHAN_SECONDARY_KEY),
+        read_back(&cluster.opener, &secondary),
         Some(b"after-orphan-recovery".to_vec())
     );
 
     // The recovery must not have invented a value for the primary either.
-    assert_eq!(read_back(&cluster.opener, ORPHAN_PRIMARY_KEY), None);
+    assert_eq!(read_back(&cluster.opener, &primary), None);
 }

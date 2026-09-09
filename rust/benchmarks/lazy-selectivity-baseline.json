@@ -1,0 +1,478 @@
+{
+  "status": "WIP: on-demand selectivity avoids covered-predicate work; no consistent workload speedup",
+  "before": {
+    "port": 53034,
+    "sha256": "fd96103d616828d3bce97448fb6f40a6dec0196c6ba2e47a243b202eacf9b17d"
+  },
+  "after": {
+    "port": 53035,
+    "sha256": "a39ab966b16f9928c5b966c641c5c152dd55506b039c11d27a9ebc542d01bcf8"
+  },
+  "source": "pkg/planner/cardinality/selectivity.go selects the greedy statistics cover before estimating uncovered conditions",
+  "red": {
+    "log": "/private/tmp/tidb-lazy-selectivity-red.log",
+    "failure": "After API refactor retaining eager behavior, covered predicates were evaluated: [0,1,2] instead of []"
+  },
+  "validation": {
+    "profile": "WIP",
+    "selectivity_passed": 11,
+    "row_count_passed": 15,
+    "access_cost_passed": 23,
+    "aggregate": {
+      "passed": 32,
+      "prior_failures": 1
+    },
+    "point": {
+      "passed": 21,
+      "prior_failures": 1
+    },
+    "live_go_plan_matches": 15,
+    "live_go_result_cases": 39,
+    "build_log": "/private/tmp/tidb-lazy-selectivity-build.log"
+  },
+  "isolation": {
+    "command": "/private/tmp/tidb-aggregate-isolation -before-port 53034 -after-port 53035 -modes sum,dirty-sum -count 1000 -rounds 3",
+    "summary": [
+      {
+        "mode": "sum",
+        "clients": 1,
+        "before": 893.463854273801,
+        "after": 930.9631477074275,
+        "go": 2060.2586170945037,
+        "percent": 4.197068885803512
+      },
+      {
+        "mode": "sum",
+        "clients": 8,
+        "before": 4782.594344750056,
+        "after": 4802.219347592378,
+        "go": 6413.471286074541,
+        "percent": 0.4103421998117973
+      },
+      {
+        "mode": "dirty-sum",
+        "clients": 1,
+        "before": 658.2841136276427,
+        "after": 672.0301956607514,
+        "go": 1328.6307175404118,
+        "percent": 2.0881685807906614
+      },
+      {
+        "mode": "dirty-sum",
+        "clients": 8,
+        "before": 3970.2313699526967,
+        "after": 3775.5974433540023,
+        "go": 5632.989274408899,
+        "percent": -4.902332092575589
+      }
+    ],
+    "samples": [
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 1000,
+        "ops_per_second": 935.533661729037,
+        "round": 0,
+        "seconds": 1.068908625,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 1000,
+        "ops_per_second": 945.4148574888876,
+        "round": 0,
+        "seconds": 1.057736709,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 1000,
+        "ops_per_second": 2070.0653315309714,
+        "round": 0,
+        "seconds": 0.483076541,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 1000,
+        "ops_per_second": 907.4302086919337,
+        "round": 1,
+        "seconds": 1.102013125,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 1000,
+        "ops_per_second": 2060.2586170945037,
+        "round": 1,
+        "seconds": 0.485375958,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 1000,
+        "ops_per_second": 880.0908808598339,
+        "round": 1,
+        "seconds": 1.136246292,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 1000,
+        "ops_per_second": 1879.9408664600455,
+        "round": 2,
+        "seconds": 0.531931625,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 1000,
+        "ops_per_second": 893.463854273801,
+        "round": 2,
+        "seconds": 1.119239458,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 1000,
+        "ops_per_second": 930.9631477074275,
+        "round": 2,
+        "seconds": 1.074156375,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 8000,
+        "ops_per_second": 4787.382496292287,
+        "round": 0,
+        "seconds": 1.671059291,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 8000,
+        "ops_per_second": 4817.227851000086,
+        "round": 0,
+        "seconds": 1.6607061669999998,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 8000,
+        "ops_per_second": 6533.888523286065,
+        "round": 0,
+        "seconds": 1.22438575,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 8000,
+        "ops_per_second": 4795.260485376817,
+        "round": 1,
+        "seconds": 1.6683139580000002,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 8000,
+        "ops_per_second": 6413.471286074541,
+        "round": 1,
+        "seconds": 1.247374416,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 8000,
+        "ops_per_second": 4674.520215892903,
+        "round": 1,
+        "seconds": 1.711405584,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 8000,
+        "ops_per_second": 6368.36134400684,
+        "round": 2,
+        "seconds": 1.256210125,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 8000,
+        "ops_per_second": 4782.594344750056,
+        "round": 2,
+        "seconds": 1.672732292,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "sum",
+        "operations": 8000,
+        "ops_per_second": 4802.219347592378,
+        "round": 2,
+        "seconds": 1.665896416,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 1000,
+        "ops_per_second": 702.9214615124471,
+        "round": 0,
+        "seconds": 1.4226340419999999,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 1000,
+        "ops_per_second": 672.0301956607514,
+        "round": 0,
+        "seconds": 1.488028375,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 1000,
+        "ops_per_second": 1351.0469093619784,
+        "round": 0,
+        "seconds": 0.74016675,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 1000,
+        "ops_per_second": 678.8377371733384,
+        "round": 1,
+        "seconds": 1.473106083,
+        "server": "after"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 1000,
+        "ops_per_second": 1328.6307175404118,
+        "round": 1,
+        "seconds": 0.752654584,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 1000,
+        "ops_per_second": 658.2841136276427,
+        "round": 1,
+        "seconds": 1.519100916,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 1000,
+        "ops_per_second": 1318.7622553235767,
+        "round": 2,
+        "seconds": 0.758286792,
+        "server": "go"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 1000,
+        "ops_per_second": 656.1111323975433,
+        "round": 2,
+        "seconds": 1.524132042,
+        "server": "before"
+      },
+      {
+        "clients": 1,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 1000,
+        "ops_per_second": 655.155994273575,
+        "round": 2,
+        "seconds": 1.526354042,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 8000,
+        "ops_per_second": 3986.768662328854,
+        "round": 0,
+        "seconds": 2.006637625,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 8000,
+        "ops_per_second": 3680.515180112336,
+        "round": 0,
+        "seconds": 2.17360875,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 8000,
+        "ops_per_second": 5632.989274408899,
+        "round": 0,
+        "seconds": 1.420205083,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 8000,
+        "ops_per_second": 3775.5974433540023,
+        "round": 1,
+        "seconds": 2.118869959,
+        "server": "after"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 8000,
+        "ops_per_second": 5661.541211131276,
+        "round": 1,
+        "seconds": 1.413042792,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 8000,
+        "ops_per_second": 3970.2313699526967,
+        "round": 1,
+        "seconds": 2.014995917,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 8000,
+        "ops_per_second": 5556.9560512633725,
+        "round": 2,
+        "seconds": 1.439637083,
+        "server": "go"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 8000,
+        "ops_per_second": 3786.5174864352302,
+        "round": 2,
+        "seconds": 2.112759291,
+        "server": "before"
+      },
+      {
+        "clients": 8,
+        "go_results_match": true,
+        "mean_stage_ms": {},
+        "mode": "dirty-sum",
+        "operations": 8000,
+        "ops_per_second": 3938.022498147984,
+        "round": 2,
+        "seconds": 2.031476459,
+        "server": "after"
+      }
+    ]
+  },
+  "profiles": {
+    "before": "/private/tmp/tidb-dirty-aggregate-profile.sample.txt",
+    "after": "/private/tmp/tidb-dirty-aggregate-profile-after.sample.txt",
+    "interpretation": "Selectivity planning remains prominent. Sample overlaps diagnostic workload, not a throughput benchmark."
+  },
+  "not_verified": [
+    "mixed sysbench/TPC-C comparison of this increment",
+    "Ready/lint",
+    "stable overall speedup"
+  ]
+}

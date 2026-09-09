@@ -58,6 +58,26 @@ pub fn split_cnf_items(on_expr: &Expression) -> Vec<Expression> {
     split_normal_form_items(on_expr, "and")
 }
 
+/// Go `SplitCNFItems` when the caller transfers ownership of its expression.
+///
+/// Go hands out expression interfaces without cloning their trees. A Rust
+/// builder can likewise move freshly built conjuncts into their next owner.
+#[must_use]
+pub fn into_cnf_items(on_expr: Expression) -> Vec<Expression> {
+    let mut pending = vec![on_expr];
+    let mut items = Vec::new();
+    while let Some(on_expr) = pending.pop() {
+        match on_expr {
+            Expression::ScalarFunction(function) if function.func_name.lowercase() == "and" => {
+                // The stack visits children in Go's left-to-right order.
+                pending.extend(function.args.into_iter().rev());
+            }
+            leaf => items.push(leaf),
+        }
+    }
+    items
+}
+
 /// Go `SplitDNFItems` (`expression.go:945`): the disjuncts of `on_expr`.
 ///
 /// `a OR b OR c` becomes `[a, b, c]`. A non-`OR` expression is a one-element

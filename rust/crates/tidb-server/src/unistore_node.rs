@@ -324,6 +324,7 @@ pub(crate) fn run_unistore_cluster_session(
         _reloader: reloader,
         _sysvar_reloader: sysvar_reloader,
         _stats_reloader: stats_reloader,
+        _binding_reloader: binding_reloader,
         _read_authority: read_authority,
     } = stack;
     let factory = factory.with_spill_storage(spill_storage);
@@ -387,6 +388,7 @@ pub(crate) fn run_unistore_cluster_session(
     drop(reloader);
     drop(sysvar_reloader);
     drop(stats_reloader);
+    drop(binding_reloader);
     drop(read_authority);
     finish_with_signal_code(result, &last_signal)
 }
@@ -411,6 +413,7 @@ pub(crate) struct UnistoreClusterStack {
     pub(crate) _reloader: tidb_exec::catalog_watch::CatalogReloader,
     pub(crate) _sysvar_reloader: crate::cluster_sysvar_seam::SysvarReloader,
     pub(crate) _stats_reloader: tidb_exec::stats_watch::StatsReloader,
+    pub(crate) _binding_reloader: crate::cluster_binding_seam::BindingReloader,
     pub(crate) _read_authority: SharedReadAuthority<InProcessClient, InProcessRegionLoader>,
 }
 
@@ -503,6 +506,10 @@ pub(crate) fn unistore_cluster_session_stack(
     let cop_scans: Arc<dyn tidb_executor::remote_scan::PushdownScanner> =
         Arc::clone(&cop_source) as _;
 
+    let (bindings, binding_reloader) = crate::cluster_binding_seam::start_binding_cache(
+        opener.clone(), Arc::clone(&catalog), users.global_vars(), IN_PROCESS_TIMEOUT,
+    ).map_err(|error| engine(SqlQueryError::unknown(error)))?;
+
     let factory = ClusterSessionFactory::new(
         Arc::new(RealClusterTransactions::new(
             opener.clone(),
@@ -544,6 +551,7 @@ pub(crate) fn unistore_cluster_session_stack(
         )),
     )
     .with_cop_scans(cop_scans)
+    .with_bindings(bindings)
     .with_server_info(server_info);
 
     Ok(UnistoreClusterStack {
@@ -554,6 +562,7 @@ pub(crate) fn unistore_cluster_session_stack(
         _reloader: reloader,
         _sysvar_reloader: sysvar_reloader,
         _stats_reloader: stats_reloader,
+        _binding_reloader: binding_reloader,
         _read_authority: read_authority,
     })
 }

@@ -1210,12 +1210,10 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 exit: ConnectionExit::Killed,
             });
         }
-        // Go's PacketIO owns one compressed-envelope sequence shared by its
-        // reader and writer. Rust keeps the directional codecs separate, so
-        // the connection owner hands the next value across at each turn.
-        if let Some(sequence) = output.compressed_sequence() {
-            reader.set_compressed_sequence(sequence);
-        }
+        // Go clientConn.Run resets both counters between commands. A request
+        // and its response share an envelope sequence, but the next command
+        // starts a new exchange, not a continuation of the previous response.
+        reader.set_compressed_sequence(0);
         let wait_timeout = engine.wait_timeout();
         reader
             .get_ref()

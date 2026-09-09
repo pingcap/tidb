@@ -342,6 +342,10 @@ impl<'a> SchemaNameResolver<'a> {
 }
 
 impl ColumnResolver for SchemaNameResolver<'_> {
+    fn param_value(&self, order: usize) -> Result<tidb_datatype::Datum, crate::EvalError> {
+        self.base.param_value(order)
+    }
+
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
         let column = self.resolve_column(path)?;
         Some((
@@ -405,6 +409,10 @@ impl ColumnResolver for SchemaNameResolver<'_> {
 
     fn fold_constant(&self, expression: &mut Expression, mode: ConstantFoldMode) {
         self.base.fold_constant(expression, mode);
+    }
+
+    fn eval_constant(&self, expression: &Expression) -> Result<tidb_datatype::Datum, crate::EvalError> {
+        self.base.eval_constant(expression)
     }
 }
 
@@ -1137,7 +1145,7 @@ mod tests {
     fn extract_cor_columns_keeps_duplicates() {
         let correlated = CorrelatedColumn {
             column: Column::new(9, FieldType::new(FieldTypeCode::LongLong)),
-            data: None,
+            data: Default::default(),
         };
         let expr = eq(
             Expression::CorrelatedColumn(correlated.clone()),

@@ -50,6 +50,75 @@ fn int_field_type() -> FieldType {
         .with_collation_name(BIN)
 }
 
+#[test]
+fn static_type_reads_share_metadata_and_keep_null_defaults() {
+    let field_type = string_field_type(UTF8MB4, UTF8MB4_UNICODE_CI);
+    let expressions = [
+        Expression::Column(Column::new(1, field_type.clone())),
+        Expression::Constant(Constant::new(
+            Datum::new_string("a"),
+            field_type.clone(),
+        )),
+        Expression::CorrelatedColumn(crate::column::CorrelatedColumn {
+            column: Column::new(2, field_type.clone()),
+            data: Default::default(),
+        }),
+        Expression::ScalarFunction(crate::scalar_function::ScalarFunction::new(
+            tidb_ast::CiString::new("concat"),
+            field_type,
+            Vec::new(),
+        )),
+    ];
+    for mut expression in expressions {
+        {
+            let stored = expression.static_type().unwrap();
+            let read = super::ret_type_of(&expression);
+            assert_eq!(read.code(), stored.code());
+            assert_eq!(read.charset_name(), stored.charset_name());
+            assert_eq!(read.collation_name(), stored.collation_name());
+            assert_eq!(
+                read.charset_name().as_ptr(),
+                stored.charset_name().as_ptr(),
+                "reading a node's static type must not allocate a charset copy"
+            );
+            assert_eq!(
+                read.collation_name().as_ptr(),
+                stored.collation_name().as_ptr()
+            );
+        }
+        assert_eq!(
+            super::collation_of_node(&expression),
+            tidb_datatype::Collation::Utf8Mb4UnicodeCi
+        );
+        super::set_explicit_collation(
+            &mut expression,
+            tidb_datatype::Collation::Utf8Mb4GeneralCi,
+        );
+        assert_eq!(
+            super::collation_of_node(&expression),
+            tidb_datatype::Collation::Utf8Mb4GeneralCi
+        );
+    }
+
+    for expression in [
+        Expression::Column(Column::default()),
+        Expression::Constant(Constant::default()),
+        Expression::CorrelatedColumn(crate::column::CorrelatedColumn::default()),
+        Expression::ScalarFunction(crate::scalar_function::ScalarFunction::default()),
+    ] {
+        assert!(expression.static_type().is_none());
+        let read = super::ret_type_of(&expression);
+        let null_type = FieldType::new(FieldTypeCode::Null);
+        assert_eq!(read.code(), null_type.code());
+        assert_eq!(read.charset_name(), null_type.charset_name());
+        assert_eq!(read.collation_name(), null_type.collation_name());
+        assert_eq!(
+            super::collation_of_node(&expression),
+            tidb_datatype::Collation::Binary
+        );
+    }
+}
+
 /// Go `newConstString`.
 fn new_const_string(
     value: &str,

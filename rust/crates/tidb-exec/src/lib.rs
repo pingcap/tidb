@@ -142,7 +142,6 @@ pub mod ordered_apply_buffer;
 pub mod pd_approximate_count;
 pub mod percentile;
 pub mod pessimistic_lock_error;
-pub mod pinned_thread_pool;
 pub mod placement_labels;
 pub mod plan_cache_params;
 pub mod privilege_set;

@@ -57,6 +57,7 @@
 //! is an early-stop hint, and the caller still enforces the cap.
 
 use std::fmt;
+use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
@@ -66,16 +67,6 @@ use tidb_txnkv::Key;
 
 use crate::predicate_pushdown::ScanPredicate;
 use crate::storage::StorageError;
-
-/// Ordinary scans keep a bounded decoded read-ahead window ahead of their
-/// consumer. Eight batches let cop decode overlap a hash-join consumer while
-/// keeping the channel strictly bounded.
-pub const DEFAULT_SCAN_READ_AHEAD_BATCHES: usize = 8;
-
-/// Go's default five index-join inner workers materialize their tasks while
-/// the current task is consumed. Sixteen 8K batches cover one default 25K
-/// outer task's typical fanout while retaining a fixed memory ceiling.
-pub const INDEX_JOIN_READ_AHEAD_BATCHES: usize = 16;
 
 /// One column a remote scan must return, in the order the caller wants it.
 #[derive(Clone, Debug, PartialEq)]
@@ -204,19 +195,6 @@ pub enum PushdownPartialAggregate {
         /// The group-key column returned by TiKV.
         output_type: FieldType,
     },
-    /// A partial hash aggregation with one group key and one `SUM` function.
-    /// The partial row is returned in TiKV's aggregation-schema order:
-    /// aggregate result first, then the group key.
-    GroupBySum {
-        /// Offset of the group key in [`PushdownScanRequest::columns`].
-        group_offset: usize,
-        /// Offset of the summed column in [`PushdownScanRequest::columns`].
-        sum_offset: usize,
-        /// The partial sum column returned by TiKV.
-        sum_type: FieldType,
-        /// The group-key column returned by TiKV.
-        group_type: FieldType,
-    },
     /// A grouped partial aggregation. TiKV returns aggregate results first
     /// and group keys last, matching its aggregation-schema contract.
     Grouped {
@@ -229,22 +207,89 @@ pub enum PushdownPartialAggregate {
         /// `true` for StreamAgg over ordered input, `false` for HashAgg.
         streamed: bool,
     },
-    /// A global partial HashAgg. TiKV returns exactly one row containing the
+    /// A global partial aggregation. TiKV returns exactly one row containing the
     /// function states, including for empty input.
     Global {
         /// Aggregate functions in physical output order.
         functions: Vec<PushdownGlobalAggregateFunction>,
+        /// The selected physical implementation, also carried by the TiKV DAG.
+        streamed: bool,
     },
 }
 
 impl PushdownPartialAggregate {
+    /// Go `PbConverter.conOrCorColToPBExpr`: resolve mutable leaves in the
+    /// request-owned description, leaving the retained aggregate definition
+    /// untouched for the next Open. No session state crosses the storage seam.
+    pub fn bind_in(&mut self, context: &crate::StmtContext) -> Result<(), tidb_expr::EvalError> {
+        fn bind(
+            expression: &mut Expression,
+            context: &crate::StmtContext,
+        ) -> Result<(), tidb_expr::EvalError> {
+            use tidb_expr::constant::Constant;
+            match expression {
+                Expression::Constant(constant) if constant.literal_value().is_none() => {
+                    let value = constant.eval_in(context)?;
+                    let field_type = if constant.param_marker.is_some() {
+                        tidb_datatype::infer_param_type_from_datum(&value)
+                    } else {
+                        constant
+                            .ret_type
+                            .clone()
+                            .ok_or(tidb_expr::EvalError::Unsupported(
+                                "deferred aggregate constant has no result type",
+                            ))?
+                    };
+                    *constant = Constant::new(value, field_type);
+                }
+                Expression::CorrelatedColumn(column) => {
+                    let field_type =
+                        column
+                            .column
+                            .ret_type
+                            .clone()
+                            .ok_or(tidb_expr::EvalError::Unsupported(
+                                "correlated aggregate column has no result type",
+                            ))?;
+                    *expression = Expression::Constant(Constant::new(column.eval(), field_type));
+                }
+                Expression::ScalarFunction(function) => {
+                    for argument in &mut function.args {
+                        bind(argument, context)?;
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+        match self {
+            Self::Grouped { functions, .. } => {
+                for input in functions
+                    .iter_mut()
+                    .filter_map(|function| function.input.as_mut())
+                {
+                    bind(input, context)?;
+                }
+            }
+            Self::Global { functions, .. } => {
+                for input in functions
+                    .iter_mut()
+                    .filter_map(|function| function.input.as_mut())
+                {
+                    bind(input, context)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     /// The aggregate input's scan-column offset.
     #[must_use]
     pub fn input_offset(&self) -> usize {
         match self {
             Self::Count { input_offset, .. } => input_offset.unwrap_or(0),
             Self::Sum { input_offset, .. } | Self::GroupBy { input_offset, .. } => *input_offset,
-            Self::GroupBySum { group_offset, .. } => *group_offset,
             Self::Grouped {
                 group_offsets,
                 functions,
@@ -261,7 +306,7 @@ impl PushdownPartialAggregate {
                         .next()
                 })
                 .unwrap_or(0),
-            Self::Global { functions } => functions
+            Self::Global { functions, .. } => functions
                 .iter()
                 .flat_map(|function| function.input.iter().flat_map(expression_column_offsets))
                 .next()
@@ -277,11 +322,6 @@ impl PushdownPartialAggregate {
             Self::Count { output_type, .. }
             | Self::Sum { output_type, .. }
             | Self::GroupBy { output_type, .. } => vec![output_type.clone()],
-            Self::GroupBySum {
-                sum_type,
-                group_type,
-                ..
-            } => vec![sum_type.clone(), group_type.clone()],
             Self::Grouped {
                 group_types,
                 functions,
@@ -291,7 +331,7 @@ impl PushdownPartialAggregate {
                 .map(|function| function.output_type.clone())
                 .chain(group_types.iter().cloned())
                 .collect(),
-            Self::Global { functions } => functions
+            Self::Global { functions, .. } => functions
                 .iter()
                 .map(|function| function.output_type.clone())
                 .collect(),
@@ -306,11 +346,6 @@ impl PushdownPartialAggregate {
             Self::Sum { input_offset, .. } | Self::GroupBy { input_offset, .. } => {
                 vec![*input_offset]
             }
-            Self::GroupBySum {
-                group_offset,
-                sum_offset,
-                ..
-            } => vec![*group_offset, *sum_offset],
             Self::Grouped {
                 group_offsets,
                 functions,
@@ -327,7 +362,7 @@ impl PushdownPartialAggregate {
                 offsets.dedup();
                 offsets
             }
-            Self::Global { functions } => {
+            Self::Global { functions, .. } => {
                 let mut offsets = functions
                     .iter()
                     .flat_map(|function| function.input.iter().flat_map(expression_column_offsets))
@@ -404,8 +439,8 @@ pub struct PushdownScanRequest {
     /// The columns to return, in output order.
     pub columns: Vec<PushdownScanColumn>,
     /// Which of `columns` carries the integer row handle used to merge a
-    /// staged overlay. `None` is a common-handle scan with no staged writes,
-    /// where the caller consumes the remote rows directly.
+    /// staged overlay. `None` is a common-handle scan, whose reader derives
+    /// identity from the complete primary-key columns instead.
     pub handle_index: Option<usize>,
     /// Stable column IDs forming a common row handle, in handle order.
     pub primary_column_ids: Vec<i64>,
@@ -441,9 +476,8 @@ pub struct PushdownScanRequest {
     /// Whether the coprocessor must preserve record-key order.
     ///
     /// Go's `PhysicalTableScan.KeepOrder` is false for ordinary full scans
-    /// such as TPC-H hash-join inputs. Cluster storage raises this for a
-    /// staged overlay (whose merge is order-sensitive) and streamed partial
-    /// aggregation.
+    /// such as TPC-H hash-join inputs. Cluster storage raises this only for
+    /// order-sensitive staged overlays and streamed partial aggregation.
     pub keep_order: bool,
     /// Whether region responses may arrive in any order. Only sound when the
     /// caller re-orders (or ignores) row order itself -- go's rolling
@@ -451,9 +485,6 @@ pub struct PushdownScanRequest {
     /// flight for exactly such unordered double reads, while an ordered
     /// stream is consumed two regions at a time.
     pub allow_unordered_response: bool,
-    /// Decoded response batches the backend may retain ahead of this scan's
-    /// consumer. The backend clamps this to its supported bounded maximum.
-    pub read_ahead_batches: usize,
     /// The timestamp the remote scan must read at: the statement's own
     /// snapshot, filled in by the storage that owns it.
     pub snapshot_ts: u64,
@@ -486,6 +517,8 @@ pub struct PushdownScanRequest {
 /// one and forget the other.
 #[derive(Clone, Debug, Default)]
 pub struct PushdownStatementContext {
+    /// Go's TryCopLiteWorker permits only one inline reader per statement.
+    pub cop_lite_worker: Arc<std::sync::atomic::AtomicBool>,
     /// Go `StatementContext.PushDownFlags()`; see
     /// [`crate::StmtContext::push_down_flags`].
     ///
@@ -516,6 +549,7 @@ impl PushdownStatementContext {
     pub fn from_stmt(ctx: &crate::StmtContext) -> Self {
         Self {
             push_down_flags: ctx.push_down_flags(),
+            cop_lite_worker: ctx.cop_lite_worker(),
             warnings: ctx.cop_warning_sink(),
             time_zone: ctx.session_zone(),
         }
@@ -769,11 +803,10 @@ mod tests {
         /// order. A region acts on these bits; a fake that ignored them would
         /// let the literal `0` back in unnoticed.
         requested_flags: Arc<Mutex<Vec<u64>>>,
-        /// Every decoded-batch read-ahead bound this backend was told, in
-        /// request order.
-        requested_read_aheads: Arc<Mutex<Vec<usize>>>,
         /// Whether each remote scan was required to preserve key order.
         requested_keep_orders: Arc<Mutex<Vec<bool>>>,
+        /// Simulate region completion order only for explicitly unordered reads.
+        reverse_unordered: std::sync::atomic::AtomicBool,
         /// A warning the region reports on each request, standing in for
         /// TiKV's `SelectResponse.warnings`.
         region_warning: Mutex<Option<(i32, String)>>,
@@ -786,6 +819,12 @@ mod tests {
             &self,
             request: &PushdownScanRequest,
         ) -> Result<Box<dyn PushdownRowStream>, PushdownScannerError> {
+            // This fake decodes record values, not secondary-index entries.
+            // Decline that capability instead of reporting an empty table
+            // when handed index keys; live TiKV covers the remote index side.
+            if request.index.is_some() {
+                return Err(PushdownScannerError::Unsupported("index scan".to_owned()));
+            }
             // The real transport refuses a request with no ranges before it
             // reaches a store: `metadata_region_ranges` in
             // `tidb_distsql::cop_paging` answers `missing_ranges`, because the
@@ -795,10 +834,6 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(request.statement.push_down_flags);
-            self.requested_read_aheads
-                .lock()
-                .unwrap()
-                .push(request.read_ahead_batches);
             self.requested_keep_orders
                 .lock()
                 .unwrap()
@@ -827,8 +862,14 @@ mod tests {
                     }
                 }
             }
+            // A TiKV TableScan decodes stored cells; it does not evaluate
+            // TiDB's virtual expressions. The table reader owns that step.
+            let mut physical_columns = self.columns.clone();
+            for column in &mut physical_columns {
+                column.generated = None;
+            }
             let mut table =
-                KvTable::with_storage(request.table_id, self.columns.clone(), Box::new(store));
+                KvTable::with_storage(request.table_id, physical_columns, Box::new(store));
             if let Some(offset) = self.pk_handle_offset {
                 table.set_pk_handle_offset(offset);
             }
@@ -873,9 +914,11 @@ mod tests {
                 })
                 .collect();
             let mut cursor = table
-                .row_cursor_projected_with_context(
+                .row_cursor_projected_directed_with_context(
                     Some(&keep),
                     None,
+                    request.desc,
+                    false,
                     &crate::RowDecodeContext::for_test_query_utc(),
                 )
                 .unwrap();
@@ -897,6 +940,9 @@ mod tests {
                 if request.limit.is_some_and(|cap| rows.len() as u64 >= cap) {
                     break;
                 }
+            }
+            if !request.keep_order && self.reverse_unordered.load(Ordering::Relaxed) {
+                rows.reverse();
             }
             self.returned
                 .fetch_add(rows.len() as u64, Ordering::Relaxed);
@@ -1168,10 +1214,13 @@ mod tests {
     }
 
     fn fixture_with(pk_handle_offset: Option<usize>) -> Fixture {
+        fixture_with_columns(pk_handle_offset, vec![column("a", 1), column("b", 2)])
+    }
+
+    fn fixture_with_columns(pk_handle_offset: Option<usize>, columns: Vec<KvColumn>) -> Fixture {
         let snapshot = Arc::new(Mutex::new(MockSnapshot::default()));
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
         let buffer = MutationBuffer::new();
-        let columns = vec![column("a", 1), column("b", 2)];
         let returned = Arc::new(AtomicU64::new(0));
         let scanned = Arc::new(AtomicU64::new(0));
         let scanner = Arc::new(FakeCoprocessor {
@@ -1183,8 +1232,8 @@ mod tests {
             lower_predicates: std::sync::atomic::AtomicBool::new(true),
             refuse_on_read: std::sync::atomic::AtomicBool::new(false),
             requested_flags: Arc::default(),
-            requested_read_aheads: Arc::default(),
             requested_keep_orders: Arc::default(),
+            reverse_unordered: std::sync::atomic::AtomicBool::new(false),
             region_warning: Mutex::new(None),
             opened: Arc::default(),
             minimum_opens_before_read: Arc::default(),
@@ -1202,6 +1251,455 @@ mod tests {
             returned,
             scanned,
             scanner,
+        }
+    }
+
+    #[test]
+    fn write_range_reader_preserves_record_identity_and_staged_rows() {
+        for mut fixture in [fixture(), clustered_fixture(), common_handle_fixture()] {
+            fixture.scanner.reverse_unordered.store(true, Ordering::Relaxed);
+            for row in [[1, 10], [2, 20], [3, 30], [4, 40]] {
+                fixture
+                    .table
+                    .insert_row(
+                        &[Datum::Int(row[0]), Datum::Int(row[1])],
+                        &tidb_expr::NoColumns,
+                    )
+                    .unwrap();
+            }
+            commit(&fixture.buffer, &fixture.snapshot);
+            fixture.table.clear_dirty_content();
+            let mut catalog = catalog_of(fixture.table);
+            let ctx = crate::StmtContext::for_query();
+            let (changed, ops) = capture_storage_ops(|| {
+                crate::run_update_on(
+                    "UPDATE t SET b=b+100 WHERE a>=1 AND a<=3 AND a<>2",
+                    &mut catalog,
+                    &ctx,
+                )
+                .unwrap()
+            });
+            assert_eq!(changed, 2);
+            assert_eq!(
+                ops.cop_scans, 1,
+                "a clean write range must use the shared remote reader"
+            );
+            assert_eq!(
+                crate::run_delete_on(
+                    "DELETE FROM t WHERE a>=2 AND a<=4 AND a<>3",
+                    &mut catalog,
+                    &ctx,
+                )
+                .unwrap(),
+                2
+            );
+            assert_eq!(
+                run_select_on("SELECT * FROM t ORDER BY a", &catalog, &ctx).unwrap(),
+                vec![
+                    vec![Datum::Int(1), Datum::Int(110)],
+                    vec![Datum::Int(3), Datum::Int(130)]
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn composite_cnf_writes_fetch_only_the_matching_keys() {
+        let mut fixture = fixture_with_columns(None, vec![
+            column("a", 1), column("b", 2), column("c", 3), column("v", 4),
+        ]);
+        fixture.table.set_common_handle_offsets(vec![0, 1, 2]);
+        for b in 1..=4 {
+            for c in 1..=4 {
+                fixture.table.insert_row(
+                    &[Datum::Int(1), Datum::Int(b), Datum::Int(c), Datum::Int(10)],
+                    &tidb_expr::NoColumns,
+                ).unwrap();
+            }
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture.table.clear_dirty_content();
+        let mut catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+        let (rows, reads) = capture_storage_ops(|| run_select_on(
+            "SELECT v FROM t WHERE (a,b) IN ((1,1),(1,3)) AND c=2 AND v>0 ORDER BY b DESC LIMIT 1",
+            &catalog, &ctx,
+        ).unwrap());
+        assert_eq!(rows, vec![vec![Datum::Int(10)]]);
+        assert_eq!(reads, crate::storage::StorageOps { gets: 1, ..Default::default() },
+            "complete composite ranges must execute one batched read, not just print a point plan");
+        assert_eq!(crate::run_update_on(
+            "UPDATE t SET v=999 WHERE (a,b) IN ((1,1),(1,3)) AND c=2 AND v=999",
+            &mut catalog, &ctx,
+        ).unwrap(), 0, "a batched handle read must retain the write's residual predicate");
+        assert_eq!(crate::run_delete_on(
+            "DELETE FROM t WHERE (a,b) IN ((1,1),(1,3)) AND c=2 AND v=999",
+            &mut catalog, &ctx,
+        ).unwrap(), 0, "a batched delete must retain its residual predicate");
+        let (updated, ops) = capture_storage_ops(|| crate::run_update_on(
+            "UPDATE t SET v=v+1 WHERE (a,b) IN ((1,1),(1,3)) AND c=2",
+            &mut catalog, &ctx,
+        ).unwrap());
+        assert_eq!(updated, 2);
+        assert_eq!((ops.scans, ops.cop_scans), (0, 0), "point writes must not open scans");
+        assert_eq!(run_select_on(
+            "SELECT v FROM t WHERE (a,b) IN ((1,1),(1,3)) AND c=2 ORDER BY b",
+            &catalog, &ctx,
+        ).unwrap(), vec![vec![Datum::Int(11)], vec![Datum::Int(11)]]);
+        let (deleted, ops) = capture_storage_ops(|| crate::run_delete_on(
+            "DELETE FROM t WHERE (a,b) IN ((1,1),(1,3)) AND c=2",
+            &mut catalog, &ctx,
+        ).unwrap());
+        assert_eq!(deleted, 2);
+        assert_eq!((ops.scans, ops.cop_scans), (0, 0), "dirty point deletes must not open scans");
+    }
+
+    #[test]
+    fn unsigned_staged_rows_merge_in_the_readers_value_order() {
+        let mut columns = vec![column("a", 1), column("b", 2)];
+        columns[0]
+            .field_type
+            .add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+        let mut fixture = fixture_with_columns(Some(0), columns);
+        fixture.scanner.reverse_unordered.store(true, Ordering::Relaxed);
+        for (a, b) in [(0, 10), (1, 20), (1_u64 << 63, 30), (u64::MAX, 40)] {
+            fixture
+                .table
+                .insert_row(&[Datum::UInt(a), Datum::Int(b)], &tidb_expr::NoColumns)
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture.table.clear_dirty_content();
+        let mut catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+        assert_eq!(
+            crate::run_update_on(
+                "UPDATE t SET b=b+100 WHERE a>=1 AND a<=18446744073709551615 AND b<>20",
+                &mut catalog,
+                &ctx,
+            )
+            .unwrap(),
+            2
+        );
+        assert_eq!(
+            crate::run_delete_on(
+                "DELETE FROM t WHERE a>=9223372036854775808 AND b<140",
+                &mut catalog,
+                &ctx,
+            )
+            .unwrap(),
+            1
+        );
+        let (rows, ops) = capture_storage_ops(|| {
+            run_select_on("SELECT * FROM t ORDER BY a", &catalog, &ctx).unwrap()
+        });
+        assert_eq!(
+            rows,
+            vec![
+                vec![Datum::UInt(0), Datum::Int(10)],
+                vec![Datum::UInt(1), Datum::Int(20)],
+                vec![Datum::UInt(u64::MAX), Datum::Int(140)],
+            ]
+        );
+        assert_eq!(
+            ops.cop_scans, 2,
+            "both unsigned value-order groups remain remote"
+        );
+        let mut descending = rows.clone();
+        descending.reverse();
+        assert_eq!(
+            run_select_on("SELECT * FROM t ORDER BY a DESC", &catalog, &ctx).unwrap(),
+            descending
+        );
+        assert_eq!(
+            run_select_on("SELECT * FROM t ORDER BY a LIMIT 2", &catalog, &ctx).unwrap(),
+            rows[..2]
+        );
+        assert_eq!(
+            run_select_on("SELECT * FROM t ORDER BY a DESC LIMIT 2", &catalog, &ctx).unwrap(),
+            descending[..2]
+        );
+        let mut unordered = run_select_on("SELECT * FROM t", &catalog, &ctx).unwrap();
+        unordered.sort_by_key(|row| match row[0] {
+            Datum::UInt(value) => value,
+            _ => unreachable!(),
+        });
+        assert_eq!(
+            unordered, rows,
+            "physical-order scans merge the same record set"
+        );
+    }
+
+    #[test]
+    fn write_range_reader_reconstructs_virtual_columns() {
+        for pk_handle_offset in [Some(0), None] {
+            let mut columns = vec![column("a", 1), column("b", 2), column("c", 3)];
+            let tidb_ast::Stmt::Ddl(ddl) =
+                tidb_parser::parse("CREATE TABLE t (b BIGINT AS (a+10))").unwrap()
+            else {
+                unreachable!()
+            };
+            let tidb_ast::DdlStmt::CreateTable(create) = &*ddl else {
+                unreachable!()
+            };
+            let expression = create.columns[0]
+                .options
+                .iter()
+                .find_map(|option| {
+                    if let tidb_ast::ColumnOption::Generated { expression, .. } = option {
+                        Some(expression)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            columns[1].generated = Some(
+                crate::generated_column::build_added_generated_column(
+                    "b",
+                    expression,
+                    false,
+                    &["a".to_owned(), "b".to_owned()],
+                    &[
+                        FieldType::new(FieldTypeCode::LongLong),
+                        FieldType::new(FieldTypeCode::LongLong),
+                    ],
+                    &tidb_datatype::SessionTimeZone::utc(),
+                )
+                .unwrap(),
+            );
+            let mut fixture = fixture_with_columns(pk_handle_offset, columns);
+            fixture.table.add_index(KvIndex {
+                id: 2,
+                name: "check_stored".to_owned(),
+                comment: String::new(),
+                unique: false,
+                column_offsets: vec![2],
+                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                visible: true,
+                global: false,
+                clustered_primary: false,
+            }, false);
+            for a in [1, 2, 3] {
+                fixture
+                    .table
+                    .insert_row(&[Datum::Int(a), Datum::Null, Datum::Int(a + 20)], &tidb_expr::NoColumns)
+                    .unwrap();
+            }
+            commit(&fixture.buffer, &fixture.snapshot);
+            fixture.table.clear_dirty_content();
+            let ctx = crate::StmtContext::for_query();
+            let lookup = fixture
+                .table
+                .pushdown_rows_by_handles_filtered(
+                    &[
+                        crate::kv_table::TableHandle::Int(3),
+                        crate::kv_table::TableHandle::Int(1),
+                    ],
+                    &[1],
+                    &[],
+                    &ctx.session_zone(),
+                    &PushdownStatementContext::from_stmt(&ctx),
+                )
+                .unwrap()
+                .expect("the table probe remains remote");
+            assert_eq!(
+                lookup.0,
+                vec![
+                    (crate::kv_table::TableHandle::Int(3), vec![Datum::Int(13)]),
+                    (crate::kv_table::TableHandle::Int(1), vec![Datum::Int(11)]),
+                ]
+            );
+            let mut catalog = catalog_of(fixture.table);
+            for (suffix, expected) in [
+                ("", vec![12, 13]),
+                (" LIMIT 1", vec![12]),
+                (" LIMIT 1 OFFSET 1", vec![13]),
+                (" DESC LIMIT 1", vec![13]),
+            ] {
+                let sql = format!("SELECT b FROM t FORCE INDEX(check_stored) WHERE c>=21 AND b>11 ORDER BY c{suffix}");
+                assert_eq!(
+                    run_select_on(&sql, &catalog, &ctx).unwrap(),
+                    expected.into_iter().map(|value| vec![Datum::Int(value)]).collect::<Vec<_>>(),
+                    "{sql}; handle={pk_handle_offset:?}"
+                );
+            }
+            let (rows, ops) = capture_storage_ops(|| {
+                run_select_on(
+                    "SELECT b FROM t WHERE b>11 ORDER BY a LIMIT 1",
+                    &catalog,
+                    &ctx,
+                )
+                .unwrap()
+            });
+            assert_eq!(rows, vec![vec![Datum::Int(12)]]);
+            assert_eq!(
+                ops.cop_scans, 1,
+                "virtual projection retains the remote physical scan"
+            );
+            let (changed, ops) = capture_storage_ops(|| {
+                crate::run_update_on(
+                    "UPDATE t SET a=a+10 WHERE a>=1 AND a<=3 AND b=12",
+                    &mut catalog,
+                    &ctx,
+                )
+                .unwrap()
+            });
+            assert_eq!(changed, 1);
+            assert_eq!(ops.cop_scans, 1);
+            assert_eq!(
+                run_select_on("SELECT * FROM t ORDER BY a", &catalog, &ctx).unwrap(),
+                vec![
+                    vec![Datum::Int(1), Datum::Int(11), Datum::Int(21)],
+                    vec![Datum::Int(3), Datum::Int(13), Datum::Int(23)],
+                    vec![Datum::Int(12), Datum::Int(22), Datum::Int(22)]
+                ]
+            );
+            for (sql, expected) in [
+                ("SELECT b FROM t WHERE b>=12 ORDER BY a LIMIT 1", vec![13]),
+                ("SELECT b FROM t ORDER BY b DESC LIMIT 2", vec![22, 13]),
+                ("SELECT b FROM t WHERE a>=3 ORDER BY a", vec![13, 22]),
+                ("SELECT COUNT(b) FROM t WHERE b>12", vec![2]),
+                ("SELECT MAX(b) FROM t", vec![22]),
+            ] {
+                assert_eq!(
+                    run_select_on(sql, &catalog, &ctx).unwrap(),
+                    expected
+                        .into_iter()
+                        .map(|value| vec![Datum::Int(value)])
+                        .collect::<Vec<_>>(),
+                    "{sql}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dirty_common_handle_reads_share_the_remote_staged_merge() {
+        let ctx = crate::StmtContext::for_query();
+        for (key_type, key, predicate) in [
+            (
+                FieldType::new(FieldTypeCode::LongLong),
+                Datum::Int(1),
+                "a=1",
+            ),
+            (
+                FieldType::new(FieldTypeCode::LongLong)
+                    .with_flags(tidb_datatype::FieldTypeFlags::UNSIGNED),
+                Datum::UInt(u64::MAX),
+                "a=18446744073709551615",
+            ),
+            (
+                FieldType::new(FieldTypeCode::Varchar)
+                    .with_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi),
+                Datum::new_collation_string(
+                    b"AbC".to_vec(),
+                    tidb_datatype::Collation::Utf8Mb4GeneralCi,
+                ),
+                "a='ABC'",
+            ),
+        ] {
+            let mut columns = vec![column("a", 1), column("b", 2), column("c", 3)];
+            columns[0].field_type = key_type;
+            let mut fixture = fixture_with_columns(None, columns);
+            fixture.scanner.reverse_unordered.store(true, Ordering::Relaxed);
+            fixture.table.set_common_handle_offsets(vec![0, 1]);
+            let mut handles = Vec::new();
+            for b in 1..=4 {
+                handles.push(
+                    fixture
+                        .table
+                        .insert_row(
+                            &[key.clone(), Datum::Int(b), Datum::Int(b * 10)],
+                            &tidb_expr::NoColumns,
+                        )
+                        .unwrap(),
+                );
+            }
+            commit(&fixture.buffer, &fixture.snapshot);
+            fixture.table.clear_dirty_content();
+            fixture
+                .table
+                .update_row_with_context(
+                    &handles[0],
+                    &[key.clone(), Datum::Int(1), Datum::Int(110)],
+                    &ctx,
+                )
+                .unwrap();
+            fixture
+                .table
+                .delete_row_with_context(&handles[1], &ctx)
+                .unwrap();
+            fixture
+                .table
+                .update_row_with_context(
+                    &handles[2],
+                    &[key.clone(), Datum::Int(13), Datum::Int(130)],
+                    &ctx,
+                )
+                .unwrap();
+            fixture
+                .table
+                .insert_row(
+                    &[key.clone(), Datum::Int(0), Datum::Int(0)],
+                    &tidb_expr::NoColumns,
+                )
+                .unwrap();
+            let catalog = catalog_of(fixture.table);
+            for (suffix, expected) in [
+                ("ORDER BY b", vec![0, 110, 40, 130]),
+                ("ORDER BY b DESC", vec![130, 40, 110, 0]),
+                ("ORDER BY b LIMIT 2", vec![0, 110]),
+                ("ORDER BY b DESC LIMIT 2", vec![130, 40]),
+                ("ORDER BY c DESC LIMIT 2", vec![130, 110]),
+                ("AND c>50 ORDER BY b", vec![110, 130]),
+                ("AND c<50 ORDER BY b", vec![0, 40]),
+            ] {
+                let sql = format!("SELECT c FROM t WHERE {predicate} {suffix}");
+                let (rows, ops) =
+                    capture_storage_ops(|| run_select_on(&sql, &catalog, &ctx).unwrap());
+                assert_eq!(
+                    rows,
+                    expected
+                        .into_iter()
+                        .map(|v| vec![Datum::Int(v)])
+                        .collect::<Vec<_>>(),
+                    "{sql}"
+                );
+                assert_eq!(
+                    ops.cop_scans, 1,
+                    "dirty common-handle scan remained local: {sql}"
+                );
+            }
+            let sql = format!("SELECT SUM(c) FROM t WHERE {predicate}");
+            fixture.scanner.requested_keep_orders.lock().unwrap().clear();
+            let (rows, ops) = capture_storage_ops(|| run_select_on(&sql, &catalog, &ctx).unwrap());
+            assert_eq!(
+                rows,
+                vec![vec![Datum::Decimal(tidb_datatype::Decimal::from_int(280))]]
+            );
+            assert_eq!(
+                ops.cop_scans, 1,
+                "the dirty aggregate must reuse the merged reader"
+            );
+            assert_eq!(
+                *fixture.scanner.requested_keep_orders.lock().unwrap(),
+                vec![false],
+                "an unordered aggregate must not acquire ordered-scan concurrency"
+            );
+            let (rows, ops) = capture_storage_ops(|| {
+                run_select_on("SELECT c FROM t WHERE c>=0 ORDER BY c", &catalog, &ctx).unwrap()
+            });
+            assert_eq!(
+                rows,
+                vec![0, 40, 110, 130]
+                    .into_iter()
+                    .map(|v| vec![Datum::Int(v)])
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                ops.cop_scans, 1,
+                "a projection omitting all handle columns remains remote"
+            );
         }
     }
 
@@ -1453,10 +1951,6 @@ mod tests {
         join.close().unwrap();
         assert_eq!(rows, 1025);
         assert_eq!(fixture.scanner.opened.load(Ordering::SeqCst), 2);
-        assert_eq!(
-            *fixture.scanner.requested_read_aheads.lock().unwrap(),
-            vec![INDEX_JOIN_READ_AHEAD_BATCHES; 2]
-        );
     }
 
     fn catalog_of(table: KvTable) -> Catalog {
@@ -1759,6 +2253,7 @@ mod tests {
     #[test]
     fn staged_rows_survive_the_remote_scan_and_are_filtered_by_the_same_predicate() {
         let mut fixture = fixture();
+        fixture.scanner.reverse_unordered.store(true, Ordering::Relaxed);
         let committed_low = fixture
             .table
             .insert_row(&[Datum::Int(1), Datum::Int(10)], &tidb_expr::NoColumns)
@@ -2042,6 +2537,25 @@ mod tests {
             "the handle is known, so the plan reads the one key and opens \
              neither an iterator nor a coprocessor scan"
         );
+
+        // The ordinary ranger, not the AST fast path, derives these keys.
+        // Residuals, absent rows and ORDER/LIMIT still execute above the get.
+        for (sql, expected) in [
+            ("SELECT b FROM t WHERE a>=5 AND a<=5 AND b>1", vec![vec![Datum::Int(50)]]),
+            ("SELECT b FROM t WHERE a>=5 AND a<=5 AND b>50", vec![]),
+            ("SELECT b FROM t WHERE a IN (5,7,999) AND b>50 ORDER BY b DESC LIMIT 1", vec![vec![Datum::Int(70)]]),
+        ] {
+            let (rows, ops) = capture_storage_ops(|| run_select_on(sql, &catalog, &ctx).unwrap());
+            assert_eq!(rows, expected, "{sql}");
+            assert_eq!(ops, crate::storage::StorageOps { gets: 1, ..Default::default() }, "{sql}");
+            let (fix, _) = tidb_planner::fix_control::OptimizerFixControl::parse("52592:ON").unwrap();
+            assert_eq!(fix.get_bool(tidb_planner::fix_control::FIX_52592), Some(true));
+            let disabled = ctx.clone().with_optimizer_fix_control(fix);
+            let (rows, ops) = capture_storage_ops(|| run_select_on(sql, &catalog, &disabled).unwrap());
+            assert_eq!(rows, expected, "disabled: {sql}");
+            assert!(ops.scans > 0 || ops.cop_scans > 0,
+                "fix 52592 must retain scan execution: {sql}: {ops:?}");
+        }
 
         // Control: the same table read as a RANGE does send a coprocessor
         // request, so the zeros above are the point plan's and not a probe

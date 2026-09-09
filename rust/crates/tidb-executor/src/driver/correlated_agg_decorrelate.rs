@@ -75,24 +75,22 @@ pub(crate) fn rewrite(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Option<SelectStmt> {
-    let mut rewritten = select.clone();
-    let mut changed = rewritten
-        .from
-        .as_mut()
-        .is_some_and(|from| rewrite_join(from, catalog, current_db, ctx));
+    let mut rewritten = super::ast_rewrite::rewrite_derived_selects(select, &mut |child| {
+        rewrite(child, catalog, current_db, ctx)
+    });
     if let Some(current) = rewrite_current(&rewritten, catalog, current_db, ctx) {
-        rewritten = current;
-        changed = true;
+        rewritten = std::borrow::Cow::Owned(current);
     }
     if let Some(current) = rewrite_predicate_aggregate(&rewritten, catalog, current_db, ctx) {
-        rewritten = current;
-        changed = true;
+        rewritten = std::borrow::Cow::Owned(current);
     }
     if let Some(current) = rewrite_count_having_fields(&rewritten, catalog, current_db, ctx) {
-        rewritten = current;
-        changed = true;
+        rewritten = std::borrow::Cow::Owned(current);
     }
-    changed.then_some(rewritten)
+    match rewritten {
+        std::borrow::Cow::Borrowed(_) => None,
+        std::borrow::Cow::Owned(select) => Some(select),
+    }
 }
 
 /// Whether later optimizer rules are looking at the grouped left-join form
@@ -147,41 +145,6 @@ pub(crate) fn is_pulled_scalar_sum_wrapper(select: &SelectStmt) -> bool {
         return false;
     };
     is_pulled_scalar_sum(grouped)
-}
-
-fn rewrite_join(
-    join: &mut Join,
-    catalog: &Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> bool {
-    let mut changed = rewrite_node(&mut join.left, catalog, current_db, ctx);
-    if let Some(right) = &mut join.right {
-        changed |= rewrite_node(right, catalog, current_db, ctx);
-    }
-    changed
-}
-
-fn rewrite_node(
-    node: &mut JoinNode,
-    catalog: &Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> bool {
-    match node {
-        JoinNode::Derived { subquery, .. } => {
-            let QueryStmt::Select(select) = &mut **subquery else {
-                return false;
-            };
-            let Some(rewritten) = rewrite(select, catalog, current_db, ctx) else {
-                return false;
-            };
-            **select = rewritten;
-            true
-        }
-        JoinNode::Join(join) => rewrite_join(join, catalog, current_db, ctx),
-        JoinNode::Table(_) => false,
-    }
 }
 
 #[derive(Clone)]

@@ -21,7 +21,7 @@
 //! it: the same socket carries plaintext and then TLS, and both handles on the
 //! connection see the swap.
 
-use std::io::{Read, Write};
+use std::io::{IoSlice, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -105,7 +105,12 @@ fn the_same_socket_carries_plaintext_and_then_tls() {
         // Two handles, as the connection path has: one writes, one reads.
         let mut writer = stream.clone();
         let mut reader = stream.clone();
-        writer.write_all(b"plaintext-greeting").expect("greeting");
+        assert_eq!(
+            writer
+                .write_vectored(&[IoSlice::new(b"plaintext-"), IoSlice::new(b"greeting")])
+                .expect("plaintext vectored greeting"),
+            18
+        );
         writer.flush().expect("flush greeting");
         assert!(!stream.is_tls(), "the greeting is sent in the clear");
         stream.upgrade_to_tls(&tls).expect("upgrade");
@@ -113,13 +118,30 @@ fn the_same_socket_carries_plaintext_and_then_tls() {
         let mut received = [0_u8; 9];
         reader.read_exact(&mut received).expect("encrypted read");
         assert_eq!(&received, b"encrypted");
-        writer.write_all(b"server-after-tls").expect("encrypted write");
+        assert_eq!(
+            writer
+                .write_vectored(&[IoSlice::new(b"server-"), IoSlice::new(b"after-tls")])
+                .expect("encrypted vectored write"),
+            16,
+            "TLS must forward every slice through one write operation"
+        );
         writer.flush().expect("flush");
+        // Exceed Rustls's ordinary plaintext buffer so frame writing must
+        // also handle partial acceptance across its header/body slices.
+        let mut packets =
+            tidb_protocol::PacketIoWriter::new(writer, tidb_protocol::CompressionAlgorithm::None)
+                .unwrap();
+        packets
+            .write_packet(&vec![b'x'; 128 * 1024])
+            .expect("large TLS packet");
+        packets.flush().expect("flush large TLS packet");
     });
 
     let mut socket = TcpStream::connect(address).expect("connect");
     let mut greeting = [0_u8; 18];
-    socket.read_exact(&mut greeting).expect("plaintext greeting");
+    socket
+        .read_exact(&mut greeting)
+        .expect("plaintext greeting");
     assert_eq!(&greeting, b"plaintext-greeting");
 
     let mut client = client_session(&cert_path);
@@ -129,6 +151,11 @@ fn the_same_socket_carries_plaintext_and_then_tls() {
     let mut answer = [0_u8; 16];
     client_stream.read_exact(&mut answer).expect("client read");
     assert_eq!(&answer, b"server-after-tls");
+    let mut packets = tidb_protocol::PacketReader::new(&mut client_stream);
+    assert_eq!(
+        packets.read_packet().expect("large TLS packet"),
+        vec![b'x'; 128 * 1024]
+    );
 
     server.join().expect("server thread");
     std::fs::remove_dir_all(&directory).expect("remove temporary directory");

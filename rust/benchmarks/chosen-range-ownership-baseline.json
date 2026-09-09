@@ -1,0 +1,247 @@
+{
+  "status": "WIP: chosen handle-range ownership validated locally; not whole-package parity or live sysbench/TPC-C acceptance.",
+  "change": "Carry one complete ranger result (ranges, borrowed residual conditions, access metadata) through candidate costing, chosen SELECT paths, join-leaf conversion and UPDATE/DELETE reads. Remove duplicate range construction and use the selected write path's real statistics.",
+  "files": [
+    "rust/crates/tidb-executor/src/access_cost.rs",
+    "rust/crates/tidb-executor/src/driver/access.rs",
+    "rust/crates/tidb-executor/src/driver/leaf_access.rs",
+    "rust/crates/tidb-executor/src/explain.rs",
+    "rust/docs/prepared-plan-execplan.md"
+  ],
+  "go_source": [
+    "pkg/planner/core/operator/physicalop/physical_table_scan.go: GetOriginalPhysicalTableScan retains path.Ranges, AccessConds and TableFilters",
+    "pkg/planner/core/find_best_task.go: convertToTableScan and point-reader conversions"
+  ],
+  "base_commit": "d04d200a0e3058afd49fbab9a4ef79d645c1d63f",
+  "worktree": "Shared dirty hparser-integration worktree preserved. Before executable includes preceding native IndexJoin range-cache changes. No Git or remote writes.",
+  "evidence_directory": "/private/tmp/tidb-live-planning.MFcV5P",
+  "binaries": {
+    "before_sha256": "d1f129340c6000035010dd2dfe157e328151fc0a4fbafe42bf175439a4b2d07f",
+    "after_sha256": "ed05a492d4d402785ae8e51dc29851bf714d12942928a566e52d9ed475a5a305",
+    "replay_before_sha256": "c0a267ee86a33e627838dac2f2bce8679088a1c61a52d75cea800b83123bf95f",
+    "replay_after_sha256": "c23cc62ead5b3bf31711d9d92ebb41791fa1e472e309ee5935e52d46ddf1fd92",
+    "source_note": "Final source differs from measured build only in whitespace and documentation comments."
+  },
+  "measurement": {
+    "scope": "One isolated Session with in-process storage and four rows. Prepared bind/execute entry, 100 warmups, five rounds of 10000 operations per query per invocation, two invocations per binary.",
+    "source": "rust/benchmarks/type-metadata-sharing-baseline.json contains the unchanged complete benchmark source and manifest.",
+    "order": [
+      "before-a",
+      "after-a",
+      "after-b",
+      "before-b"
+    ],
+    "qualification": "Builds, tests and fixture replay finished before timings; profiling ran separately. All exact result rows and metadata match. Range, aggregate and sort improvements recur across both invocation pairs. Point (-0.6%) and secondary-index (+0.24%) differences are treated as noise, not wins or regressions. No host-wide quiescence guarantee or live workload acceptance; compare only these paired binaries, not absolute timings from earlier baselines.",
+    "point": {
+      "before_us": [
+        1.3470582999999998,
+        1.3825459,
+        1.4013708,
+        1.3998917,
+        1.3986583000000001,
+        1.4801125,
+        1.4802625,
+        1.4877959,
+        1.4838541,
+        1.4837375
+      ],
+      "after_us": [
+        1.5091541,
+        1.4311958999999999,
+        1.4480334000000001,
+        1.5092917,
+        1.5415166,
+        1.4037416,
+        1.4280709,
+        1.424025,
+        1.4276624999999998,
+        1.4330042
+      ],
+      "before_median_us": 1.44074165,
+      "after_median_us": 1.4321000499999998,
+      "elapsed_change_percent": -0.5998021921557073
+    },
+    "range": {
+      "before_us": [
+        41.7208125,
+        41.800033400000004,
+        42.3992584,
+        41.82,
+        41.8787292,
+        42.738949999999996,
+        43.2357833,
+        42.36875,
+        42.467275,
+        42.201724999999996
+      ],
+      "after_us": [
+        39.637625,
+        39.6638125,
+        39.6759083,
+        39.5562167,
+        39.6550542,
+        39.8596042,
+        39.9896541,
+        40.291620900000005,
+        39.824737500000005,
+        40.0715833
+      ],
+      "before_median_us": 42.285237499999994,
+      "after_median_us": 39.7503229,
+      "elapsed_change_percent": -5.99479806634643
+    },
+    "index": {
+      "before_us": [
+        61.54945,
+        63.068804199999995,
+        62.0701875,
+        62.0347167,
+        62.0448375,
+        64.246825,
+        62.7665875,
+        63.543625,
+        63.266125,
+        63.6253084
+      ],
+      "after_us": [
+        62.8937125,
+        62.7796708,
+        63.0768042,
+        62.476099999999995,
+        64.3775166,
+        63.4260333,
+        62.9893041,
+        63.8290583,
+        63.5526208,
+        63.0668042
+      ],
+      "before_median_us": 62.91769585,
+      "after_median_us": 63.0718042,
+      "elapsed_change_percent": 0.24493641720033654
+    },
+    "aggregate": {
+      "before_us": [
+        62.0744792,
+        64.3701375,
+        62.5217375,
+        62.191075,
+        62.168125,
+        62.8722542,
+        62.692941700000006,
+        62.0356042,
+        63.495112500000005,
+        64.0525166
+      ],
+      "after_us": [
+        60.9726584,
+        59.9824834,
+        59.9724291,
+        60.232675,
+        60.5322917,
+        59.2076916,
+        59.3243583,
+        59.098699999999994,
+        59.855737500000004,
+        60.1195
+      ],
+      "before_median_us": 62.6073396,
+      "after_median_us": 59.97745625,
+      "elapsed_change_percent": -4.200599109948444
+    },
+    "sort": {
+      "before_us": [
+        56.65525,
+        57.0627208,
+        55.967225,
+        56.3669625,
+        56.6247125,
+        57.463666700000005,
+        57.6561333,
+        57.7775792,
+        58.2924959,
+        57.80115
+      ],
+      "after_us": [
+        55.0797542,
+        54.59565,
+        54.3644291,
+        54.462079100000004,
+        53.822058299999995,
+        56.5664792,
+        55.820137499999994,
+        55.1803959,
+        55.2808667,
+        54.5022292
+      ],
+      "before_median_us": 57.26319375,
+      "after_median_us": 54.8377021,
+      "elapsed_change_percent": -4.23569048661383
+    }
+  },
+  "profile": {
+    "tool": "macOS sample, 4 seconds, 1 ms, own isolated benchmark process only; not CPU-only xctrace.",
+    "before_main_thread_samples": 3035,
+    "after_main_thread_samples": 3063,
+    "before_build_handle_ranges_inclusive_frame_samples": 214,
+    "after_build_handle_ranges_inclusive_frame_samples": 91,
+    "observation": "Before: enumerate_paths construction plus direct chosen-path residual rebuild and handle_predicate_is_consumed rebuild. After: only enumerate_paths -> build_handle_ranges remains. Raw sample counts support call-chain removal, not a throughput claim.",
+    "before": "/private/tmp/tidb-live-planning.MFcV5P/range-before.sample",
+    "after": "/private/tmp/tidb-live-planning.MFcV5P/range-after.sample"
+  },
+  "validation": {
+    "profile": "WIP: consolidated scope checks; no Ready claim.",
+    "targeted_tests": {
+      "access_cost": 29,
+      "dml": 10,
+      "index_ranges": 18,
+      "index_prefix_reads": 13,
+      "joins": 16,
+      "handle_range": 8,
+      "total": 94
+    },
+    "go_fixture_topics": [
+      "table/index",
+      "explain_easy",
+      "explain_complex",
+      "util/ranger",
+      "index_join",
+      "index_merge",
+      "executor/aggregate",
+      "session/clustered_index",
+      "executor/prepared",
+      "expression/charset_and_collation",
+      "common_collation",
+      "collation_pointget",
+      "subquery",
+      "planner/core/join_reorder_through_projection",
+      "executor/update",
+      "executor/delete"
+    ],
+    "fixture_results": {
+      "matched": 3384,
+      "existing_divergences": 126,
+      "skipped": 500,
+      "comparison": "All 16 complete before/after reports identical after elapsed-time normalization."
+    },
+    "tests_added_or_deleted": 0,
+    "commands_cwd": "rust/",
+    "commands": [
+      "cargo test --offline --locked --release -j12 -p tidb-executor --lib --no-run",
+      "cargo build --offline --locked --release -j12 --target-dir /Users/qiliu/projects/tidb/rust/target --manifest-path /private/tmp/tidb-prepared-owner.ixmsOs/probe/Cargo.toml",
+      "cargo test --offline --locked --release -j12 -p difftest-result-tests --test integration_diff --no-run",
+      "for suite in access_cost:: driver::tests::dml:: driver::tests::index_ranges:: driver::tests::index_prefix_reads:: driver::tests::joins:: handle_range::; do target/release/build/tidb-executor/25c7702b011f2820/out/tidb_executor-25c7702b011f2820 \"$suite\" --test-threads=12 > /private/tmp/tidb-live-planning.MFcV5P/test-${suite//::/_}.log 2>&1 || exit; done",
+      "ruby /private/tmp/tidb-live-planning.MFcV5P/replay.rb before /private/tmp/tidb-live-planning.MFcV5P/replay-before",
+      "ruby /private/tmp/tidb-live-planning.MFcV5P/replay.rb after /private/tmp/tidb-live-planning.MFcV5P/replay-after",
+      "for run in before-a after-a after-b before-b; do /private/tmp/tidb-live-planning.MFcV5P/probe-${run%-*} 10000 > /private/tmp/tidb-live-planning.MFcV5P/$run.log || exit; done",
+      "ruby /private/tmp/tidb-live-planning.MFcV5P/timings.rb",
+      "bash /Users/qiliu/.codex/skills/instruments/scripts/sample-quick.sh --launch -d 4 -o /private/tmp/tidb-live-planning.MFcV5P/range-after.sample -- /private/tmp/tidb-live-planning.MFcV5P/probe-after 200000 range"
+    ]
+  },
+  "risks_and_gaps": [
+    "Borrowed residual lifetime is bounded by input AST; synthetic IndexMerge branches are retained until candidate selection finishes.",
+    "Root-only excluded predicates remain on the original WHERE; approximate predicates retain the existing exact-range guard.",
+    "Writes now cost all ordinary candidates using loaded statistics rather than mixing pseudo index selection with a separately reestimated table fallback; analyzed-statistics workload plan changes were not exhaustively covered.",
+    "No fresh Go server/profile, live TiKV, sysbench, TPC-C, make lint or Ready validation.",
+    "Full native prepared-plan cache activation, remaining Go package parity and existing fixture divergences remain open."
+  ]
+}

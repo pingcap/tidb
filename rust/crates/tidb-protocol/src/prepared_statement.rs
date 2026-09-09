@@ -908,11 +908,12 @@ fn encode_binary_result_row_inner(
 
 fn encode_binary_result_row_owned_inner(
     cells: Vec<BinaryResultCell>,
-    mut column_encoding: Option<(&[ColumnInfo], crate::result_encoder::ResultEncoder)>,
-    precomputed_encodings: Option<&[Option<crate::result_encoder::ResultEncoder>]>,
-) -> Vec<u8> {
+    encodings: &[Option<crate::result_encoder::ResultEncoder>],
+    encoded: &mut Vec<u8>,
+) {
     let null_bitmap_len = (cells.len() + 7 + 2) / 8;
-    let mut encoded = Vec::with_capacity(1 + null_bitmap_len + cells.len() * 8);
+    encoded.clear();
+    encoded.reserve(1 + null_bitmap_len + cells.len() * 8);
     encoded.push(0);
     encoded.resize(1 + null_bitmap_len, 0);
     for (index, cell) in cells.into_iter().enumerate() {
@@ -938,37 +939,16 @@ fn encode_binary_result_row_owned_inner(
                 encoded.extend_from_slice(&value.to_bits().to_le_bytes());
             }
             BinaryResultCell::NewDecimal(value) => {
-                append_length_encoded_bytes(&mut encoded, Some(value.to_string().as_bytes()));
+                append_length_encoded_bytes(encoded, Some(value.to_string().as_bytes()));
             }
             BinaryResultCell::String(bytes) => {
-                let bytes = if let Some(encodings) = precomputed_encodings {
-                    match encodings.get(index).and_then(Option::as_ref) {
-                        Some(encoder) => encoder
-                            .encode_data_owned(bytes)
-                            .expect("data encoding was initialized above"),
-                        None => bytes,
-                    }
-                } else if let Some((columns, encoder)) = &mut column_encoding {
-                    let metadata = &columns[index];
-                    let collation = if matches!(
-                        metadata.type_code,
-                        TYPE_JSON | TYPE_TIDB_VECTOR_FLOAT32
-                    ) {
-                        DEFAULT_COLLATION_ID
-                    } else {
-                        metadata.charset
-                    };
-                    if encoder.update_data_encoding(collation).is_ok() {
-                        encoder
-                            .encode_data_owned(bytes)
-                            .expect("data encoding was initialized above")
-                    } else {
-                        bytes
-                    }
-                } else {
-                    bytes
+                let bytes = match &encodings[index] {
+                    Some(encoder) => encoder
+                        .encode_data_owned(bytes)
+                        .expect("data encoding was initialized above"),
+                    None => bytes,
                 };
-                append_length_encoded_bytes(&mut encoded, Some(&bytes));
+                append_length_encoded_bytes(encoded, Some(&bytes));
             }
             BinaryResultCell::Datetime(packed, kind) => {
                 encoded.extend_from_slice(&encode_binary_datetime(packed, kind));
@@ -978,7 +958,6 @@ fn encode_binary_result_row_owned_inner(
             }
         }
     }
-    encoded
 }
 
 /// Whether a result column type is dumped as a length-encoded string by TiDB's
@@ -1207,6 +1186,18 @@ impl BinaryResultSetStream {
         &self,
         cells: Vec<BinaryResultCell>,
     ) -> Result<Vec<u8>, PreparedStatementError> {
+        let mut encoded = Vec::new();
+        self.row_packet_owned_into(cells, &mut encoded)?;
+        Ok(encoded)
+    }
+
+    /// Encodes a row into reusable caller-owned storage. Validation leaves the
+    /// buffer unchanged on error; successful rows replace its previous contents.
+    pub fn row_packet_owned_into(
+        &self,
+        cells: Vec<BinaryResultCell>,
+        encoded: &mut Vec<u8>,
+    ) -> Result<(), PreparedStatementError> {
         if self.state != BinaryResultSetState::Rows {
             return Err(PreparedStatementError::InvalidField {
                 field: "binary result-set state",
@@ -1227,11 +1218,8 @@ impl BinaryResultSetStream {
                 });
             }
         }
-        Ok(encode_binary_result_row_owned_inner(
-            cells,
-            Some((&self.columns, self.options.result_encoder)),
-            Some(&self.data_encodings),
-        ))
+        encode_binary_result_row_owned_inner(cells, &self.data_encodings, encoded);
+        Ok(())
     }
 
     /// Emits the terminal EOF exactly once.
