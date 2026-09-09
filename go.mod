@@ -119,8 +119,13 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.8-0.20260319064229-5cba4fc2f3a9
 	github.com/tikv/pd/client v0.0.0-20260310072508-b936d55fc33e
+=======
+	github.com/tikv/client-go/v2 v2.0.8-0.20260908025646-0f91f124d321
+	github.com/tikv/pd/client v0.0.0-20260804033407-85a975a5ca78
+>>>>>>> e152661cf10 (server: detect client disconnects in explicit transactions (#70343) (#70777))
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
