@@ -1775,7 +1775,25 @@ func (m *MemArbitrator) doExecuteFirstTask() (exec bool) {
 		} else {
 			m.release(reclaimedBytes)
 			m.updateBlockedAt()
-			m.doReclaimByWorkMode(entry, reclaimedBytes)
+			if m.execMu.mode == ArbitratorModeStandard || entry.ctx.waitAverse {
+				exec = true
+
+				if ctx := entry.ctx.Load(); ctx.available() {
+					reason := ArbitratorStandardCancel
+					if entry.ctx.waitAverse {
+						reason = ArbitratorWaitAverseCancel
+						m.execMetrics.Cancel.WaitAverse++
+					} else {
+						m.execMetrics.Cancel.StandardMode++
+					}
+					ctx.stop(reason)
+					if m.removeTask(entry) {
+						entry.windUp(0, ArbitrateFail)
+					}
+				}
+			} else if m.execMu.mode == ArbitratorModePriority {
+				m.doReclaimMemByPriority(entry, entry.request.quota-reclaimedBytes)
+			}
 		}
 
 		entry.request.taskMu.Unlock()
@@ -1793,26 +1811,6 @@ func (m *MemArbitrator) doReclaimNonBlockingTasks() {
 		}
 	} else if m.taskNumOfWaitAverse() != 0 {
 		m.execMetrics.Cancel.WaitAverse += m.doCancelPendingTasks(maxArbitrationPriority, true)
-	}
-}
-
-func (m *MemArbitrator) doReclaimByWorkMode(entry *rootPoolEntry, reclaimedBytes int64) {
-	if m.execMu.mode == ArbitratorModeStandard || entry.ctx.waitAverse {
-		if ctx := entry.ctx.Load(); ctx.available() {
-			reason := ArbitratorStandardCancel
-			if entry.ctx.waitAverse {
-				reason = ArbitratorWaitAverseCancel
-				m.execMetrics.Cancel.WaitAverse++
-			} else {
-				m.execMetrics.Cancel.StandardMode++
-			}
-			ctx.stop(reason)
-			if m.removeTask(entry) {
-				entry.windUp(0, ArbitrateFail)
-			}
-		}
-	} else if m.execMu.mode == ArbitratorModePriority {
-		m.doReclaimMemByPriority(entry, entry.request.quota-reclaimedBytes)
 	}
 }
 
@@ -2890,7 +2888,6 @@ func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed
 
 				if ctx := entry.ctx.Load(); ctx.available() {
 					memoryUsed := ctx.arbitrateHelper.MemUsage().HeapInuse
-
 					if memoryUsed <= 0 {
 						continue
 					}
