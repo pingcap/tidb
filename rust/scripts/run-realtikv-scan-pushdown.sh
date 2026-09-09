@@ -823,9 +823,9 @@ echo "=== the cap-and-predicate invariant, on rows"
 # local pass would remove some of those rows -- a silently short answer. Both
 # spellings must return the same rows the Go node returns.
 compare "LIMIT over a fully pushed predicate" \
-  "SELECT id FROM t WHERE sbig > 900 ORDER BY id LIMIT 5" pushed 86
+  "SELECT id FROM t WHERE sbig > 900 ORDER BY id LIMIT 5" pushed 5
 compare "LIMIT over a predicate only half of which lowers" \
-  "SELECT id FROM t WHERE sbig > 900 AND sbig = '950' ORDER BY id LIMIT 5" pushed 86
+  "SELECT id FROM t WHERE sbig > 900 AND sbig = '950' ORDER BY id LIMIT 5" pushed 1
 
 echo
 echo "=== what is NOT pushed, and why (not a failure, a scope statement)"
