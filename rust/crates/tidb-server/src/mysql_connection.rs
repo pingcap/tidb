@@ -2489,15 +2489,17 @@ fn serve_connection_inner<F: QuerySessionFactory>(
 
 fn decode_result_set_error(message: &str) -> (u16, String) {
     const PREFIX: &str = "__TIDB_ERRNO:";
-    let Some(rest) = message.strip_prefix(PREFIX) else {
+    let Some(start) = message.find(PREFIX) else {
         return (ER_UNKNOWN_ERROR, message.to_owned());
     };
+    let rest = &message[start + PREFIX.len()..];
     let Some((code, text)) = rest.split_once(':') else {
         return (ER_UNKNOWN_ERROR, message.to_owned());
     };
     let Ok(code) = code.parse::<u16>() else {
         return (ER_UNKNOWN_ERROR, message.to_owned());
     };
+    let text = text.trim_end_matches(['"', ')']);
     (code, text.to_owned())
 }
 
