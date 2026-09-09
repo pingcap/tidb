@@ -90,7 +90,8 @@ func commonGetAdjustCount(isOverlapThreshold bool, concurrency int) int64 {
 		logutil.BgLogger().Error("concurrency is less than 0 or equal to 0, set to 1", zap.Int("concurrency", concurrency))
 		concurrency = 1
 	}
-	cnt := 250 * int64(concurrency)
+	const maxOpenedConnPerCore = 250
+	cnt := maxOpenedConnPerCore * int64(concurrency)
 	if isOverlapThreshold {
 		cnt = min(cnt, maxMergeSortOverlapThreshold)
 	} else {

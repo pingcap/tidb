@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
@@ -182,12 +183,12 @@ func (w *chunkWorker) Close() error {
 		// Note: we cannot ignore close error as we're writing to S3 or GCS.
 		// ignore error might cause data loss. below too.
 		if _, err := w.dataWriter.Close(closeCtx); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	if w.indexWriter != nil {
 		if _, err := w.indexWriter.Close(closeCtx); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 

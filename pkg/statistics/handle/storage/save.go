@@ -439,6 +439,27 @@ func InsertColStats2KV(
 	count := req.GetRow(0).GetInt64(0)
 	hasStatsUpdate := false
 	for _, colInfo := range colInfos {
+		if colInfo.IsVirtualGenerated() {
+			// Virtual generated columns do not have column stats. Keep the
+			// same zero placeholder shape as the create-table stats path.
+			// Analyze-skipped columns are real stored columns, so their
+			// default/null handling needs a separate decision.
+			// TODO: define add-column stats behavior for analyze-skipped columns.
+			if _, err = util.ExecWithCtx(
+				ctx, sctx,
+				`insert ignore into mysql.stats_histograms
+					(version, table_id, is_index, hist_id, distinct_count, null_count)
+				values (%?, %?, 0, %?, 0, 0)`,
+				startTS, physicalID, colInfo.ID,
+			); err != nil {
+				return 0, errors.Trace(err)
+			}
+			if sctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
+				hasStatsUpdate = true
+			}
+			continue
+		}
+
 		value, err := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
 		if err != nil {
 			return 0, errors.Trace(err)

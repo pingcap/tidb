@@ -1,0 +1,1452 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package executor_test
+
+import (
+	"context"
+	"fmt"
+	"slices"
+	"sync"
+	"sync/atomic"
+	"testing"
+
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikvrpc"
+)
+
+const (
+	statementRUOwnerInstallFailpoint     = "github.com/pingcap/tidb/pkg/executor/observeStatementRUOwnerInstallForTest"
+	statementRUCalibrationUnitsFailpoint = "github.com/pingcap/tidb/pkg/executor/observeStatementRUCalibrationUnitsForTest"
+)
+
+type statementRUObservation struct {
+	stmt  *executor.ExecStmt
+	owner *executor.StatementRUOwnerObservationForTest
+}
+
+func observeInstalledStatementRUOwner(stmt *executor.ExecStmt) *statementRUObservation {
+	return &statementRUObservation{
+		stmt:  stmt,
+		owner: executor.ObserveStatementRUOwnerForTest(stmt),
+	}
+}
+
+func requireStatementRUTerminalFlatPlan(t *testing.T, stmt *executor.ExecStmt) *plannercore.FlatPhysicalPlan {
+	t.Helper()
+	require.NotNil(t, stmt)
+	require.NotNil(t, stmt.Ctx)
+	flat, ok := stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
+	require.True(t, ok)
+	require.NotNil(t, flat)
+	return flat
+}
+
+func countStatementRUFlatOccurrences(flat *plannercore.FlatPhysicalPlan) (total, scalar int) {
+	if flat == nil {
+		return 0, 0
+	}
+	countTree := func(tree plannercore.FlatPlanTree) int {
+		count := 0
+		for _, operator := range tree {
+			if operator != nil && operator.Origin != nil {
+				count++
+			}
+		}
+		return count
+	}
+	total += countTree(flat.Main)
+	for _, tree := range flat.CTEs {
+		total += countTree(tree)
+	}
+	for _, tree := range flat.ScalarSubQueries {
+		count := countTree(tree)
+		total += count
+		scalar += count
+	}
+	return total, scalar
+}
+
+func isStatementRUPlanType[T base.Plan](plan base.Plan) bool {
+	_, ok := plan.(T)
+	return ok
+}
+
+func drainStatementRURecordSet(t *testing.T, rs sqlexec.RecordSet) error {
+	t.Helper()
+	chk := rs.NewChunk(nil)
+	for {
+		chk.Reset()
+		if err := rs.Next(context.Background(), chk); err != nil {
+			return err
+		}
+		if chk.NumRows() == 0 {
+			return nil
+		}
+	}
+}
+
+func enableStatementRUExecutionInfo(t *testing.T) {
+	t.Helper()
+	original := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
+	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(true)
+	t.Cleanup(func() {
+		config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(original)
+	})
+}
+
+func TestStatementRUAnalyzeNoDelayLifecycle(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, index idx_b(b))")
+	tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30)")
+
+	var observation *statementRUObservation
+	testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+		if stmt.Ctx == tk.Session() {
+			observation = observeInstalledStatementRUOwner(stmt)
+		}
+	})
+	type calibrationObservation struct {
+		count     int
+		state     string
+		scanBytes float64
+	}
+	connectionID := tk.Session().GetSessionVars().ConnectionID
+	var calibration calibrationObservation
+	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+		observedConnectionID uint64,
+		state string,
+		_, scanBytes, _, _, _, _ float64,
+		_, _, _, _ float64,
+	) {
+		if observedConnectionID != connectionID {
+			return
+		}
+		calibration.count++
+		calibration.state = state
+		calibration.scanBytes = scanBytes
+	})
+
+	tk.MustExec("analyze table t")
+	require.NotNil(t, observation)
+	require.NotNil(t, observation.owner)
+	require.True(t, observation.owner.ConsumedForTest())
+	require.True(t, observation.owner.RecordedSuccessForTest())
+	analyzePlan, ok := observation.stmt.Plan.(*plannercore.Analyze)
+	require.True(t, ok)
+	require.Positive(t, analyzePlan.ID())
+	flat := requireStatementRUTerminalFlatPlan(t, observation.stmt)
+	require.Len(t, flat.Main, 1)
+	require.Same(t, analyzePlan, flat.Main[0].Origin)
+
+	runtimeStats := observation.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+	detail, found := runtimeStats.GetCopScanDetail(analyzePlan.ID())
+	require.True(t, found)
+	require.NotNil(t, detail)
+	scanBytes, found := runtimeStats.GetAnalyzeScanBytes(analyzePlan.ID())
+	require.True(t, found)
+	require.GreaterOrEqual(t, scanBytes, float64(0))
+	execDetail := observation.stmt.Ctx.GetSessionVars().StmtCtx.GetExecDetails()
+	require.NotNil(t, execDetail.ScanDetail)
+	require.Equal(t, detail.ProcessedKeys, execDetail.ScanDetail.ProcessedKeys)
+	require.Equal(t, detail.ProcessedKeysSize, execDetail.ScanDetail.ProcessedKeysSize)
+
+	binaryPlan := observation.stmt.GetBinaryPlan()
+	require.NotEmpty(t, binaryPlan)
+	decoded, err := plancodec.DecodeBinaryPlan(binaryPlan)
+	require.NoError(t, err)
+	require.Contains(t, decoded, "Analyze")
+	require.Contains(t, decoded, "cop_task:")
+
+	require.Equal(t, 1, calibration.count)
+	require.Equal(t, "incomplete", calibration.state)
+	require.InDelta(t, scanBytes, calibration.scanBytes, 1e-9)
+
+	rows := tk.MustQuery("select tidb_decode_binary_plan(?)", binaryPlan).Rows()
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0], 1)
+	decodedBySQL, ok := rows[0][0].(string)
+	require.True(t, ok)
+	require.Contains(t, decodedBySQL, "Analyze")
+	require.Contains(t, decodedBySQL, "cop_task:")
+}
+
+func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
+	t.Run("producer plans publish only supported operator trees", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b), index idx_c(c))")
+		tk.MustExec("insert into t values (1, 10, 100), (2, 20, 200), (3, 30, 300)")
+		tk.MustExec("create table nullable_join(a int)")
+		tk.MustExec("insert into nullable_join values (1), (null), (2)")
+		tk.MustExec("create table naaj_a(a int, b int, c int)")
+		tk.MustExec("create table naaj_b(a int, b int, c int)")
+		tk.MustExec("insert into naaj_a values (1, 1, 1)")
+		tk.MustExec("insert into naaj_b values (1, 2, 2), (1, null, 3)")
+		tk.MustExec("set @@tidb_enable_non_prepared_plan_cache = off")
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx == tk.Session() {
+				observation = observeInstalledStatementRUOwner(stmt)
+			}
+		})
+		type calibrationObservation struct {
+			count          int
+			state          string
+			cpuWork        float64
+			scanBytes      float64
+			netBytes       float64
+			frontendBytes  float64
+			hashStateRows  float64
+			joinOutputRows float64
+		}
+		connectionID := tk.Session().GetSessionVars().ConnectionID
+		var calibrationMu sync.Mutex
+		var calibration calibrationObservation
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			observedConnectionID uint64,
+			state string,
+			cpuWork, scanBytes, netBytes, frontendCompileBytes, hashStateRows, joinOutputRows float64,
+			_, _, _, _ float64,
+		) {
+			if observedConnectionID != connectionID {
+				return
+			}
+			calibrationMu.Lock()
+			defer calibrationMu.Unlock()
+			calibration.count++
+			calibration.state = state
+			calibration.cpuWork = cpuWork
+			calibration.scanBytes = scanBytes
+			calibration.netBytes = netBytes
+			calibration.frontendBytes = frontendCompileBytes
+			calibration.hashStateRows = hashStateRows
+			calibration.joinOutputRows = joinOutputRows
+		})
+		type operatorExpectation func(base.Plan) bool
+		testCases := []struct {
+			name           string
+			before         []string
+			after          []string
+			query          string
+			rows           [][]any
+			expectOperator operatorExpectation
+			sortRows       bool
+			wantPublish    bool
+			wantCPUWork    bool
+			wantHashState  bool
+			wantHashRows   float64
+			wantJoinOutput bool
+			wantRootAndCop bool
+		}{
+			{name: "Selection", query: "select * from t ignore index (idx_b) where b > 10", rows: testkit.Rows("2 20 200", "3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalSelection], sortRows: true, wantPublish: true, wantCPUWork: true},
+			{name: "Sort", query: "select * from t ignore index (idx_b) order by b desc", rows: testkit.Rows("3 30 300", "2 20 200", "1 10 100"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalSort], wantPublish: true, wantCPUWork: true},
+			{name: "TopN", query: "select * from t ignore index (idx_b) order by b desc limit 2", rows: testkit.Rows("3 30 300", "2 20 200"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalTopN], wantPublish: true, wantCPUWork: true},
+			{name: "Limit", query: "select * from t ignore index (idx_b) limit 2", rows: testkit.Rows("1 10 100", "2 20 200"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalLimit], wantPublish: true, wantCPUWork: true},
+			{name: "IndexReader", query: "select b from t use index (idx_b) where b >= 20", rows: testkit.Rows("20", "30"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexReader], sortRows: true, wantPublish: true},
+			{name: "IndexLookup", query: "select * from t use index (idx_b) where b >= 20", rows: testkit.Rows("2 20 200", "3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexLookUpReader], sortRows: true, wantPublish: true},
+			{name: "IndexMergeReader", query: "select /*+ USE_INDEX_MERGE(t, idx_b, idx_c) */ * from t where b = 10 or c = 200", rows: testkit.Rows("1 10 100", "2 20 200"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexMergeReader], sortRows: true, wantPublish: true},
+			{name: "UnionScan", before: []string{"begin", "insert into t values (4, 40, 400)"}, after: []string{"rollback"}, query: "select * from t ignore index (idx_b, idx_c) where a >= 3", rows: testkit.Rows("3 30 300", "4 40 400"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalUnionScan], sortRows: true, wantPublish: true, wantCPUWork: true},
+			{name: "HashJoin optimized", before: []string{"set tidb_hash_join_version = 'optimized'"}, query: "select /*+ HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantJoinOutput: true},
+			{name: "HashJoin legacy", before: []string{"set tidb_hash_join_version = 'legacy'"}, after: []string{"set tidb_hash_join_version = 'optimized'"}, query: "select /*+ HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantJoinOutput: true},
+			{name: "HashJoin legacy excludes ordinary null keys", before: []string{"set tidb_hash_join_version = 'legacy'"}, after: []string{"set tidb_hash_join_version = 'optimized'"}, query: "select /*+ HASH_JOIN(n1, n2) */ * from nullable_join n1 join nullable_join n2 on n1.a = n2.a", rows: testkit.Rows("1 1", "2 2"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 2, wantJoinOutput: true},
+			{name: "HashJoin legacy NAAJ includes null bucket", before: []string{"set tidb_hash_join_version = 'legacy'", "set tidb_enable_null_aware_anti_join = on"}, after: []string{"set tidb_enable_null_aware_anti_join = default", "set tidb_hash_join_version = 'optimized'"}, query: "select * from naaj_a where (a, b) not in (select a, b from naaj_b)", rows: testkit.Rows(), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 2},
+			{name: "MergeJoin", query: "select /*+ MERGE_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalMergeJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantJoinOutput: true},
+			{name: "IndexJoin", query: "select /*+ INL_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantJoinOutput: true},
+			{name: "IndexHashJoin", query: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexHashJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantJoinOutput: true},
+			{name: "HashAgg parallel", query: "select /*+ HASH_AGG() */ count(*) from t group by b", rows: testkit.Rows("1", "1", "1"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashAgg], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 6, wantRootAndCop: true},
+			{name: "HashAgg serial", before: []string{"set tidb_hashagg_partial_concurrency = 1", "set tidb_hashagg_final_concurrency = 1"}, after: []string{"set tidb_hashagg_partial_concurrency = default", "set tidb_hashagg_final_concurrency = default"}, query: "select /*+ HASH_AGG() */ count(*) from t group by b", rows: testkit.Rows("1", "1", "1"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashAgg], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 6, wantRootAndCop: true},
+			{name: "StreamAgg", query: "select /*+ STREAM_AGG() */ count(*) from t group by b", rows: testkit.Rows("1", "1", "1"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalStreamAgg], sortRows: true, wantPublish: true, wantCPUWork: true, wantRootAndCop: true},
+			{name: "Projection", query: "select b + 1 from t ignore index (idx_b)", rows: testkit.Rows("11", "21", "31"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalProjection], sortRows: true, wantPublish: true, wantCPUWork: true},
+			{name: "Window", query: "select row_number() over () from t ignore index (idx_b, idx_c)", rows: testkit.Rows("1", "2", "3"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalWindow], sortRows: true, wantPublish: true, wantCPUWork: true},
+			{name: "Shuffle Window", query: "select sum(a) over(partition by a order by b) from t ignore index (idx_b, idx_c)", rows: testkit.Rows("1", "2", "3"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalShuffle], sortRows: true, wantPublish: true, wantCPUWork: true},
+		}
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				for _, sql := range tc.before {
+					tk.MustExec(sql)
+				}
+				defer func() {
+					for _, sql := range tc.after {
+						tk.MustExec(sql)
+					}
+				}()
+				observation = nil
+				calibrationMu.Lock()
+				calibration = calibrationObservation{}
+				calibrationMu.Unlock()
+				result := tk.MustQuery(tc.query)
+				if tc.sortRows {
+					result = result.Sort()
+				}
+				result.Check(tc.rows)
+
+				require.NotNil(t, observation)
+				require.True(t, observation.owner.ConsumedForTest())
+				require.True(t, observation.owner.RecordedSuccessForTest())
+				flat := requireStatementRUTerminalFlatPlan(t, observation.stmt)
+				runtimeStats := observation.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+				planSummary := make([]string, 0, len(flat.Main))
+				for index, operator := range flat.Main {
+					if operator == nil || operator.Origin == nil {
+						planSummary = append(planSummary, fmt.Sprintf("%d:<nil>", index))
+						continue
+					}
+					rootRows := runtimeStats.GetPlanActRows(operator.Origin.ID())
+					_, copRows := runtimeStats.GetCopCountAndRows(operator.Origin.ID())
+					detail, detailFound := runtimeStats.GetCopScanDetail(operator.Origin.ID())
+					planSummary = append(planSummary, fmt.Sprintf(
+						"%d:%T(root=%v,store=%v,req=%v,label=%v,probe=%v,children=%v,rootRows=%d,copRows=%d,scanFound=%v,scan=[%d,%d,%d])",
+						index,
+						operator.Origin,
+						operator.IsRoot,
+						operator.StoreType,
+						operator.ReqType,
+						operator.Label,
+						operator.IsINLProbeChild,
+						operator.ChildrenIdx,
+						rootRows,
+						copRows,
+						detailFound,
+						detail.TotalKeys,
+						detail.ProcessedKeys,
+						detail.ProcessedKeysSize,
+					))
+				}
+				require.True(t, slices.ContainsFunc(flat.Main, func(operator *plannercore.FlatOperator) bool {
+					return operator != nil && operator.Origin != nil && tc.expectOperator(operator.Origin)
+				}), "query plan does not contain expected operator: %s; flat plan: %v", tc.query, planSummary)
+				if tc.wantRootAndCop {
+					require.True(t, slices.ContainsFunc(flat.Main, func(operator *plannercore.FlatOperator) bool {
+						return operator != nil && operator.IsRoot && tc.expectOperator(operator.Origin)
+					}), "query plan does not contain expected root operator: %s; flat plan: %v", tc.query, planSummary)
+					require.True(t, slices.ContainsFunc(flat.Main, func(operator *plannercore.FlatOperator) bool {
+						return operator != nil && !operator.IsRoot && tc.expectOperator(operator.Origin)
+					}), "query plan does not contain expected cop operator: %s; flat plan: %v", tc.query, planSummary)
+				}
+
+				calibrationMu.Lock()
+				published := calibration
+				calibrationMu.Unlock()
+				if !tc.wantPublish {
+					require.Zero(t, published.count)
+					return
+				}
+				require.Equal(t, 1, published.count, "flat plan: %v", planSummary)
+				require.Equal(t, "incomplete", published.state)
+				normalizedSQL, _ := observation.stmt.Ctx.GetSessionVars().StmtCtx.SQLDigest()
+				require.NotEmpty(t, normalizedSQL)
+				require.Equal(t, float64(len(normalizedSQL)), published.frontendBytes)
+				require.GreaterOrEqual(t, published.scanBytes, float64(0))
+				require.GreaterOrEqual(t, published.netBytes, float64(0))
+				if tc.wantCPUWork {
+					require.Positive(t, published.cpuWork)
+				}
+				if tc.wantHashState {
+					require.Positive(t, published.hashStateRows)
+				}
+				if tc.wantHashRows > 0 {
+					require.Equal(t, tc.wantHashRows, published.hashStateRows)
+				}
+				if tc.wantJoinOutput {
+					require.Positive(t, published.joinOutputRows)
+				}
+			})
+		}
+	})
+
+	t.Run("post-compile panic consumes owner", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx != tk.Session() {
+				return
+			}
+			observation = observeInstalledStatementRUOwner(stmt)
+		})
+		connID := tk.Session().GetSessionVars().ConnectionID
+		testfailpoint.Enable(
+			t,
+			"github.com/pingcap/tidb/pkg/session/statementRUPostCompilePanicForTest",
+			fmt.Sprintf("return(%d)", connID),
+		)
+
+		require.PanicsWithValue(t, "statement RU post-compile test panic", func() {
+			_, _ = tk.Exec("select 1")
+		})
+		require.NotNil(t, observation)
+		require.True(t, observation.owner.ConsumedForTest())
+
+		observation.stmt.RecordStatementRUFinalOutcome(true)
+		observation.stmt.FinishExecuteStmt(0, nil, false)
+		require.True(t, observation.owner.ConsumedForTest(), "the post-compile panic must consume the owner")
+	})
+
+	t.Run("aborted transaction early return consumes owner", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(id int)")
+
+		var observation *statementRUObservation
+		var lockExpire *uint32
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx != tk.Session() {
+				return
+			}
+			observation = observeInstalledStatementRUOwner(stmt)
+			lockExpire = &tk.Session().GetSessionVars().TxnCtx.LockExpire
+			atomic.StoreUint32(lockExpire, 1)
+		})
+		t.Cleanup(func() {
+			if lockExpire != nil {
+				atomic.StoreUint32(lockExpire, 0)
+			}
+		})
+
+		rs, err := tk.Exec("select * from t")
+		require.Error(t, err)
+		require.True(t, terror.ErrorEqual(err, kv.ErrLockExpire), "unexpected error: %v", err)
+		require.Nil(t, rs)
+		require.NotNil(t, observation)
+		require.True(t, observation.owner.ConsumedForTest())
+
+		observation.stmt.RecordStatementRUFinalOutcome(true)
+		observation.stmt.FinishExecuteStmt(0, nil, false)
+		require.True(t, observation.owner.ConsumedForTest(), "the aborted-transaction return must consume the owner")
+	})
+
+	t.Run("finishStmt error", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(id int primary key, v int)")
+		tk.MustExec("insert into t values (1, 1)")
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx != tk.Session() {
+				return
+			}
+			observation = observeInstalledStatementRUOwner(stmt)
+		})
+
+		rs, err := tk.Exec("select v from t where id = 1")
+		require.NoError(t, err)
+		require.NotNil(t, observation)
+		require.NoError(t, drainStatementRURecordSet(t, rs))
+
+		connID := tk.Session().GetSessionVars().ConnectionID
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/finishStmtError", fmt.Sprintf("return(%d)", connID))
+		require.Error(t, rs.Close())
+		require.True(t, observation.owner.ConsumedForTest())
+
+		observation.stmt.FinishExecuteStmt(0, nil, false)
+		require.True(t, observation.owner.ConsumedForTest(), "the failed first terminal must consume the owner")
+	})
+
+	t.Run("SQLKiller error reaches terminal", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(id int primary key, v int)")
+		tk.MustExec("insert into t values (1, 1)")
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx != tk.Session() {
+				return
+			}
+			observation = observeInstalledStatementRUOwner(stmt)
+		})
+
+		rs, err := tk.Exec("select v from t where id = 1")
+		require.NoError(t, err)
+		tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+		t.Cleanup(func() { tk.Session().GetSessionVars().SQLKiller.Reset() })
+
+		require.Error(t, drainStatementRURecordSet(t, rs))
+		require.NoError(t, rs.Close())
+		require.NotNil(t, observation)
+		require.True(t, observation.owner.ConsumedForTest())
+	})
+
+	t.Run("execution returns result set and error", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(id int primary key, v int)")
+		tk.MustExec("insert into t values (1, 1)")
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx != tk.Session() {
+				return
+			}
+			observation = observeInstalledStatementRUOwner(stmt)
+		})
+		connID := tk.Session().GetSessionVars().ConnectionID
+		testfailpoint.Enable(
+			t,
+			"github.com/pingcap/tidb/pkg/session/statementRUResultSetErrorForTest",
+			fmt.Sprintf("return(%d)", connID),
+		)
+
+		rs, err := tk.Exec("select v from t")
+		require.Error(t, err)
+		require.NotNil(t, rs)
+		require.NotNil(t, observation)
+		require.NoError(t, rs.Close())
+		require.True(t, observation.owner.ConsumedForTest())
+
+		observation.stmt.RecordStatementRUFinalOutcome(true)
+		observation.stmt.FinishExecuteStmt(0, nil, false)
+		require.True(t, observation.owner.ConsumedForTest(), "the first execution failure must consume the owner")
+	})
+
+	t.Run("successful close and repeated terminal", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(id int primary key, v int)")
+		tk.MustExec("insert into t values (1, 1)")
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx != tk.Session() {
+				return
+			}
+			observation = observeInstalledStatementRUOwner(stmt)
+		})
+
+		rs, err := tk.Exec("select v from t where id = 1")
+		require.NoError(t, err)
+		require.NoError(t, drainStatementRURecordSet(t, rs))
+		finisher, ok := rs.(interface{ Finish() error })
+		require.True(t, ok)
+		require.NoError(t, finisher.Finish())
+		require.NoError(t, finisher.Finish())
+		require.True(t, observation.owner.RecordedSuccessForTest())
+		require.False(t, observation.owner.ConsumedForTest(), "session Finish records outcome but does not run the executor terminal")
+		require.NoError(t, rs.Close())
+		require.True(t, observation.owner.ConsumedForTest())
+
+		observation.stmt.FinishExecuteStmt(0, nil, false)
+		require.True(t, observation.owner.ConsumedForTest())
+	})
+}
+
+func TestStatementRUFileTransferOutcomeHandoff(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
+	t.Run("successful session outcome is consumed by delayed terminal", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx != tk.Session() {
+				return
+			}
+			observation = observeInstalledStatementRUOwner(stmt)
+		})
+		tk.Session().SetValue(executor.LoadStatsVarKey, struct{}{})
+		t.Cleanup(func() {
+			tk.Session().SetValue(executor.LoadStatsVarKey, nil)
+			tk.Session().SetValue(session.ExecStmtVarKey, nil)
+		})
+
+		rs, err := tk.Exec("do 1")
+		require.NoError(t, err)
+		require.Nil(t, rs)
+		require.True(t, observation.owner.RecordedSuccessForTest())
+		require.False(t, observation.owner.ConsumedForTest())
+
+		delayed, ok := tk.Session().Value(session.ExecStmtVarKey).(*executor.ExecStmt)
+		require.True(t, ok)
+		require.Same(t, observation.stmt, delayed)
+		delayed.FinishExecuteStmt(0, nil, false)
+		require.True(t, observation.owner.ConsumedForTest())
+	})
+
+	t.Run("post-run panic consumes owner before delayed terminal", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx != tk.Session() {
+				return
+			}
+			observation = observeInstalledStatementRUOwner(stmt)
+		})
+		tk.Session().SetValue(executor.LoadStatsVarKey, struct{}{})
+		t.Cleanup(func() {
+			tk.Session().SetValue(executor.LoadStatsVarKey, nil)
+			tk.Session().SetValue(session.ExecStmtVarKey, nil)
+		})
+		connID := tk.Session().GetSessionVars().ConnectionID
+		testfailpoint.Enable(
+			t,
+			"github.com/pingcap/tidb/pkg/session/statementRUFileTransferPostRunPanicForTest",
+			fmt.Sprintf("return(%d)", connID),
+		)
+
+		require.PanicsWithValue(t, "statement RU file-transfer post-run test panic", func() {
+			_, _ = tk.Exec("do 1")
+		})
+		require.NotNil(t, observation)
+		require.True(t, observation.owner.ConsumedForTest())
+
+		delayed, ok := tk.Session().Value(session.ExecStmtVarKey).(*executor.ExecStmt)
+		require.True(t, ok)
+		require.Same(t, observation.stmt, delayed)
+		delayed.RecordStatementRUFinalOutcome(true)
+		delayed.FinishExecuteStmt(0, nil, false)
+		require.True(t, observation.owner.ConsumedForTest(), "the file-transfer post-run panic must consume the owner")
+	})
+
+	t.Run("finishStmt failure is RU-consumed without a legacy terminal", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx != tk.Session() {
+				return
+			}
+			observation = observeInstalledStatementRUOwner(stmt)
+		})
+		tk.Session().SetValue(executor.LoadStatsVarKey, struct{}{})
+		t.Cleanup(func() {
+			tk.Session().SetValue(executor.LoadStatsVarKey, nil)
+			tk.Session().SetValue(session.ExecStmtVarKey, nil)
+		})
+		connID := tk.Session().GetSessionVars().ConnectionID
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/finishStmtError", fmt.Sprintf("return(%d)", connID))
+
+		rs, err := tk.Exec("do 1")
+		require.Error(t, err)
+		require.Nil(t, rs)
+		require.True(t, observation.owner.ConsumedForTest())
+
+		delayed, ok := tk.Session().Value(session.ExecStmtVarKey).(*executor.ExecStmt)
+		require.True(t, ok, "preserve the pre-existing file-transfer handoff on finishStmt error")
+		require.Same(t, observation.stmt, delayed)
+		delayed.RecordStatementRUFinalOutcome(true)
+		delayed.FinishExecuteStmt(0, nil, false)
+		require.True(t, observation.owner.ConsumedForTest(), "the failed outcome must consume the owner")
+	})
+
+	t.Run("stale handler does not publish result-set success", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(id int)")
+
+		var observations []*statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx != tk.Session() {
+				return
+			}
+			observations = append(observations, observeInstalledStatementRUOwner(stmt))
+		})
+		tk.Session().SetValue(executor.LoadStatsVarKey, struct{}{})
+		t.Cleanup(func() {
+			tk.Session().SetValue(executor.LoadStatsVarKey, nil)
+			tk.Session().SetValue(session.ExecStmtVarKey, nil)
+		})
+		connID := tk.Session().GetSessionVars().ConnectionID
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/finishStmtError", fmt.Sprintf("return(%d)", connID))
+
+		rs, err := tk.Exec("do 1")
+		require.Error(t, err)
+		require.Nil(t, rs)
+		require.Len(t, observations, 1)
+		require.True(t, observations[0].owner.ConsumedForTest())
+		require.NotNil(t, tk.Session().Value(executor.LoadStatsVarKey), "the failed file transfer leaves its handler for the server path")
+
+		rs, err = tk.Exec("select id from t")
+		require.NoError(t, err)
+		require.NotNil(t, rs)
+		require.Len(t, observations, 2)
+		resultSetObservation := observations[1]
+		require.NoError(t, drainStatementRURecordSet(t, rs))
+		require.Error(t, rs.Close())
+		require.True(t, resultSetObservation.owner.ConsumedForTest(), "stale file-transfer state must not publish result-set success")
+
+		resultSetObservation.stmt.RecordStatementRUFinalOutcome(true)
+		resultSetObservation.stmt.FinishExecuteStmt(0, nil, false)
+		require.True(t, resultSetObservation.owner.ConsumedForTest(), "the result-set failure must consume the owner")
+	})
+}
+
+func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache = 1")
+	tk.MustExec("create table t(id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	// UniStore's Get and BatchGet handlers do not populate ExecDetailsV2. Add
+	// deterministic details to the otherwise real responses so this test
+	// exercises client-go's response accounting and TiDB's terminal retrieval.
+	responseHook := func(req *tikvrpc.Request, resp *tikvrpc.Response) {
+		if req == nil || resp == nil {
+			return
+		}
+		newExecDetails := func(totalKeys, processedKeys, processedKeysSize uint64) *kvrpcpb.ExecDetailsV2 {
+			return &kvrpcpb.ExecDetailsV2{ScanDetailV2: &kvrpcpb.ScanDetailV2{
+				TotalVersions:         totalKeys,
+				ProcessedVersions:     processedKeys,
+				ProcessedVersionsSize: processedKeysSize,
+			}}
+		}
+		switch typedResp := resp.Resp.(type) {
+		case *kvrpcpb.GetResponse:
+			typedResp.ExecDetailsV2 = newExecDetails(2, 1, 37)
+		case *kvrpcpb.BatchGetResponse:
+			typedResp.ExecDetailsV2 = newExecDetails(5, 2, 74)
+		}
+	}
+	unistore.UnistoreRPCClientResponseHook.Store(&responseHook)
+	t.Cleanup(func() {
+		unistore.UnistoreRPCClientResponseHook.Store(nil)
+	})
+	testfailpoint.Enable(t,
+		"github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCClientResponseHook",
+		"return(true)",
+	)
+
+	var observation *statementRUObservation
+	testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+		if stmt.Ctx != tk.Session() {
+			return
+		}
+		observation = observeInstalledStatementRUOwner(stmt)
+	})
+	type calibrationObservation struct {
+		state     string
+		scanBytes float64
+		netBytes  float64
+	}
+	connectionID := tk.Session().GetSessionVars().ConnectionID
+	calibrations := make([]calibrationObservation, 0, 2)
+	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+		observedConnectionID uint64,
+		state string,
+		_, scanBytes, netBytes, _, _, _ float64,
+		_, _, _, _ float64,
+	) {
+		if observedConnectionID != connectionID {
+			return
+		}
+		calibrations = append(calibrations, calibrationObservation{
+			state:     state,
+			scanBytes: scanBytes,
+			netBytes:  netBytes,
+		})
+	})
+
+	rs, err := tk.Exec("select v from t where id = ?", 1)
+	require.NoError(t, err)
+	require.NotNil(t, observation)
+	require.IsType(t, &physicalop.PointGetPlan{}, observation.stmt.Plan)
+	require.NoError(t, drainStatementRURecordSet(t, rs))
+	stmtCtx := observation.stmt.Ctx.GetSessionVars().StmtCtx
+	// Make lookup order observable: a terminal before FinishExecuteStmt's SetPlan
+	// would leave neither a plan nor a flat cache for statement RU.
+	stmtCtx.SetPlan(nil)
+	stmtCtx.SetFlatPlan(nil)
+	require.NoError(t, rs.Close())
+	require.True(t, observation.owner.ConsumedForTest())
+	// FinishExecuteStmt publishes the effective plan before the RU terminal, but
+	// concrete point plans no longer populate or traverse the flat-plan cache.
+	require.Same(t, observation.stmt.Plan, stmtCtx.GetPlan())
+	require.Nil(t, stmtCtx.GetFlatPlan())
+	require.Len(t, calibrations, 1)
+	require.Equal(t, "incomplete", calibrations[0].state)
+	require.Equal(t, float64(74), calibrations[0].scanBytes)
+	require.Positive(t, calibrations[0].netBytes)
+
+	observation = nil
+	rs, err = tk.Exec("select v from t where id in (1, 2)")
+	require.NoError(t, err)
+	require.NotNil(t, observation)
+	require.IsType(t, &physicalop.BatchPointGetPlan{}, observation.stmt.Plan)
+	require.NoError(t, drainStatementRURecordSet(t, rs))
+	require.NoError(t, rs.Close())
+	require.True(t, observation.owner.ConsumedForTest())
+	require.Len(t, calibrations, 2)
+	require.Equal(t, "incomplete", calibrations[1].state)
+	require.Equal(t, float64(185), calibrations[1].scanBytes)
+	require.Positive(t, calibrations[1].netBytes)
+
+	t.Run("post-execution panic consumes owner", func(t *testing.T) {
+		observation = nil
+		connID := tk.Session().GetSessionVars().ConnectionID
+		testfailpoint.Enable(
+			t,
+			"github.com/pingcap/tidb/pkg/session/statementRUPointGetPostExecPanicForTest",
+			fmt.Sprintf("return(%d)", connID),
+		)
+
+		require.PanicsWithValue(t, "statement RU PointGet post-exec test panic", func() {
+			_, _ = tk.Exec("select v from t where id = ?", 1)
+		})
+		require.NotNil(t, observation)
+		require.True(t, observation.owner.ConsumedForTest())
+
+		observation.stmt.RecordStatementRUFinalOutcome(true)
+		observation.stmt.FinishExecuteStmt(0, nil, false)
+		require.True(t, observation.owner.ConsumedForTest(), "the PointGet post-exec panic must consume the owner")
+	})
+
+	observation = nil
+	connID := tk.Session().GetSessionVars().ConnectionID
+	testfailpoint.Enable(
+		t,
+		"github.com/pingcap/tidb/pkg/executor/statementRUPointGetErrorForTest",
+		fmt.Sprintf("return(%d)", connID),
+	)
+	rs, err = tk.Exec("select v from t where id = ?", 1)
+	require.Error(t, err)
+	require.Nil(t, rs)
+	require.NotNil(t, observation)
+	require.True(t, observation.owner.ConsumedForTest())
+
+	observation.stmt.RecordStatementRUFinalOutcome(true)
+	observation.stmt.FinishExecuteStmt(0, nil, false)
+	require.True(t, observation.owner.ConsumedForTest(), "the PointGet failure must consume only the RU owner")
+}
+
+func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
+	t.Run("real scalar SQL", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery = 1")
+		tk.MustExec("create table t2(a int)")
+		tk.MustExec("insert into t2 values (1)")
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx != tk.Session() {
+				return
+			}
+			observation = observeInstalledStatementRUOwner(stmt)
+		})
+		connectionID := tk.Session().GetSessionVars().ConnectionID
+		var calibrationCount atomic.Int64
+		var scanBytes float64
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			observedConnectionID uint64,
+			state string,
+			_, observedScanBytes, _, _, _, _ float64,
+			_, _, _, _ float64,
+		) {
+			if observedConnectionID != connectionID {
+				return
+			}
+			require.Equal(t, "incomplete", state)
+			calibrationCount.Add(1)
+			scanBytes = observedScanBytes
+		})
+
+		// The main tree is a TableDual, so every scan byte belongs to the
+		// independently executed scalar-subquery tree.
+		rs, err := tk.Exec("select (select a from t2 limit 1)")
+		require.NoError(t, err)
+		require.NoError(t, drainStatementRURecordSet(t, rs))
+		require.NoError(t, rs.Close())
+		expectedTotal, expectedScalar := countStatementRUFlatOccurrences(
+			requireStatementRUTerminalFlatPlan(t, observation.stmt),
+		)
+		require.Positive(t, expectedTotal)
+		require.Positive(t, expectedScalar)
+		require.True(t, observation.owner.ConsumedForTest())
+		require.Equal(t, int64(1), calibrationCount.Load())
+		require.Positive(t, scanBytes)
+	})
+
+	t.Run("shared CTE producer is one statement tree", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("insert into t values (1), (2), (3)")
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx == tk.Session() {
+				observation = observeInstalledStatementRUOwner(stmt)
+			}
+		})
+		connectionID := tk.Session().GetSessionVars().ConnectionID
+		var calibrationCount atomic.Int64
+		var scanBytes []float64
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			observedConnectionID uint64,
+			state string,
+			_, observedScanBytes, _, _, _, _ float64,
+			_, _, _, _ float64,
+		) {
+			if observedConnectionID != connectionID {
+				return
+			}
+			require.Equal(t, "incomplete", state)
+			calibrationCount.Add(1)
+			scanBytes = append(scanBytes, observedScanBytes)
+		})
+
+		run := func(query string) *plannercore.FlatPhysicalPlan {
+			observation = nil
+			rs, err := tk.Exec(query)
+			require.NoError(t, err)
+			require.NoError(t, drainStatementRURecordSet(t, rs))
+			require.NoError(t, rs.Close())
+			require.NotNil(t, observation)
+			return requireStatementRUTerminalFlatPlan(t, observation.stmt)
+		}
+		doubleConsumer := run("with cte as (select a from t where a > 0) select a from cte where a = 1 union all select a from cte where a > 1")
+		tripleConsumer := run("with cte as (select a from t where a > 0) select a from cte where a = 1 union all select a from cte where a > 1 union all select a from cte where a = 999")
+		require.NotNil(t, observation)
+		require.Len(t, doubleConsumer.CTEs, 1, "one IDForStorage producer must remain one forest tree despite two consumers")
+		require.Len(t, tripleConsumer.CTEs, 1, "one IDForStorage producer must remain one forest tree despite three consumers")
+		require.True(t, observation.owner.ConsumedForTest())
+		require.Equal(t, int64(2), calibrationCount.Load())
+		require.Len(t, scanBytes, 2)
+		require.Positive(t, scanBytes[0], "the main tree has only CTE consumers; scan evidence must come from the producer tree")
+		require.Equal(t, scanBytes[0], scanBytes[1], "adding a consumer must not charge the shared producer again")
+	})
+
+	t.Run("dependent CTE producers are distinct statement trees", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("insert into t values (1), (2), (3)")
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx == tk.Session() {
+				observation = observeInstalledStatementRUOwner(stmt)
+			}
+		})
+		connectionID := tk.Session().GetSessionVars().ConnectionID
+		var calibrationCount atomic.Int64
+		var scanBytes float64
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			observedConnectionID uint64,
+			state string,
+			_, observedScanBytes, _, _, _, _ float64,
+			_, _, _, _ float64,
+		) {
+			if observedConnectionID != connectionID {
+				return
+			}
+			require.Equal(t, "incomplete", state)
+			calibrationCount.Add(1)
+			scanBytes = observedScanBytes
+		})
+
+		query := "with c1 as (select a from t where a > 0), c2 as (select a from c1 where a > 1) select a from c2 union all select a from c2 union all select a from c1 where a = 1"
+		rs, err := tk.Exec(query)
+		require.NoError(t, err)
+		require.NoError(t, drainStatementRURecordSet(t, rs))
+		require.NoError(t, rs.Close())
+		require.NotNil(t, observation)
+		flat := requireStatementRUTerminalFlatPlan(t, observation.stmt)
+		require.Len(t, flat.CTEs, 2, "c1 and c2 must each own one deduplicated producer tree")
+		require.True(t, observation.owner.ConsumedForTest())
+		require.Equal(t, int64(1), calibrationCount.Load())
+		require.Positive(t, scanBytes, "the physical scan owned by c1 must contribute to the statement")
+	})
+
+	t.Run("recursive CTE consumes accumulated rounds once", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+
+		connectionID := tk.Session().GetSessionVars().ConnectionID
+		var cpuWork []float64
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			observedConnectionID uint64,
+			state string,
+			observedCPUWork, _, _, _, _, _ float64,
+			_, _, _, _ float64,
+		) {
+			if observedConnectionID != connectionID {
+				return
+			}
+			require.Equal(t, "incomplete", state)
+			cpuWork = append(cpuWork, observedCPUWork)
+		})
+
+		tk.MustQuery("with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 3) select * from cte").Check(testkit.Rows("1", "2", "3"))
+		tk.MustQuery("with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 6) select * from cte").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+		tk.MustQuery("with recursive cte(n) as (select 1 where false union all select n + 1 from cte where n < 3) select * from cte").Check(testkit.Rows())
+
+		require.Len(t, cpuWork, 3)
+		require.Greater(t, cpuWork[1], cpuWork[0], "more recursive rounds must contribute more accumulated linear work")
+		require.GreaterOrEqual(t, cpuWork[2], float64(0), "an empty seed is a legal best-effort zero, not invalid evidence")
+	})
+
+	t.Run("scalar cardinality semantics stay unchanged", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery = 1")
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("insert into t values (1), (2)")
+
+		tk.MustQuery("select (select a from t where a = 3)").Check(testkit.Rows("<nil>"))
+		tk.MustQuery("select (select a from t where a = 1)").Check(testkit.Rows("1"))
+		_, err := tk.Exec("select (select a from t)")
+		require.ErrorContains(t, err, "Subquery returns more than 1 row")
+	})
+
+	t.Run("prepared execute and rebuild use terminal-returned trees", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery = 1")
+		tk.MustExec("set @@tidb_enable_prepared_plan_cache = 1")
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("insert into t values (1)")
+
+		query := "select a from t where a = (select a from t where a = ?)"
+		stmtID, _, _, err := tk.Session().PrepareStmt(query)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, tk.Session().DropPreparedStmt(stmtID)) })
+
+		var observationsMu sync.Mutex
+		observations := make([]*statementRUObservation, 0, 3)
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx != tk.Session() {
+				return
+			}
+			observation := observeInstalledStatementRUOwner(stmt)
+			observationsMu.Lock()
+			observations = append(observations, observation)
+			observationsMu.Unlock()
+		})
+
+		getObservation := func(index int) *statementRUObservation {
+			observationsMu.Lock()
+			defer observationsMu.Unlock()
+			require.Greater(t, len(observations), index)
+			return observations[index]
+		}
+		ctx := context.Background()
+		for execution := range 2 {
+			rs, err := tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
+			require.NoError(t, err)
+			fromCache := tk.Session().GetSessionVars().FoundInPlanCache
+			observation := getObservation(execution)
+			require.NoError(t, drainStatementRURecordSet(t, rs))
+			require.NoError(t, rs.Close())
+			expectedTotal, expectedScalar := countStatementRUFlatOccurrences(
+				requireStatementRUTerminalFlatPlan(t, observation.stmt),
+			)
+			require.Positive(t, expectedTotal)
+			require.True(t, observation.owner.ConsumedForTest())
+			t.Logf(
+				"prepared execution %d (plan cache hit: %t) returned %d scalar occurrences",
+				execution+1,
+				fromCache,
+				expectedScalar,
+			)
+		}
+
+		prepStmt, err := tk.Session().GetSessionVars().GetPreparedStmtByID(stmtID)
+		require.NoError(t, err)
+		executeAST := &ast.ExecuteStmt{
+			PrepStmt:   prepStmt,
+			BinaryArgs: expression.Args2Expressions4Test(1),
+		}
+		require.NoError(t, tk.Session().PrepareTxnCtx(ctx, nil))
+		compiler := executor.Compiler{Ctx: tk.Session()}
+		stmt, err := compiler.Compile(ctx, executeAST)
+		require.NoError(t, err)
+		observation := getObservation(2)
+		require.Same(t, stmt, observation.stmt)
+		require.Nil(t, observation.owner, "a pre-existing flat cache keeps the production owner disabled")
+		require.NoError(t, tk.Session().PrepareTxnCtx(ctx, nil))
+		_, err = stmt.RebuildPlan(ctx)
+		require.NoError(t, err)
+		rs, err := stmt.Exec(ctx)
+		require.NoError(t, err)
+		stmt.RecordStatementRUFinalOutcome(true)
+		require.NoError(t, drainStatementRURecordSet(t, rs))
+		require.NoError(t, rs.Close())
+		expectedTotal, expectedScalar := countStatementRUFlatOccurrences(
+			requireStatementRUTerminalFlatPlan(t, stmt),
+		)
+		require.Positive(t, expectedTotal)
+		t.Logf("prepared RebuildPlan returned %d scalar occurrences", expectedScalar)
+	})
+}
+
+func TestStatementRUCursorExclusion(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
+	t.Run("current-session restricted result set", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(id int)")
+		tk.MustExec("insert into t values (1)")
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx != tk.Session() {
+				return
+			}
+			observation = observeInstalledStatementRUOwner(stmt)
+		})
+
+		restricted := tk.Session().GetRestrictedSQLExecutor()
+		rows, _, err := restricted.ExecRestrictedSQL(
+			kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers),
+			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+			"select * from t",
+		)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		require.NotNil(t, observation)
+		require.Nil(t, observation.owner, "restricted SQL must not install the production owner")
+	})
+
+	t.Run("eager cursor terminal consumes skip", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(id int)")
+		tk.MustExec("insert into t values (1)")
+		tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+		t.Cleanup(func() {
+			tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, false)
+		})
+
+		var observation *statementRUObservation
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx != tk.Session() {
+				return
+			}
+			observation = observeInstalledStatementRUOwner(stmt)
+		})
+
+		rs, err := tk.Exec("select * from t")
+		require.NoError(t, err)
+		require.NoError(t, drainStatementRURecordSet(t, rs))
+		require.NoError(t, rs.Close())
+		require.NotNil(t, observation)
+		require.Nil(t, observation.owner, "cursor execution must not install the production owner")
+	})
+
+	t.Run("lazy cursor test installer rejects owner", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t(id int)")
+		tk.MustExec("insert into t values (1)")
+		tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+		t.Cleanup(func() {
+			tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, false)
+		})
+
+		var rejected atomic.Int64
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.Ctx != tk.Session() {
+				return
+			}
+			if stmt.Ctx.GetSessionVars().HasStatusFlag(mysql.ServerStatusCursorExists) {
+				rejected.Add(1)
+				return
+			}
+			observeInstalledStatementRUOwner(stmt)
+		})
+
+		rs, err := tk.Exec("select * from t")
+		require.NoError(t, err)
+		detachable, ok := rs.(sqlexec.DetachableRecordSet)
+		require.True(t, ok)
+		detached, ok, err := detachable.TryDetach()
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.NoError(t, detached.Close())
+		require.Equal(t, int64(1), rejected.Load())
+	})
+}
+
+func TestStatementRURetryAndReplay(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+
+	t.Run("pessimistic retry keeps production owner disabled", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		writer := testkit.NewTestKit(t, store)
+		writer.MustExec("use test")
+		writer.MustExec("create table t(id int primary key, v int)")
+		writer.MustExec("insert into t values (1, 10)")
+		writer.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
+
+		retrying := testkit.NewSteppedTestKit(t, store)
+		retrying.MustExec("use test")
+		retrying.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+		retrying.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
+		retryingConnectionID := retrying.MustQuery("select connection_id()").Rows()[0][0].(string)
+		retrying.MustExec("set autocommit = 0")
+		t.Cleanup(func() { retrying.MustExec("rollback") })
+
+		query := "select * from t where id = 1 for update"
+		var observedStmt atomic.Pointer[executor.ExecStmt]
+		var observedOwner atomic.Pointer[executor.StatementRUOwnerObservationForTest]
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.OriginText() != query ||
+				fmt.Sprint(stmt.Ctx.GetSessionVars().ConnectionID) != retryingConnectionID {
+				return
+			}
+			observedStmt.Store(stmt)
+			observedOwner.Store(executor.ObserveStatementRUOwnerForTest(stmt))
+		})
+
+		retrying.SetBreakPoints(
+			sessiontxn.BreakPointBeforeExecutorFirstRun,
+			sessiontxn.BreakPointOnStmtRetryAfterLockError,
+		)
+		retrying.SteppedMustQuery(query).
+			ExpectStopOnBreakPoint(sessiontxn.BreakPointBeforeExecutorFirstRun)
+		writer.MustExec("update t set v = v + 1 where id = 1")
+		retrying.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
+		retrying.Continue().ExpectIdle()
+
+		stmt := observedStmt.Load()
+		require.NotNil(t, stmt)
+		require.NotEmpty(t, requireStatementRUTerminalFlatPlan(t, stmt).Main)
+		require.Nil(t, observedOwner.Load(), "select for update must not install the production statement RU owner")
+	})
+
+	t.Run("optimistic replay is not a second terminal", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk1 := testkit.NewTestKit(t, store)
+		tk2 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test")
+		tk2.MustExec("use test")
+		tk1.MustExec("create table t(id int primary key, v int)")
+		tk1.MustExec("insert into t values (1, 0)")
+		tk1.MustExec("set @@tidb_txn_mode = 'optimistic'")
+		tk1.MustExec("set @@tidb_retry_limit = 2")
+		// The deprecated tidb_disable_txn_auto_retry sysvar now validates every
+		// attempted OFF value back to ON. Force only this transaction's source
+		// eligibility so the test exercises the real history replay loop.
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectOptimisticTxnRetryable", "return(true)")
+
+		query := "update t set v = v + 1 where id = 1"
+		var observedStmt atomic.Pointer[executor.ExecStmt]
+		var observedOwner atomic.Pointer[executor.StatementRUOwnerObservationForTest]
+		var installs atomic.Int64
+		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
+			if stmt.OriginText() != query || stmt.Ctx != tk1.Session() {
+				return
+			}
+			observedStmt.Store(stmt)
+			observedOwner.Store(executor.ObserveStatementRUOwnerForTest(stmt))
+			installs.Add(1)
+		})
+
+		var chargedWrites atomic.Int64
+		connectionID := tk1.Session().GetSessionVars().ConnectionID
+		testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+			observedConnectionID uint64, _ string, _, _, _, _, _, _ float64,
+			writeStatement, _, _, _ float64,
+		) {
+			if observedConnectionID == connectionID {
+				chargedWrites.Add(int64(writeStatement))
+			}
+		})
+
+		tk1.MustExec("begin optimistic")
+		tk1.MustExec(query)
+		stmt := observedStmt.Load()
+		require.NotNil(t, stmt)
+		require.NotEmpty(t, requireStatementRUTerminalFlatPlan(t, stmt).Main)
+		require.NotNil(t, observedOwner.Load())
+		require.True(t, observedOwner.Load().ConsumedForTest())
+		installsAfterOriginalTerminal := installs.Load()
+
+		tk2.MustExec(query)
+		tk1.MustExec("commit")
+		require.Equal(t, installsAfterOriginalTerminal, installs.Load())
+		require.True(t, observedOwner.Load().ConsumedForTest())
+		require.Equal(t, int64(1), chargedWrites.Load(), "history replay must not bill the DML again")
+		tk2.MustQuery("select v from t where id = 1").Check(testkit.Rows("2"))
+	})
+}
+
+func TestStatementRUWriteLifecycle(t *testing.T) {
+	enableStatementRUExecutionInfo(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ru_write(id int primary key, v int)")
+	var count int
+	var writeStatement, operatorNum, writeKeys, writeBytes, cpuWork float64
+	connectionID := tk.Session().GetSessionVars().ConnectionID
+	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
+		observedConnectionID uint64, _ string, cpu, _, _, _, _, _ float64,
+		ws, operators, keys, bytes float64,
+	) {
+		if observedConnectionID != connectionID {
+			return
+		}
+		count++
+		cpuWork = cpu
+		writeStatement, operatorNum, writeKeys, writeBytes = ws, operators, keys, bytes
+	})
+	check := func(sql string, wantStatement float64, committed bool) {
+		t.Helper()
+		before := count
+		tk.MustExecWithContext(context.Background(), sql)
+		require.Equal(t, before+1, count, sql)
+		require.Equal(t, wantStatement, writeStatement, sql)
+		if sql == "commit" {
+			require.Zero(t, operatorNum, sql)
+		} else {
+			require.Positive(t, operatorNum, sql)
+		}
+		if committed {
+			require.Positive(t, writeKeys, sql)
+			require.Positive(t, writeBytes, sql)
+		} else {
+			require.Zero(t, writeKeys, sql)
+			require.Zero(t, writeBytes, sql)
+		}
+	}
+	check("insert into ru_write values (1, 10)", 1, true)
+	require.Equal(t, float64(1), cpuWork)
+	require.Equal(t, float64(1), operatorNum)
+	check("replace into ru_write values (1, 20)", 1, true)
+	require.Equal(t, float64(1), cpuWork)
+	// Pessimistic autocommit commits lock mutations even when no row changes.
+	pessimisticAutoCommit := config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()
+	check("insert ignore into ru_write values (1, 99)", 1, pessimisticAutoCommit)
+	require.Equal(t, float64(1), cpuWork)
+	check("insert into ru_write values (1, 25) on duplicate key update v = values(v)", 1, true)
+	require.Equal(t, float64(1), cpuWork)
+	check("update ru_write set v = 30 where id = 1", 1, true)
+	require.Equal(t, float64(1), cpuWork)
+	check("delete from ru_write where id = 1", 1, true)
+	require.Equal(t, float64(1), cpuWork)
+	check("update ru_write set v = 40 where id = 99", 1, pessimisticAutoCommit)
+	require.Equal(t, float64(0), cpuWork)
+	tk.MustExec("prepare ru_insert from 'insert into ru_write values (?, ?)'")
+	tk.MustExec("set @id = 5, @v = 50")
+	check("execute ru_insert using @id, @v", 1, true)
+	tk.MustExec("set @id = 6")
+	check("execute ru_insert using @id, @v", 1, true)
+	check("delete from ru_write where id = 6", 1, true)
+	check("delete from ru_write where id = 5", 1, true)
+	tk.MustExec("deallocate prepare ru_insert")
+
+	tk.MustExec("begin")
+	check("insert into ru_write values (2, 20)", 1, false)
+	check("insert into ru_write values (3, 30)", 1, false)
+	check("commit", 0, true)
+	require.Equal(t, float64(2), writeKeys)
+	require.Zero(t, cpuWork)
+	tk.MustExec("begin")
+	check("insert into ru_write values (4, 40)", 1, false)
+	before := count
+	tk.MustExec("rollback")
+	require.Equal(t, before, count)
+	require.Error(t, tk.ExecToErr("insert into ru_write values (2, 99)"))
+	require.Equal(t, before, count)
+	tk.MustQuery("select * from ru_write where v > 0").Check(testkit.Rows("2 20", "3 30"))
+	require.Equal(t, before+1, count)
+	require.Zero(t, writeStatement)
+	require.Zero(t, writeKeys)
+	require.Zero(t, writeBytes)
+	t.Run("processed rows and target indexes", func(t *testing.T) {
+		tk.MustExec("create table ru_idx(id int primary key, v int, w int, unique key(v), key(w))")
+		tk.MustExec("create table ru_common(id varchar(10), v int, primary key(id) clustered, key(v))")
+		tk.MustExec("create table ru_noncluster(id int primary key nonclustered, v int)")
+		checkWork := func(sql string, want float64) {
+			t.Helper()
+			tk.MustExecWithContext(context.Background(), sql)
+			sc := tk.Session().GetSessionVars().StmtCtx
+			plan, ok := sc.GetPlan().(base.Plan)
+			require.True(t, ok, sql)
+			work, found := sc.RuntimeStatsColl.GetRootWriteCPUWork(plan.ID())
+			require.True(t, found, sql)
+			require.Equal(t, want, work, sql)
+		}
+		checkWork("insert into ru_idx values (1, 10, 20), (2, 11, 21)", 6)
+		checkWork("insert ignore into ru_idx values (1, 10, 20), (3, 12, 22)", 6)
+		checkWork("update ru_idx set v=v where id=1", 3)
+		checkWork("update ignore ru_idx set v=10 where id=2", 3)
+		checkWork("insert into ru_idx values (1, 10, 20) on duplicate key update v=v", 3)
+		checkWork("replace into ru_idx values (1, 11, 23)", 3)
+		checkWork("insert into ru_common values ('1', 1), ('2', 2)", 4)
+		checkWork("insert into ru_noncluster values (1, 1)", 2)
+		checkWork("update ru_idx a join ru_common b on a.id=b.id set a.w=a.w, b.v=b.v", 5)
+		checkWork("delete a,b from ru_idx a join ru_common b on a.id=b.id", 5)
+		checkWork("delete from ru_idx where id=3", 3)
+		checkWork("insert into ru_idx select 4, 14, 24 where false", 0)
+		checkWork("delete from ru_idx where id=99", 0)
+		for id := 2; id <= 65; id++ {
+			tk.MustExec(fmt.Sprintf("insert into ru_noncluster values (%d, %d)", id, id))
+		}
+		tk.MustExec("set tidb_init_chunk_size=2, tidb_max_chunk_size=32")
+		checkWork("update ru_noncluster set v=v", 130)
+		checkWork("delete from ru_noncluster", 130)
+	})
+}

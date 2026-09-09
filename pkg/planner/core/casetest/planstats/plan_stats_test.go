@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -379,6 +378,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 		require.NoError(t, err)
 		testKit.MustExec("set global tidb_stats_load_pseudo_timeout=false")
 		nodeW := resolve.NewNodeW(stmt)
+		require.NoError(t, executor.ResetContextOfStmt(ctx, stmt))
 		_, _, err = planner.Optimize(context.TODO(), ctx, nodeW, is)
 		require.Error(t, err) // fail sql for timeout when pseudo=false
 
@@ -392,6 +392,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 		testKit.MustExec(sql)
 		failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/assertSyncWaitFailed")
 
+		require.NoError(t, executor.ResetContextOfStmt(ctx, stmt))
 		plan, _, err := planner.Optimize(context.TODO(), ctx, nodeW, is)
 		require.NoError(t, err) // not fail sql for timeout when pseudo=true
 		switch pp := plan.(type) {
@@ -416,7 +417,7 @@ func TestPreparedPlanCacheInvalidatedAfterSyncLoadTimeoutFallback(t *testing.T) 
 	})
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
 	tk.MustExec("use test")
 	originalPseudoTimeout := tk.MustQuery("select @@tidb_stats_load_pseudo_timeout").Rows()[0][0].(string)
 	defer func() {
@@ -452,23 +453,15 @@ func TestPreparedPlanCacheInvalidatedAfterSyncLoadTimeoutFallback(t *testing.T) 
 	tk.MustExec("prepare st from 'select * from t where b > ?'")
 	tk.MustExec("set @p = 2")
 	tk.MustExec("execute st using @p")
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.IsSyncStatsFailed)
+	require.NotZero(t, tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	require.Equal(t, 0, tk.Session().GetSessionPlanCache().Size())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-
-	// Wait for the async histogram load item corresponding to column b to be marked
-	// as sync-load failed, which confirms the sync-load path timed out and fell back
-	// to async loading for this full-load stats item.
-	require.Eventually(t, func() bool {
-		for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
-			if item.TableID == tblInfo.ID && item.ID == colBID && !item.IsIndex && item.FullLoad && item.IsSyncLoadFailed {
-				return true
-			}
-		}
-		return false
-	}, 5*time.Second, 100*time.Millisecond)
 
 	tk.MustExec("execute st using @p")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.IsSyncStatsFailed)
 	require.Equal(t, 0, tk.Session().GetSessionPlanCache().Size())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 	require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
 	statsTbl = dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)

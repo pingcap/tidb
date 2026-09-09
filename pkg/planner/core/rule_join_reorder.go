@@ -130,6 +130,19 @@ func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
 	}
 
 	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
+	if isJoin && join.JoinType == base.FullOuterJoin {
+		// Full outer join is not reordered in this phase. Keep it as an atomic
+		// node even if join reorder is enabled.
+		if joinOrderHintInfo != nil {
+			join.HintInfo = nil
+			join.InternalHintInfo = nil
+		}
+		return &joinGroupResult{
+			group:              []base.LogicalPlan{p},
+			joinOrderHintInfo:  joinOrderHintInfo,
+			basicJoinGroupInfo: &basicJoinGroupInfo{},
+		}
+	}
 	if !isJoin || (join.PreferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
 		(join.JoinType != base.InnerJoin && join.JoinType != base.LeftOuterJoin && join.JoinType != base.RightOuterJoin) ||
 		((join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin) && join.EqualConditions == nil) ||

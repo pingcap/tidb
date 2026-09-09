@@ -1484,6 +1484,37 @@ func TestGetReverseKey(t *testing.T) {
 	checkRet(startKey, endKey, endKey)
 }
 
+func TestAlterTableCompression(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+
+	// Test COMPRESSION='NONE' should succeed
+	tk.MustExec("alter table t compression='NONE'")
+
+	// Test COMPRESSION='ZLIB' should fail
+	err := tk.ExecToErr("alter table t compression='ZLIB'")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported")
+
+	// Test COMPRESSION='LZ4' should fail
+	err = tk.ExecToErr("alter table t compression='LZ4'")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported")
+
+	// Test an invalid COMPRESSION following another option should fail
+	// without applying the preceding option.
+	err = tk.ExecToErr("alter table t comment='should not apply', compression='ZLIB'")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported")
+	createTable := tk.MustQuery("show create table t").Rows()[0][1].(string)
+	require.NotContains(t, createTable, "should not apply")
+
+	tk.MustExec("drop table t")
+}
+
 func TestForbiddenDDLInNextGen(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("those forbidden DDLs are only for next-gen")

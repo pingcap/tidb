@@ -42,6 +42,7 @@ const (
 		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Show_view_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Operate_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Alter_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Index_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -107,6 +108,7 @@ const (
 		Lock_tables_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Show_view_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Operate_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Alter_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -122,7 +124,7 @@ const (
 		Table_name	CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		Grantor		CHAR(77),
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
+		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Operate View','Trigger','References'),
 		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name),
 		KEY i_user (User));`
@@ -812,6 +814,86 @@ const (
 		UNIQUE KEY uk_table_policy(table_id, policy_name),
 		UNIQUE KEY uk_table_column(table_id, column_id)
 		);`
+
+	// CreateTiDBMViewRefreshInfoTable is a table to store current refresh scheduling info for each materialized view.
+	CreateTiDBMViewRefreshInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_info (
+		MVIEW_ID bigint NOT NULL,
+		LAST_SUCCESS_READ_TSO bigint unsigned DEFAULT NULL,
+		LAST_SUCCESS_REFRESH_END_UNIX_SECONDS bigint DEFAULT NULL,
+		NEXT_REFRESH_UNIX_SECONDS bigint DEFAULT NULL,
+		PRIMARY KEY(MVIEW_ID))`
+
+	// CreateTiDBMLogPurgeInfoTable is a table to store current purge scheduling info for each materialized view log.
+	CreateTiDBMLogPurgeInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_info (
+		MLOG_ID bigint NOT NULL,
+		NEXT_PURGE_UNIX_SECONDS bigint DEFAULT NULL,
+		LAST_PURGED_TSO bigint unsigned DEFAULT NULL,
+		PRIMARY KEY(MLOG_ID))`
+
+	// CreateTiDBMViewRefreshHistTable is a table to store materialized view refresh history.
+	CreateTiDBMViewRefreshHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_hist (
+		REFRESH_JOB_ID bigint unsigned NOT NULL,
+		MVIEW_ID bigint NOT NULL,
+		MVIEW_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		MVIEW_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		REFRESH_METHOD varchar(32) NOT NULL,
+		REFRESH_START_TIME datetime(6) DEFAULT NULL,
+		REFRESH_END_TIME datetime(6) DEFAULT NULL,
+		REFRESH_DURATION_SEC decimal(18,6) DEFAULT NULL,
+		REFRESH_SCHEDULE_DURATION_SEC decimal(18,6) DEFAULT NULL,
+		REFRESH_STATUS varchar(16) DEFAULT NULL,
+		REFRESH_ROWS bigint DEFAULT NULL,
+		REFRESH_READ_TSO bigint unsigned DEFAULT NULL,
+		REFRESH_COMMIT_TSO bigint unsigned DEFAULT NULL,
+		REFRESH_FAILED_REASON text DEFAULT NULL,
+		CANCEL_REQUEST_TIME datetime(6) DEFAULT NULL,
+		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
+		LAST_HEARTBEAT_TIME datetime(6) DEFAULT NULL,
+		PRIMARY KEY(REFRESH_JOB_ID),
+		KEY idx_mview_start_time (MVIEW_ID, REFRESH_START_TIME),
+		KEY idx_mview_name_start_time (MVIEW_SCHEMA, MVIEW_NAME, REFRESH_START_TIME),
+		KEY idx_mview_name_commit_tso (MVIEW_SCHEMA, MVIEW_NAME, REFRESH_COMMIT_TSO),
+		KEY idx_mview_status_start_time (MVIEW_ID, REFRESH_STATUS, REFRESH_START_TIME),
+		KEY idx_refresh_duration_sec (REFRESH_DURATION_SEC),
+		KEY idx_refresh_schedule_duration_sec (REFRESH_SCHEDULE_DURATION_SEC),
+		KEY idx_refresh_start_time (REFRESH_START_TIME),
+		KEY idx_refresh_status_start_time (REFRESH_STATUS, REFRESH_START_TIME))`
+
+	// CreateTiDBMViewRefreshAlertTable is a table to store the current refresh alert level for each materialized view.
+	CreateTiDBMViewRefreshAlertTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_alert (
+		MVIEW_ID bigint NOT NULL,
+		MVIEW_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		MVIEW_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		ALERT_LEVEL varchar(16) DEFAULT NULL,
+		REFRESH_FAILED varchar(3) DEFAULT NULL,
+		LAST_SUCCESS_SNAPSHOT_TIME datetime(6) DEFAULT NULL,
+		UPDATE_TIME datetime(6) DEFAULT NULL,
+		PRIMARY KEY(MVIEW_ID))`
+
+	// CreateTiDBMLogPurgeHistTable is a table to store materialized view log purge history.
+	CreateTiDBMLogPurgeHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_hist (
+		PURGE_JOB_ID bigint unsigned NOT NULL,
+		MLOG_ID bigint NOT NULL,
+		BASE_TABLE_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		BASE_TABLE_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+		PURGE_METHOD varchar(32) NOT NULL,
+		PURGE_START_TIME datetime(6) DEFAULT NULL,
+		PURGE_END_TIME datetime(6) DEFAULT NULL,
+		PURGE_DURATION_SEC decimal(18,6) DEFAULT NULL,
+		PURGE_ROWS bigint NOT NULL,
+		PURGE_STATUS varchar(16) DEFAULT NULL,
+		PURGE_CUTOFF_TSO bigint unsigned DEFAULT NULL,
+		PURGE_FAILED_REASON text DEFAULT NULL,
+		CANCEL_REQUEST_TIME datetime(6) DEFAULT NULL,
+		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
+		LAST_HEARTBEAT_TIME datetime(6) DEFAULT NULL,
+		PRIMARY KEY(PURGE_JOB_ID),
+		KEY idx_mlog_start_time (MLOG_ID, PURGE_START_TIME),
+		KEY idx_table_name_start_time (BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_START_TIME),
+		KEY idx_mlog_status_start_time (MLOG_ID, PURGE_STATUS, PURGE_START_TIME),
+		KEY idx_purge_duration_sec (PURGE_DURATION_SEC),
+		KEY idx_purge_start_time (PURGE_START_TIME),
+		KEY idx_purge_status_start_time (PURGE_STATUS, PURGE_START_TIME))`
 )
 
 // all below are related to DDL or DXF tables
@@ -910,4 +992,25 @@ const (
 		schema_change LONGBLOB COMMENT 'SchemaChangeEvent at rest',
 		processed_by_flag BIGINT UNSIGNED DEFAULT 0 COMMENT 'flag to mark which subscriber has processed the event',
 		PRIMARY KEY(ddl_job_id, sub_job_id))`
+	// CreateTiDBStorageClassTransitionHistoryTable is the CREATE TABLE SQL of
+	// `tidb_storage_class_transition_history`.
+	CreateTiDBStorageClassTransitionHistoryTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_storage_class_transition_history (
+		table_schema VARCHAR(64) NOT NULL,
+		table_name VARCHAR(64) NOT NULL,
+		table_id BIGINT NOT NULL,
+		partition_name VARCHAR(64) DEFAULT NULL,
+		partition_id BIGINT DEFAULT NULL,
+		direction VARCHAR(16) NOT NULL,
+		state VARCHAR(16) NOT NULL,
+		total_replicas BIGINT UNSIGNED DEFAULT NULL,
+		completed_replicas BIGINT UNSIGNED DEFAULT NULL,
+		schema_version BIGINT NOT NULL,
+		start_ts BIGINT UNSIGNED NOT NULL,
+		start_time DATETIME(6) NOT NULL,
+		finish_time DATETIME(6) DEFAULT NULL,
+		duration BIGINT UNSIGNED DEFAULT NULL COMMENT 'seconds',
+		physical_targets LONGBLOB NOT NULL COMMENT 'internal physical table and partition targets',
+		PRIMARY KEY (table_id, start_ts, direction),
+		KEY idx_state_table_id (state, table_id),
+		KEY idx_finish_time_table_id (finish_time, table_id))`
 )

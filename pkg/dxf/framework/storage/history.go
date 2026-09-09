@@ -16,10 +16,12 @@ package storage
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -34,19 +36,21 @@ const (
 	// MinHistoryTaskPageSize is the minimum page size for history task listing.
 	MinHistoryTaskPageSize = 1
 	// MaxHistoryTaskPageSize is the maximum page size for history task listing.
-	MaxHistoryTaskPageSize    = 200
-	historyTaskSummaryColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.end_time`
+	MaxHistoryTaskPageSize     = 200
+	historyTaskSummaryColumns  = basicTaskColumns + `, t.error, t.start_time, t.state_update_time, t.end_time`
+	taskErrorCategoryCancelled = "cancelled"
+	taskErrorCategoryDataError = "data-error"
 )
 
 // TransferSubtasks2HistoryWithSession transfer the selected subtasks into tidb_background_subtask_history table by taskID.
 func (*TaskManager) TransferSubtasks2HistoryWithSession(ctx context.Context, se sessionctx.Context, taskID int64) error {
 	exec := se.GetSQLExecutor()
-	_, err := sqlexec.ExecSQL(ctx, exec, `insert into mysql.tidb_background_subtask_history select * from mysql.tidb_background_subtask where task_key = %?`, taskID)
+	_, err := sqlexec.ExecSQL(ctx, exec, `insert into mysql.tidb_background_subtask_history select * from mysql.tidb_background_subtask where task_key = %?`, TaskIDToKey(taskID))
 	if err != nil {
 		return err
 	}
 	// delete taskID subtask
-	_, err = sqlexec.ExecSQL(ctx, exec, "delete from mysql.tidb_background_subtask where task_key = %?", taskID)
+	_, err = sqlexec.ExecSQL(ctx, exec, "delete from mysql.tidb_background_subtask where task_key = %?", TaskIDToKey(taskID))
 	return err
 }
 
@@ -56,42 +60,59 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 		return nil
 	}
 	taskIDStrs := make([]string, 0, len(tasks))
+	taskKeyStrs := make([]string, 0, len(tasks))
+	updateMetaArgs := make([]any, 0, len(tasks)*2)
+	var updateMetaSQL strings.Builder
+	updateMetaSQL.WriteString(`
+		update mysql.tidb_global_task
+		set meta = case id`)
 	for _, task := range tasks {
 		taskIDStrs = append(taskIDStrs, fmt.Sprintf("%d", task.ID))
+		taskKeyStrs = append(taskKeyStrs, fmt.Sprintf("'%d'", task.ID))
+		updateMetaSQL.WriteString(" when %? then %?")
+		updateMetaArgs = append(updateMetaArgs, task.ID, task.Meta)
 	}
+	taskIDList := strings.Join(taskIDStrs, `, `)
+	taskKeyList := strings.Join(taskKeyStrs, `, `)
+	updateMetaSQL.WriteString(`
+			end, state_update_time = CURRENT_TIMESTAMP()
+		where id in(` + taskIDList + `)`)
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
 	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		// sensitive data in meta might be redacted, need update first.
 		exec := se.GetSQLExecutor()
-		for _, t := range tasks {
-			_, err := sqlexec.ExecSQL(ctx, exec, `
-				update mysql.tidb_global_task
-				set meta= %?, state_update_time = CURRENT_TIMESTAMP()
-				where id = %?`, t.Meta, t.ID)
-			if err != nil {
-				return err
-			}
+		_, err := sqlexec.ExecSQL(ctx, exec, updateMetaSQL.String(), updateMetaArgs...)
+		if err != nil {
+			return err
 		}
-		_, err := sqlexec.ExecSQL(ctx, exec, `
+		_, err = sqlexec.ExecSQL(ctx, exec, `
 			insert into mysql.tidb_global_task_history
 			select * from mysql.tidb_global_task
-			where id in(`+strings.Join(taskIDStrs, `, `)+`)`)
+			where id in(`+taskIDList+`)`)
 		if err != nil {
 			return err
 		}
 
 		_, err = sqlexec.ExecSQL(ctx, exec, `
 			delete from mysql.tidb_global_task
-			where id in(`+strings.Join(taskIDStrs, `, `)+`)`)
-
-		for _, t := range tasks {
-			err = mgr.TransferSubtasks2HistoryWithSession(ctx, se, t.ID)
-			if err != nil {
-				return err
-			}
+			where id in(`+taskIDList+`)`)
+		if err != nil {
+			return err
 		}
+
+		_, err = sqlexec.ExecSQL(ctx, exec, `
+			insert into mysql.tidb_background_subtask_history
+			select * from mysql.tidb_background_subtask
+			where task_key in(`+taskKeyList+`)`)
+		if err != nil {
+			return err
+		}
+
+		_, err = sqlexec.ExecSQL(ctx, exec, `
+			delete from mysql.tidb_background_subtask
+			where task_key in(`+taskKeyList+`)`)
 		return err
 	})
 }
@@ -99,6 +120,8 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 // HistoryTaskSummary contains summary fields for one history task.
 type HistoryTaskSummary struct {
 	*proto.TaskBase
+	ErrorCode       string
+	ErrorCategory   string
 	StartTime       time.Time
 	StateUpdateTime time.Time
 	EndTime         time.Time
@@ -110,6 +133,61 @@ type HistoryTaskPage struct {
 	HasMore          bool
 	NextPageToken    int64
 	ApproxTotalCount int64
+}
+
+// TaskCleanupInfo contains task metadata needed to clean up external files.
+type TaskCleanupInfo struct {
+	ID      int64
+	Type    proto.TaskType
+	State   proto.TaskState
+	EndTime *time.Time
+}
+
+// TaskCleanupInfoGetter gets task metadata needed to clean up external files.
+type TaskCleanupInfoGetter interface {
+	GetTaskCleanupInfoByIDs(context.Context, []int64) (map[int64]*TaskCleanupInfo, error)
+}
+
+// GetTaskCleanupInfoByIDs gets task cleanup metadata from active and history tables.
+func (mgr *TaskManager) GetTaskCleanupInfoByIDs(ctx context.Context, taskIDs []int64) (map[int64]*TaskCleanupInfo, error) {
+	result := make(map[int64]*TaskCleanupInfo)
+	if len(taskIDs) == 0 {
+		return result, nil
+	}
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("%?,", len(taskIDs)), ",")
+	args := make([]any, len(taskIDs)*2)
+	for i, taskID := range taskIDs {
+		args[i] = taskID
+		args[len(taskIDs)+i] = taskID
+	}
+	rows, err := mgr.ExecuteSQLWithNewSession(ctx, `
+		select id, type, state, unix_timestamp(end_time)
+		from mysql.tidb_global_task
+		where id in (`+placeholders+`)
+		union all
+		select id, type, state, unix_timestamp(end_time)
+		from mysql.tidb_global_task_history
+		where id in (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		info := TaskCleanupInfo{
+			ID:    row.GetInt64(0),
+			Type:  proto.TaskType(row.GetString(1)),
+			State: proto.TaskState(row.GetString(2)),
+		}
+		if !row.IsNull(3) && row.GetInt64(3) > 0 {
+			endTime := time.Unix(row.GetInt64(3), 0).UTC()
+			info.EndTime = &endTime
+		}
+		result[info.ID] = &info
+	}
+	return result, nil
 }
 
 // ValidateHistoryTaskPageSize validates page size for history task listing.
@@ -190,16 +268,85 @@ func row2HistoryTaskSummary(r chunk.Row) *HistoryTaskSummary {
 	item := &HistoryTaskSummary{
 		TaskBase: row2TaskBasic(r),
 	}
-	if !r.IsNull(12) {
-		item.StartTime, _ = r.GetTime(12).GoTime(time.Local)
+	if taskErr := row2TaskError(r, 12); taskErr != nil {
+		item.ErrorCode = taskErrorCode(taskErr)
+		item.ErrorCategory = ClassifyTaskError(item.State, taskErr)
 	}
 	if !r.IsNull(13) {
-		item.StateUpdateTime, _ = r.GetTime(13).GoTime(time.Local)
+		item.StartTime, _ = r.GetTime(13).GoTime(time.Local)
 	}
 	if !r.IsNull(14) {
-		item.EndTime, _ = r.GetTime(14).GoTime(time.Local)
+		item.StateUpdateTime, _ = r.GetTime(14).GoTime(time.Local)
+	}
+	if !r.IsNull(15) {
+		item.EndTime, _ = r.GetTime(15).GoTime(time.Local)
 	}
 	return item
+}
+
+// ClassifyTaskError returns a coarse category for a terminal task error.
+// The category is exposed by the history API and must never contain the raw error text.
+func ClassifyTaskError(state proto.TaskState, taskErr error) string {
+	if taskErr == nil {
+		return ""
+	}
+	switch state {
+	case proto.TaskStateFailed:
+		return proto.TaskStateFailed.String()
+	case proto.TaskStateReverted:
+		if IsCancelledErr(taskErr) {
+			return taskErrorCategoryCancelled
+		}
+		if isDataError(taskErr) {
+			return taskErrorCategoryDataError
+		}
+		return proto.TaskStateFailed.String()
+	default:
+		return ""
+	}
+}
+
+func isDataError(taskErr error) bool {
+	if taskErr == nil {
+		return false
+	}
+	errMsg := taskErr.Error()
+	// Keep these checks string-based to avoid depending on Lightning error definitions.
+	// We can replace this when those error definitions are split out of the Lightning
+	// package. DXF error serialization keeps only the outer error code, so nested data
+	// errors must be identified by their canonical messages.
+	//
+	// import-into examples:
+	// [Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk:
+	// encode kv error in file orderlab/orderlab.shipment_events.000000000.csv.gz:0
+	// at offset 0: Value conversion failed for column 'event_id'. Expected type:
+	// bigint, received value: ?. Reason: [types:1292]Truncated incorrect DOUBLE value: '?'.
+	//
+	// add-index examples:
+	// [kv:1062]Duplicate entry '1' for key 't.idx'
+	isImportDataErr := strings.Contains(errMsg, "ErrEncodeKV") &&
+		(strings.Contains(errMsg, "Value conversion failed for column") ||
+			(strings.Contains(errMsg, "Check constraint '") && strings.Contains(errMsg, "' is violated")) ||
+			strings.Contains(errMsg, "Table has no partition for value"))
+	isImportConflictErr := (strings.Contains(errMsg, "[executor:8167]") && strings.Contains(errMsg, "Duplicate key conflict found")) ||
+		(strings.Contains(errMsg, "ErrFoundDataConflictRecords") && strings.Contains(errMsg, "found data conflict records")) ||
+		(strings.Contains(errMsg, "ErrFoundIndexConflictRecords") && strings.Contains(errMsg, "found index conflict records"))
+	isUKDupEntryErr := strings.Contains(errMsg, "[kv:1062]") && strings.Contains(errMsg, "Duplicate entry")
+	return isImportDataErr || isImportConflictErr || isUKDupEntryErr
+}
+
+func taskErrorCode(taskErr error) string {
+	var normalizedErr *errors.Error
+	if !goerrors.As(taskErr, &normalizedErr) {
+		return ""
+	}
+	code := string(normalizedErr.RFCCode())
+	// errors.Normalize without RFCCodeText or MySQLErrorCode leaves a zero-value
+	// numeric code, which RFCCode returns as "0".
+	if code == "0" {
+		return ""
+	}
+	return code
 }
 
 // GCSubtasks deletes the history subtask which is older than the given days.

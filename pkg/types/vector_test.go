@@ -170,3 +170,17 @@ func TestVectorSerialize(t *testing.T) {
 	}, remaining)
 	require.True(t, v3.IsZeroValue())
 }
+
+func TestVectorDeserializeOverflow(t *testing.T) {
+	// 0x40000000 elements overflows the uint32 size computation
+	// (0x40000000*4 + 4 wraps to 4), so without the uint64 check the header
+	// is accepted with a 4-byte buffer and Len() reports a huge dimension
+	// that Elements() would read out of bounds.
+	b := []byte{0x00, 0x00, 0x00, 0x40}
+	_, err := types.PeekBytesAsVectorFloat32(b)
+	require.Error(t, err)
+
+	v, _, err := types.ZeroCopyDeserializeVectorFloat32(b)
+	require.Error(t, err)
+	require.True(t, v.IsZeroValue())
+}

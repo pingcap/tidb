@@ -19,6 +19,7 @@ import (
 	"context"
 	goerrors "errors"
 	"io"
+	"time"
 
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
 	"github.com/pingcap/errors"
@@ -33,7 +34,8 @@ import (
 const noSuchKey = "NoSuchKey"
 
 type client struct {
-	svc API
+	svc        API
+	presignSvc API
 	storeapi.BucketPrefix
 	options *backuppb.S3
 }
@@ -151,6 +153,25 @@ func (c *client) DeleteObject(ctx context.Context, name string) error {
 		Key:    oss.Ptr(key),
 	})
 	return errors.Trace(err)
+}
+
+// PresignObject creates a presigned URL for the given object.
+// It implements the presignableClient interface used by s3like.Storage.
+// TODO: A URL signed with temporary credentials can expire before the requested
+// duration. credentials-go does not expose the cached credential expiration, so
+// this method cannot refresh early or report the effective lifetime. Make the OSS
+// credential path expiration-aware, then ensure its remaining lifetime covers
+// expire or return the effective expiration to the caller.
+func (c *client) PresignObject(ctx context.Context, name string, expire time.Duration) (string, error) {
+	key := c.ObjectKey(name)
+	result, err := c.presignSvc.Presign(ctx, &oss.GetObjectRequest{
+		Bucket: oss.Ptr(c.Bucket),
+		Key:    oss.Ptr(key),
+	}, oss.PresignExpires(expire))
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return result.URL, nil
 }
 
 func (c *client) DeleteObjects(ctx context.Context, names []string) error {

@@ -1082,7 +1082,7 @@ func TestDeleteRangeForMDDLJob2(t *testing.T) {
 		_, exist := mDDLJobALLNewTableKeySet[params.StartKey]
 		require.True(t, exist)
 	}
-	require.Equal(t, "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),", qargs.Sql)
+	require.Equal(t, "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?),(%?, %?, %?, %?, %?)", qargs.Sql)
 }
 
 func TestCompatibleAlert(t *testing.T) {

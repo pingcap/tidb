@@ -470,12 +470,12 @@ func TestJobOrchestratorRecordSubmissionGetsFreshGraceTimeout(t *testing.T) {
 	mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(updateCtx context.Context, cp *importinto.TableCheckpoint) error {
 		updateCtxDone = observeContextDone(updateCtx)
 		close(updateStarted)
-		<-allowUpdateReturn
 		select {
 		case <-updateCtx.Done():
 			return updateCtx.Err()
 		default:
 		}
+		<-allowUpdateReturn
 		require.Equal(t, common.UniqueTable("db", "t1"), cp.TableName)
 		require.Equal(t, int64(1), cp.JobID)
 		require.Equal(t, importinto.CheckpointStatusRunning, cp.Status)

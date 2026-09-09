@@ -420,7 +420,7 @@
       {
         "SQL": "select @@last_plan_from_cache",
         "Result": [
-          "0"
+          "1"
         ]
       },
       {

@@ -41,7 +41,7 @@ Validate these first because they caused prior drift/regressions:
 
 - [ ] Bazel metadata rule is explicit and unambiguous (no ambiguous wildcard wording).
 - [ ] PR requirements include the `Issue Number:` line with `close #<id>` or `ref #<id>`.
-- [ ] Notes update policy is consistent between `docs/agents/notes-guide.md` and planner notes.
+- [ ] Agent notes follow the location and update rules in `docs/agents/notes-guide.md`.
 - [ ] Testing policy in `AGENTS.md` matches testing runbook guidance under `docs/agents/` (no contradiction).
 
 ### 4) Testing and Validation Consistency

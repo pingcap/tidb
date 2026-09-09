@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -59,6 +60,21 @@ func createGetBucketRegionServer(region string, statusCode int, incHeader bool) 
 		}
 		w.WriteHeader(statusCode)
 	}))
+}
+
+type rewriteRequestHostTransport struct {
+	targetHost string
+	base       http.RoundTripper
+}
+
+func (t *rewriteRequestHostTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	req := r.Clone(r.Context())
+	if req.Host == "" {
+		req.Host = r.URL.Host
+	}
+	req.URL.Scheme = "http"
+	req.URL.Host = t.targetHost
+	return t.base.RoundTrip(req)
 }
 
 func TestApply(t *testing.T) {
@@ -424,6 +440,71 @@ func TestS3Storage(t *testing.T) {
 	for i := range tests {
 		testFn(&tests[i], t)
 	}
+
+	t.Run("cache assumed role credentials", func(t *testing.T) {
+		const assumeRoleResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+  <AssumeRoleResult>
+    <AssumedRoleUser>
+      <Arn>arn:aws:sts::123456789012:assumed-role/test-role/test-session</Arn>
+      <AssumedRoleId>AROAEXAMPLE:test-session</AssumedRoleId>
+    </AssumedRoleUser>
+    <Credentials>
+      <AccessKeyId>assumed-access-key</AccessKeyId>
+      <SecretAccessKey>assumed-secret-access-key</SecretAccessKey>
+      <SessionToken>assumed-session-token</SessionToken>
+      <Expiration>2099-01-01T00:00:00Z</Expiration>
+    </Credentials>
+  </AssumeRoleResult>
+  <ResponseMetadata>
+    <RequestId>00000000-0000-0000-0000-000000000000</RequestId>
+  </ResponseMetadata>
+</AssumeRoleResponse>`
+
+		var assumeRoleCalls, s3Calls, assumedCredentialUses atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost {
+				assumeRoleCalls.Add(1)
+				w.Header().Set("Content-Type", "text/xml")
+				if _, err := fmt.Fprint(w, assumeRoleResponse); err != nil {
+					t.Errorf("write AssumeRole response: %v", err)
+				}
+				return
+			}
+
+			s3Calls.Add(1)
+			if strings.Contains(r.Header.Get("Authorization"), "Credential=assumed-access-key/") {
+				assumedCredentialUses.Add(1)
+			}
+			w.Header().Set(bucketRegionHeader, "us-west-2")
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		httpClient := server.Client()
+		httpClient.Transport = &rewriteRequestHostTransport{
+			targetHost: strings.TrimPrefix(server.URL, "http://"),
+			base:       httpClient.Transport,
+		}
+		storage, err := NewS3Storage(context.Background(), &backuppb.S3{
+			Region:         "us-west-2",
+			Endpoint:       server.URL,
+			Provider:       "aws",
+			Bucket:         "bucket",
+			ForcePathStyle: true,
+			RoleArn:        "arn:aws:iam::123456789012:role/test-role",
+		}, &storeapi.Options{HTTPClient: httpClient})
+		require.NoError(t, err)
+
+		for range 2 {
+			exists, err := storage.FileExists(context.Background(), "object")
+			require.NoError(t, err)
+			require.True(t, exists)
+		}
+		require.GreaterOrEqual(t, s3Calls.Load(), int32(2))
+		require.Equal(t, s3Calls.Load(), assumedCredentialUses.Load())
+		require.Equal(t, int32(1), assumeRoleCalls.Load())
+	})
 }
 
 func TestS3URI(t *testing.T) {
@@ -513,6 +594,95 @@ func TestMultiUploadErrorNotOverwritten(t *testing.T) {
 	require.Equal(t, 5*1024*1024+6716, n)
 	require.ErrorContains(t, w.Close(ctx), "mock error")
 	CheckAccessStats(t, accessRec, 0, 0, 0, 5*1024*1024+6716)
+}
+
+func TestKS3CreateHonorsPartSize(t *testing.T) {
+	const (
+		partSize = 6 * 1024 * 1024
+		uploadID = "test-upload-id"
+	)
+
+	var (
+		mu                sync.Mutex
+		uploadedPartSizes = make(map[string]int)
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		switch {
+		case r.Method == http.MethodPost && query.Has("uploads"):
+			w.Header().Set("Content-Type", "application/xml")
+			_, err := fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?>
+<InitiateMultipartUploadResult>
+  <Bucket>bucket</Bucket>
+  <Key>prefix/file</Key>
+  <UploadId>%s</UploadId>
+</InitiateMultipartUploadResult>`, uploadID)
+			if err != nil {
+				t.Errorf("write initiate multipart upload response: %v", err)
+			}
+		case r.Method == http.MethodPut && query.Get("uploadId") == uploadID:
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read upload part request: %v", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			partNumber := query.Get("partNumber")
+			mu.Lock()
+			uploadedPartSizes[partNumber] = len(body)
+			mu.Unlock()
+			w.Header().Set("ETag", fmt.Sprintf(`"etag-%s"`, partNumber))
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && query.Get("uploadId") == uploadID:
+			w.Header().Set("Content-Type", "application/xml")
+			_, err := fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?>
+<CompleteMultipartUploadResult>
+  <Location>http://example.com/bucket/prefix/file</Location>
+  <Bucket>bucket</Bucket>
+  <Key>prefix/file</Key>
+  <ETag>"etag"</ETag>
+</CompleteMultipartUploadResult>`)
+			if err != nil {
+				t.Errorf("write complete multipart upload response: %v", err)
+			}
+		default:
+			t.Errorf("unexpected KS3 request: %s %s", r.Method, r.URL.String())
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	storage, err := NewKS3Storage(ctx, &backuppb.S3{
+		Region:          "test-region",
+		Endpoint:        server.URL,
+		Bucket:          "bucket",
+		Prefix:          "prefix",
+		AccessKey:       "access-key",
+		SecretAccessKey: "secret-access-key",
+		ForcePathStyle:  true,
+	}, &storeapi.Options{})
+	require.NoError(t, err)
+
+	writer, err := storage.Create(ctx, "file", &storeapi.WriterOption{
+		Concurrency: 2,
+		PartSize:    partSize,
+	})
+	require.NoError(t, err)
+
+	data := make([]byte, 2*partSize+1024)
+	n, err := writer.Write(ctx, data)
+	require.NoError(t, err)
+	require.Equal(t, len(data), n)
+	require.NoError(t, writer.Close(ctx))
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, map[string]int{
+		"1": partSize,
+		"2": partSize,
+		"3": 1024,
+	}, uploadedPartSizes)
 }
 
 func mockGetObject(t *testing.T, s3api *mock.MockS3API, times int) {
@@ -1466,9 +1636,11 @@ func TestTryLockRemoteRootPathPrefix(t *testing.T) {
 			return nil, errors.New("no such key")
 		})
 
-	_, err := TryLockRemote(context.Background(), storage, "truncating.lock", "hint")
+	_, err := TryLockRemote(context.Background(), storage, "truncating.lock", LockMetaInput{Hint: "hint"})
 	require.Error(t, err)
 	require.ErrorContains(t, err, "during initial check")
+	var locked ErrLocked
+	require.False(t, stderrors.As(err, &locked))
 }
 
 func TestSendCreds(t *testing.T) {

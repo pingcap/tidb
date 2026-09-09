@@ -18,6 +18,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
 	goerrors "errors"
 	"flag"
 	"fmt"
@@ -26,16 +31,20 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"cloud.google.com/go/storage"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/go-resty/resty/v2"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/api/option"
 )
 
 func CheckAccessStats(t *testing.T, rec *recording.AccessStats, expectedGets, expectedPuts, expectedRead, expectWrite int) {
@@ -688,4 +697,104 @@ func TestGCSAccessRecording(t *testing.T) {
 	require.NoError(t, reader.Close())
 	// Open will use 2 get, one for get file size.
 	CheckAccessStats(t, accessRec, 3, 2, 12, 12)
+}
+
+func fakeGCSServiceAccount(t *testing.T) []byte {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	require.NoError(t, err)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+	sa, err := json.Marshal(map[string]string{
+		"type":         "service_account",
+		"client_email": "test@test.iam.gserviceaccount.com",
+		"private_key":  string(keyPEM),
+		"token_uri":    "https://oauth2.googleapis.com/token",
+	})
+	require.NoError(t, err)
+	return sa
+}
+
+func TestGCSWriterAbortsOnError(t *testing.T) {
+	var deletes atomic.Int32
+	var failFinalize, failDelete atomic.Bool
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hasUploadID := r.URL.Query().Has(mpuUploadIDQuery)
+		switch {
+		case r.Method == http.MethodDelete && hasUploadID: // abort
+			deletes.Add(1)
+			if failDelete.Load() {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && hasUploadID: // finalize
+			if failFinalize.Load() {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	cli, err := storage.NewClient(ctx,
+		option.WithEndpoint(srv.URL),
+		option.WithCredentialsJSON(fakeGCSServiceAccount(t)))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, cli.Close()) }()
+
+	newWriter := func() *GCSWriter {
+		return &GCSWriter{
+			uploadBase: uploadBase{
+				cli:             cli,
+				ctx:             ctx,
+				bucket:          "test-bucket",
+				blob:            "test-object",
+				retry:           1,
+				signedURLExpiry: time.Hour,
+			},
+			uploadID: "test-upload-id",
+			chunkCh:  make(chan chunk),
+			restCli:  resty.New().SetTLSClientConfig(&tls.Config{InsecureSkipVerify: true}),
+		}
+	}
+
+	t.Run("worker error aborts the upload", func(t *testing.T) {
+		deletes.Store(0)
+		w := newWriter()
+		w.err.Store(goerrors.New("stage failed"))
+		err := w.Close()
+		require.ErrorContains(t, err, "stage failed")
+		require.Equal(t, int32(1), deletes.Load())
+	})
+
+	t.Run("finalize error aborts the upload", func(t *testing.T) {
+		deletes.Store(0)
+		failFinalize.Store(true)
+		defer failFinalize.Store(false)
+		w := newWriter()
+		w.xmlMPUParts = []*xmlMPUPart{{partNumber: 1, etag: "etag"}}
+		err := w.Close()
+		require.ErrorContains(t, err, "failed to finalize multipart upload")
+		require.Equal(t, int32(1), deletes.Load())
+	})
+
+	t.Run("finalize and cancel both fail", func(t *testing.T) {
+		deletes.Store(0)
+		failFinalize.Store(true)
+		defer failFinalize.Store(false)
+		failDelete.Store(true)
+		defer failDelete.Store(false)
+		w := newWriter()
+		w.xmlMPUParts = []*xmlMPUPart{{partNumber: 1, etag: "etag"}}
+		err := w.Close()
+		require.ErrorContains(t, err, "failed to finalize multipart upload")
+		require.ErrorContains(t, err, "failed to cancel multipart upload")
+		require.Equal(t, int32(1), deletes.Load())
+	})
 }

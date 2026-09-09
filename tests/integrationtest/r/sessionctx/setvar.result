@@ -1097,6 +1097,28 @@ set @@tidb_max_paging_size=default;
 select @@tidb_max_paging_size;
 @@tidb_max_paging_size
 50000
+select /*+ set_var(tidb_paging_size_bytes=1048576) */ @@tidb_paging_size_bytes;
+@@tidb_paging_size_bytes
+1048576
+select @@tidb_paging_size_bytes;
+@@tidb_paging_size_bytes
+0
+set @@tidb_paging_size_bytes=default;
+select @@tidb_paging_size_bytes;
+@@tidb_paging_size_bytes
+0
+set @@tidb_paging_size_bytes=0;
+select @@tidb_paging_size_bytes;
+@@tidb_paging_size_bytes
+0
+set @@tidb_paging_size_bytes=4194304;
+select @@tidb_paging_size_bytes;
+@@tidb_paging_size_bytes
+4194304
+set @@tidb_paging_size_bytes=default;
+select @@tidb_paging_size_bytes;
+@@tidb_paging_size_bytes
+0
 select /*+ set_var(tidb_enable_cascades_planner=0) */ @@tidb_enable_cascades_planner;
 @@tidb_enable_cascades_planner
 0

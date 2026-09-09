@@ -408,9 +408,7 @@ attribute
 {"age": 20, "name": "Tom"}
 SELECT user, host, attribute FROM information_schema.user_attributes where user in ('testuser', 'testuser1', 'testuser2') ORDER BY user;
 user	host	attribute
-testuser	%	{"comment": "1234"}
 testuser1	%	{"age": 20, "name": "Tom"}
-testuser2	%	NULL
 SELECT user, host, user_attributes FROM mysql.user ORDER BY user;
 Error 1142 (42000): SELECT command denied to user 'testuser1'@'%' for table 'user'
 create user usr1@'%' identified by 'passord';

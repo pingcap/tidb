@@ -26,20 +26,113 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+func (s *mockGCSSuite) TestNextGenExpiredConflictRowCleanup() {
+	t := s.T()
+	if kerneltype.IsClassic() {
+		t.Skip("requires the NextGen distributed task framework")
+	}
+
+	const (
+		sourceBucket = "expired-conflict-source"
+		sortBucket   = "expired-conflict-sort"
+		dbName       = "expired_conflict_cleanup"
+	)
+	ctx := s.ctx
+	baseSortURI := fmt.Sprintf("gs://%s?endpoint=%s", sortBucket, gcsEndpoint)
+	originalCloudStorageURI := vardef.CloudStorageURI.Load()
+	t.Cleanup(func() {
+		vardef.CloudStorageURI.Store(originalCloudStorageURI)
+	})
+
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sourceBucket})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: sortBucket})
+	vardef.CloudStorageURI.Store(baseSortURI)
+	rootedSortURI := handle.GetCloudStorageURI(ctx, s.store)
+	sortStore, err := importer.GetSortStore(ctx, rootedSortURI)
+	require.NoError(t, err)
+	t.Cleanup(sortStore.Close)
+
+	s.server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: sourceBucket, Name: "data.csv"},
+		Content:     []byte("1,one\n1,duplicate\n2,two\n"),
+	})
+	s.prepareAndUseDB(dbName)
+	s.tk.MustExec("create table t (id bigint primary key, value varchar(32))")
+	result := s.tk.MustQuery(fmt.Sprintf(`import into t from 'gs://%s/data.csv?endpoint=%s'
+		with cloud_storage_uri='%s', on_duplicate_key='capture'`, sourceBucket, gcsEndpoint, rootedSortURI)).Rows()
+	require.Len(t, result, 1)
+	jobID, err := strconv.ParseInt(result[0][0].(string), 10, 64)
+	require.NoError(t, err)
+
+	task := s.getTaskByJob(jobID)
+	require.NotNil(t, task)
+
+	subtasks := s.getSubtasksOfStep(task.ID, proto.ImportStepCollectConflicts)
+	require.NotEmpty(t, subtasks)
+	conflictFiles := make([]string, 0)
+	for _, subtask := range subtasks {
+		meta := &importinto.CollectConflictsStepMeta{}
+		require.NoError(t, json.Unmarshal(subtask.Meta, meta))
+		conflictFiles = append(conflictFiles, meta.ConflictedRowFilenames...)
+	}
+	require.NotEmpty(t, conflictFiles)
+	for _, filename := range conflictFiles {
+		exists, err := sortStore.FileExists(ctx, filename)
+		require.NoError(t, err, filename)
+		require.True(t, exists, filename)
+	}
+
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		rows := s.tk.MustQuery("select state from mysql.tidb_global_task_history where id = ?", task.ID).Rows()
+		if !assert.Len(collect, rows, 1) {
+			return
+		}
+		assert.Equal(collect, proto.TaskStateSucceed.String(), rows[0][0])
+	}, 30*time.Second, 100*time.Millisecond)
+	for _, filename := range conflictFiles {
+		exists, err := sortStore.FileExists(ctx, filename)
+		require.NoError(t, err, filename)
+		require.True(t, exists, "ordinary cleanup removed conflict file %s", filename)
+	}
+
+	// Conflict files are retained for seven days after a task finishes. Backdate
+	// the completion time so the periodic cleaner can exercise expiration now.
+	s.tk.MustExec(`update mysql.tidb_global_task_history
+		set end_time = CURRENT_TIMESTAMP - INTERVAL 8 DAY where id = ?`, task.ID)
+	s.tk.MustQuery(`select state, end_time < CURRENT_TIMESTAMP - INTERVAL 7 DAY
+		from mysql.tidb_global_task_history where id = ?`, task.ID).
+		Check(testkit.Rows("succeed 1"))
+
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		for _, filename := range conflictFiles {
+			exists, err := sortStore.FileExists(ctx, filename)
+			assert.NoError(collect, err, filename)
+			assert.False(collect, exists, "expired conflict file still exists: %s", filename)
+		}
+	}, 30*time.Second, 100*time.Millisecond)
+}
 
 func (s *mockGCSSuite) testSingleFileConflictResolution(tblSQL string, sourceContent string, resultRows []string) {
 	s.T().Helper()
@@ -457,6 +550,181 @@ abc,10,11,11,11,11
 	})
 }
 
+func (s *mockGCSSuite) TestGlobalSortMultiValuedUniqueIndexCountsConflictedRowOnce() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	bak := conflictedkv.BufferedHandleLimit
+	conflictedkv.BufferedHandleLimit = 2
+	s.T().Cleanup(func() {
+		conflictedkv.BufferedHandleLimit = bak
+	})
+
+	// The next-gen resource planner assigns one slot to this tiny input by
+	// default. Amplify its estimated size so the concurrent dispatcher and
+	// collectors are exercised.
+	testfailpoint.Enable(
+		s.T(),
+		"github.com/pingcap/tidb/pkg/executor/importer/amplifyRealSize",
+		fmt.Sprintf("return(%d)", 2*units.GiB),
+	)
+
+	// Issue #69799: handle 1 occurs in separate buffers because its two array
+	// elements conflict with different rows.
+	jobID := s.testConflictResolutionWithOptions(
+		`create table t (
+			pk bigint primary key clustered,
+			a json not null,
+			unique key uk_a ((cast(a->'$' as unsigned array)))
+		)`,
+		[]string{"1,\"[1000,2000]\"\n2,\"[1000]\"\n3,\"[2000]\"\n"},
+		[]string{},
+		"checksum_table = 'required'",
+	)
+	s.Greater(s.getTaskByJob(jobID).RequiredSlots, 1)
+}
+
+func (s *mockGCSSuite) TestGlobalSortResolvesGlobalIndexConflictsAcrossPartitions() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	// Issue #69800: the global index uses the logical table ID, while the
+	// conflicting record KVs are stored under their physical partition IDs.
+	s.testConflictResolutionWithOptions(
+		`create table t (
+			id bigint not null,
+			p int not null,
+			u int not null,
+			payload varchar(20),
+			unique key uk_u (u) global
+		) partition by range (p) (
+			partition p0 values less than (10),
+			partition p1 values less than (maxvalue)
+		)`,
+		[]string{"1,1,10,a\n2,11,10,b\n3,12,30,c\n"},
+		[]string{"3 12 30 c"},
+		"checksum_table = 'required'",
+	)
+
+	s.tk.MustQuery("select * from t force index (uk_u) order by id").
+		Check(testkit.Rows("3 12 30 c"))
+}
+
+func (s *mockGCSSuite) TestGlobalSortDistinguishesCommonHandlesWithSameString() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	// Issue #69801: these distinct common handles both stringify as
+	// "{x, y, z}" but belong to different unique-index conflict groups.
+	s.testConflictResolutionWithOptions(
+		`create table t (
+			pk1 varchar(32) not null,
+			pk2 varchar(32) not null,
+			u1 int not null,
+			u2 int not null,
+			primary key (pk1, pk2) clustered,
+			unique key uk1 (u1),
+			unique key uk2 (u2)
+		)`,
+		[]string{"\"x, y\",z,10,100\na,b,10,101\nx,\"y, z\",20,200\nc,d,21,200\n"},
+		[]string{},
+		"checksum_table = 'required'",
+	)
+}
+
+func (s *mockGCSSuite) TestGlobalSortFunctionalIndexConflictAfterAddingVisibleColumn() {
+	if kerneltype.IsClassic() {
+		s.T().Skip("requires the NextGen MinIO object store")
+	}
+
+	sourceStore, err := handle.NewObjStore(s.ctx, realtikvtest.GetNextGenObjStoreURI("issue-70372"))
+	s.NoError(err)
+	s.T().Cleanup(func() {
+		s.NoError(sourceStore.DeleteFile(s.ctx, "issue-70372.csv"))
+		sourceStore.Close()
+	})
+	s.NoError(sourceStore.WriteFile(s.ctx, "issue-70372.csv", []byte("1,10,100\n2,10,200\n")))
+
+	s.prepareAndUseDB("issue_70372")
+	s.tk.MustExec(`create table t (
+		id bigint primary key clustered,
+		a int,
+		unique key uk_expr ((a + 1))
+	)`)
+	s.tk.MustExec("alter table t add column tail int")
+	s.tk.MustExec("alter table t add unique key uk_tail (tail)")
+
+	result := s.tk.MustQuery(fmt.Sprintf(`import into t from '%s'
+		with on_duplicate_key='capture', cloud_storage_uri='%s'`,
+		realtikvtest.GetNextGenObjStoreURI("issue-70372/*.csv"),
+		realtikvtest.GetNextGenObjStoreURI("issue-70372-sort"))).Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+
+	rows := s.tk.MustQuery("select summary from mysql.tidb_import_jobs where id = ?", jobID).Rows()
+	s.Len(rows, 1)
+	var summary importer.Summary
+	s.NoError(json.Unmarshal([]byte(rows[0][0].(string)), &summary))
+	s.Zero(summary.ImportedRows)
+	s.EqualValues(2, summary.ConflictRowCnt)
+
+	s.tk.MustQuery("select * from t").Check(testkit.Rows())
+	s.tk.MustExec("admin check table t")
+	s.tk.MustExec("insert into t values (3, 30, 100)")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("3 30 100"))
+	s.tk.MustExec("admin check table t")
+}
+
+func (s *mockGCSSuite) TestGlobalSortFunctionalIndexNullConflictAfterAddingVisibleColumn() {
+	if kerneltype.IsClassic() {
+		s.T().Skip("requires the NextGen MinIO object store")
+	}
+
+	sourceStore, err := handle.NewObjStore(s.ctx, realtikvtest.GetNextGenObjStoreURI("issue-70578"))
+	s.NoError(err)
+	s.T().Cleanup(func() {
+		s.NoError(sourceStore.DeleteFile(s.ctx, "issue-70578.csv"))
+		sourceStore.Close()
+	})
+	s.NoError(sourceStore.WriteFile(s.ctx, "issue-70578.csv", []byte("1,10,\\N\n2,10,\\N\n")))
+
+	s.prepareAndUseDB("issue_70578")
+	s.tk.MustExec(`create table t (
+		id bigint primary key clustered,
+		a int,
+		unique key uk_expr ((a + 1))
+	)`)
+	s.tk.MustExec("alter table t add column tail int")
+
+	result := s.tk.MustQuery(fmt.Sprintf(`import into t from '%s'
+		with on_duplicate_key='capture', cloud_storage_uri='%s'`,
+		realtikvtest.GetNextGenObjStoreURI("issue-70578/*.csv"),
+		realtikvtest.GetNextGenObjStoreURI("issue-70578-sort"))).Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+
+	rows := s.tk.MustQuery("select summary from mysql.tidb_import_jobs where id = ?", jobID).Rows()
+	s.Len(rows, 1)
+	var summary importer.Summary
+	s.NoError(json.Unmarshal([]byte(rows[0][0].(string)), &summary))
+	s.Zero(summary.ImportedRows)
+	s.EqualValues(2, summary.ConflictRowCnt)
+
+	s.tk.MustQuery("select * from t").Check(testkit.Rows())
+	s.tk.MustQuery("select * from t force index (uk_expr)").Check(testkit.Rows())
+	s.tk.MustExec("admin check table t")
+
+	s.tk.MustExec("insert into t values (3, 10, NULL)")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("3 10 <nil>"))
+	s.tk.MustQuery("select * from t force index (uk_expr)").Check(testkit.Rows("3 10 <nil>"))
+	s.tk.MustContainErrMsg("insert into t values (4, 10, NULL)", "Duplicate entry '11' for key 't.uk_expr'")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("3 10 <nil>"))
+	s.tk.MustQuery("select * from t force index (uk_expr)").Check(testkit.Rows("3 10 <nil>"))
+	s.tk.MustExec("admin check table t")
+}
+
 func (s *mockGCSSuite) TestGlobalSortConflictResolutionMultipleSubtasks() {
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
@@ -701,7 +969,7 @@ func (s *mockGCSSuite) TestGlobalSortTooManyConflictedRowsFromIndex() {
 
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/forceHandleConflictsBySingleThread", "return(true)")
 	var fpEntered atomic.Int32
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv/mockHandleSetSizeLimit", func(limitP *int64) {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv/mockKeySetSizeLimit", func(limitP *int64) {
 		*limitP = 0
 		fpEntered.CompareAndSwap(0, 1)
 	})

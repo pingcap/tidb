@@ -315,9 +315,6 @@ approx_count_distinct( a, b)
 drop table if exists t;
 create table t(a char(10), b char(10));
 insert into t values('1', '222'), ('12', '22');
-select group_concat(distinct a, b) from t;
-group_concat(distinct a, b)
-1222,1222
 drop table if exists t, s;
 create table t(a int);
 create table s(a int, b int);
@@ -1141,9 +1138,6 @@ select group_concat(a), group_concat(distinct a) from t;
 group_concat(a)	group_concat(distinct a)
 NULL	NULL
 insert into t value(1, null), (null, 1), (1, 2), (3, 4);
-select group_concat(a, b), group_concat(distinct a,b) from t;
-group_concat(a, b)	group_concat(distinct a,b)
-12,34	12,34
 set @@session.tidb_opt_distinct_agg_push_down = 0;
 select count(distinct a) from t;
 count(distinct a)
@@ -1184,7 +1178,7 @@ delete from t where t.a = 2;
 insert into t values(1, 2, 4, 5, 6, 6.1, 7.2, 9);
 select a, var_pop(distinct b), var_pop(distinct c), var_pop(distinct d), var_pop(distinct e), var_pop(distinct f), var_pop(distinct g), var_pop(distinct h) from t group by a;
 a	var_pop(distinct b)	var_pop(distinct c)	var_pop(distinct d)	var_pop(distinct e)	var_pop(distinct f)	var_pop(distinct g)	var_pop(distinct h)
-1	0.25	0.25	0.25	0.25	0.25	0.25	0.25
+1	0.25	0.25	0.25	0.25	0.25	0.24999999999999956	0.25
 drop table t;
 create table t(a int, b bigint, c float, d double, e decimal);
 insert into t values(1, 1000, 6.8, 3.45, 8.3), (1, 3998, -3.4, 5.12, 9.3),(1, 288, 9.2, 6.08, 1);
@@ -1194,7 +1188,7 @@ variance(b)	variance(c)	variance(d)	variance(e)
 insert into t values(1, 255, 6.8, 6.08, 1);
 select variance(distinct b), variance(distinct c), variance(distinct d), variance(distinct e) from t group by a;
 variance(distinct b)	variance(distinct c)	variance(distinct d)	variance(distinct e)
-2364075.6875	29.840000178019228	1.1808222222222229	12.666666666666666
+2364075.6875	29.840000178019235	1.180822222222222	12.666666666666666
 insert into t values(2, 322, 0.8, 2.22, 6);
 select a, variance(b) over w from t window w as (partition by a);
 a	variance(b) over w

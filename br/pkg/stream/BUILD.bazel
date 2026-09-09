@@ -23,6 +23,7 @@ go_library(
         "//br/pkg/glue",
         "//br/pkg/logutil",
         "//br/pkg/metautil",
+        "//br/pkg/operation",
         "//br/pkg/restore/ingestrec",
         "//br/pkg/restore/tiflashrec",
         "//br/pkg/restore/utils",
@@ -85,6 +86,7 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
+        "//br/pkg/operation",
         "//br/pkg/stream/backupmetas",
         "//br/pkg/streamhelper",
         "//br/pkg/utils",

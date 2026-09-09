@@ -192,6 +192,19 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 	return
 }
 
+// UsedMemoryUsage returns an estimate of the bytes currently used by
+// the chunk's columns. Unlike MemoryUsage, it counts slice lengths
+// instead of capacities, so retained reusable capacity is excluded.
+func (c *Chunk) UsedMemoryUsage() (sum int64) {
+	if c == nil {
+		return 0
+	}
+	for _, col := range c.columns {
+		sum += int64(unsafe.Sizeof(*col)) + int64(len(col.nullBitmap)) + int64(len(col.offsets)*8) + int64(len(col.data)) + int64(len(col.elemBuf))
+	}
+	return
+}
+
 // RequiredRows returns how many rows is considered full.
 func (c *Chunk) RequiredRows() int {
 	return c.requiredRows

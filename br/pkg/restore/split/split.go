@@ -36,18 +36,42 @@ const (
 	ScatterWaitUpperInterval = 30 * time.Minute
 
 	ScanRegionPaginationLimit = 128
+
+	// DefaultRegionIndexStep is the default number of split-key indexes between two rough split keys.
+	DefaultRegionIndexStep uint = 128
 )
+
+// NormalizeRegionIndexStep returns the default rough split step when the configured value is unset.
+func NormalizeRegionIndexStep(regionIndexStep uint) uint {
+	if regionIndexStep == 0 {
+		return DefaultRegionIndexStep
+	}
+	return regionIndexStep
+}
 
 // RegionSplitter is a executor of region split by rules.
 type RegionSplitter struct {
-	client SplitClient
+	client          SplitClient
+	regionIndexStep uint
+	coarseScatter   bool
 }
 
 // NewRegionSplitter returns a new RegionSplitter.
 func NewRegionSplitter(client SplitClient) *RegionSplitter {
+	return NewRegionSplitterWithRegionIndexStep(client, DefaultRegionIndexStep)
+}
+
+// NewRegionSplitterWithRegionIndexStep returns a new RegionSplitter with the configured rough split step.
+func NewRegionSplitterWithRegionIndexStep(client SplitClient, regionIndexStep uint) *RegionSplitter {
 	return &RegionSplitter{
-		client: client,
+		client:          client,
+		regionIndexStep: NormalizeRegionIndexStep(regionIndexStep),
 	}
+}
+
+// SetCoarseScatter makes only rough split regions scattered.
+func (rs *RegionSplitter) SetCoarseScatter(coarseScatter bool) {
+	rs.coarseScatter = coarseScatter
 }
 
 // ExecuteSortedKeysOnRegion expose the function `SplitWaitAndScatter` of split client.
@@ -80,22 +104,24 @@ func (rs *RegionSplitter) executeSplitByRanges(
 ) error {
 	startTime := time.Now()
 	// Choose the rough region split keys,
-	// each splited region contains 128 regions to be splitted.
-	const regionIndexStep = 128
-
-	roughSortedSplitKeys := make([][]byte, 0, len(sortedKeys)/regionIndexStep+1)
-	for curRegionIndex := regionIndexStep; curRegionIndex < len(sortedKeys); curRegionIndex += regionIndexStep {
-		roughSortedSplitKeys = append(roughSortedSplitKeys, sortedKeys[curRegionIndex])
+	// each split region contains regionIndexStep regions to be split.
+	var roughSortedSplitKeys [][]byte
+	if rs.regionIndexStep < uint(len(sortedKeys)) {
+		regionIndexStep := int(rs.regionIndexStep)
+		roughSortedSplitKeys = make([][]byte, 0, len(sortedKeys)/regionIndexStep+1)
+		for curRegionIndex := regionIndexStep; curRegionIndex < len(sortedKeys); curRegionIndex += regionIndexStep {
+			roughSortedSplitKeys = append(roughSortedSplitKeys, sortedKeys[curRegionIndex])
+		}
 	}
 	if len(roughSortedSplitKeys) > 0 {
-		if err := rs.executeSplitByKeys(ctx, roughSortedSplitKeys); err != nil {
+		if err := rs.executeSplitByKeys(ctx, roughSortedSplitKeys, true); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	log.Info("finish spliting regions roughly", zap.Duration("take", time.Since(startTime)))
 
 	// Then send split requests to each TiKV.
-	if err := rs.executeSplitByKeys(ctx, sortedKeys); err != nil {
+	if err := rs.executeSplitByKeys(ctx, sortedKeys, !rs.coarseScatter); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -110,9 +136,10 @@ func (rs *RegionSplitter) executeSplitByRanges(
 func (rs *RegionSplitter) executeSplitByKeys(
 	ctx context.Context,
 	sortedKeys [][]byte,
+	scatter bool,
 ) error {
 	startTime := time.Now()
-	scatterRegions, err := rs.client.SplitKeysAndScatter(ctx, sortedKeys)
+	scatterRegions, err := rs.splitKeys(ctx, sortedKeys, scatter)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -124,6 +151,13 @@ func (rs *RegionSplitter) executeSplitByKeys(
 		log.Info("finish splitting regions.", zap.Duration("take", time.Since(startTime)))
 	}
 	return nil
+}
+
+func (rs *RegionSplitter) splitKeys(ctx context.Context, sortedKeys [][]byte, scatter bool) ([]*RegionInfo, error) {
+	if scatter {
+		return rs.client.SplitKeysAndScatter(ctx, sortedKeys)
+	}
+	return rs.client.SplitKeys(ctx, sortedKeys)
 }
 
 // waitRegionsScattered try to wait mutilple regions scatterd in 3 minutes.

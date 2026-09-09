@@ -9,17 +9,17 @@ import (
 )
 
 // TransformConfig is the config for the combinator "transform".
-type TransformConfig func(*chunkMappingCfg)
+type TransformConfig func(*bufferedMappingCfg)
 
 func WithConcurrency(n uint) TransformConfig {
-	return func(c *chunkMappingCfg) {
+	return func(c *bufferedMappingCfg) {
 		c.quota = util.NewWorkerPool(n, "transforming")
 	}
 }
 
-func WithChunkSize(n uint) TransformConfig {
-	return func(c *chunkMappingCfg) {
-		c.chunkSize = n
+func WithBufferSize(n uint) TransformConfig {
+	return func(c *bufferedMappingCfg) {
+		c.bufferSize = n
 	}
 }
 
@@ -28,21 +28,21 @@ func WithChunkSize(n uint) TransformConfig {
 // The execution of that procedure can be paralleled with the config `WithConcurrency`.
 // You may also need to config the `WithChunkSize`, because the concurrent execution is only available intra-batch.
 func Transform[T, R any](it TryNextor[T], with func(context.Context, T) (R, error), cs ...TransformConfig) TryNextor[R] {
-	r := &chunkMapping[T, R]{
+	r := &bufferedMapping[T, R]{
 		inner:  it,
 		mapper: with,
-		chunkMappingCfg: chunkMappingCfg{
-			chunkSize: 1,
+		bufferedMappingCfg: bufferedMappingCfg{
+			bufferSize: 1,
 		},
 	}
 	for _, c := range cs {
-		c(&r.chunkMappingCfg)
+		c(&r.bufferedMappingCfg)
 	}
 	if r.quota == nil {
-		r.quota = util.NewWorkerPool(r.chunkSize, "max-concurrency")
+		r.quota = util.NewWorkerPool(r.bufferSize, "max-concurrency")
 	}
-	if r.quota.Limit() > int(r.chunkSize) {
-		r.chunkSize = uint(r.quota.Limit())
+	if r.quota.Limit() > int(r.bufferSize) {
+		r.bufferSize = uint(r.quota.Limit())
 	}
 	return r
 }

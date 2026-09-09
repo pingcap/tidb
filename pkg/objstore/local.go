@@ -305,7 +305,7 @@ func (f *localFile) GetFileSize() (int64, error) {
 }
 
 // Create implements Storage interface.
-func (l *LocalStorage) Create(_ context.Context, name string, _ *storeapi.WriterOption) (objectio.Writer, error) {
+func (l *LocalStorage) Create(_ context.Context, name string, option *storeapi.WriterOption) (objectio.Writer, error) {
 	filename := filepath.Join(l.base, name)
 	dir := filepath.Dir(filename)
 	err := os.MkdirAll(dir, 0750)
@@ -316,7 +316,12 @@ func (l *LocalStorage) Create(_ context.Context, name string, _ *storeapi.Writer
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Size the write buffer from PartSize when set, matching the object-store
+	// backends, so per-row streaming does not cost one syscall per write.
 	buf := bufio.NewWriter(file)
+	if option != nil && option.PartSize > 0 {
+		buf = bufio.NewWriterSize(file, int(option.PartSize))
+	}
 	return newFlushStorageWriter(buf, buf, file, nil), nil
 }
 

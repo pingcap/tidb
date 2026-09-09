@@ -20,6 +20,31 @@ export NEXT_GEN=1
 starter_data_dir=""
 starter_tidb_pid=""
 
+function preserve_starter_diagnostics() {
+    local log_file="$1"
+    local stdout_log_file="$2"
+    local config_file="$3"
+    local activate_response_file="$4"
+    local diagnostics_dir
+    local diagnostics_archive
+
+    diagnostics_dir="$(mktemp -d)"
+    diagnostics_archive="tidb-starter-diagnostics-$(date +%Y%m%d%H%M%S).tar.gz"
+    cp -f "${log_file}" "${diagnostics_dir}/tidb.log" 2>/dev/null || true
+    cp -f "${stdout_log_file}" "${diagnostics_dir}/tidb-stdout.log" 2>/dev/null || true
+    cp -f "${config_file}" "${diagnostics_dir}/starter.toml" 2>/dev/null || true
+    cp -f "${activate_response_file}" "${diagnostics_dir}/activate-response.json" 2>/dev/null || true
+    if tar -czf "${diagnostics_archive}" -C "${diagnostics_dir}" .; then
+        echo "Starter diagnostics saved to ${diagnostics_archive}"
+    else
+        echo "Failed to archive starter diagnostics to ${diagnostics_archive}." >&2
+    fi
+    rm -rf "${diagnostics_dir}"
+
+    tail -200 "${log_file}" || true
+    tail -200 "${stdout_log_file}" || true
+}
+
 function find_available_port() {
     local port="$1"
     while [[ "${port}" -lt 65536 ]]; do
@@ -85,6 +110,66 @@ function is_true() {
     esac
 }
 
+function json_escape() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//$'\b'/\\b}"
+    value="${value//$'\f'/\\f}"
+    value="${value//$'\n'/\\n}"
+    value="${value//$'\r'/\\r}"
+    value="${value//$'\t'/\\t}"
+    printf "%s" "${value}"
+}
+
+function is_system_keyspace() {
+    local value
+    value="$(printf "%s" "$1" | tr '[:lower:]' '[:upper:]')"
+    [[ "${value}" == "SYSTEM" ]]
+}
+
+function create_starter_keyspace() {
+    local pd_status_url="$1"
+    local keyspace_name="$2"
+    local keyspace_create_body="${STARTER_KEYSPACE_CREATE_BODY:-}"
+
+    if [[ -z "${keyspace_create_body}" ]]; then
+        keyspace_create_body="$(printf '{"name":"%s","config":{}}' "$(json_escape "${keyspace_name}")")"
+    fi
+
+    echo "Creating starter keyspace ${keyspace_name} via ${pd_status_url}/pd/api/v2/keyspaces"
+    curl -fsS -X POST "${pd_status_url}/pd/api/v2/keyspaces" \
+        -H "Content-Type: application/json" \
+        -d "${keyspace_create_body}"
+    echo
+}
+
+function prepare_starter_keyspace() {
+    local keyspace_name="$1"
+    local pd_status_url="$2"
+    local tidb_server_bin="$3"
+    local self_dir="$4"
+
+    if is_system_keyspace "${keyspace_name}"; then
+        return 0
+    fi
+    if ! is_true "${STARTER_PREPARE_KEYSPACE:-1}"; then
+        return 0
+    fi
+
+    echo "Bootstrapping SYSTEM keyspace before creating starter keyspace ${keyspace_name}"
+    TIDB_SERVER_BIN="${tidb_server_bin}" \
+        STARTER_KEYSPACE_NAME=SYSTEM \
+        STARTER_PREPARE_KEYSPACE=0 \
+        STARTER_STANDBY_MODE=0 \
+        STARTER_KEYSPACE_OBSERVABILITY=0 \
+        STARTER_RUN_EXIT_WAIT_TEST=0 \
+        "${self_dir}/run-starter-tests-with-server.sh" \
+            --under-cluster startertest "${STARTER_SYSTEM_BOOTSTRAP_TIMEOUT:-2m}" -run "^$"
+
+    create_starter_keyspace "${pd_status_url}" "${keyspace_name}"
+}
+
 function activate_starter_server() {
     local status_url="$1"
     local tidb_pid="$2"
@@ -98,13 +183,18 @@ function activate_starter_server() {
     local activate_err_file="${response_file}.err"
     local activate_rc_file="${response_file}.rc"
     local activate_body
+    local escaped_keyspace_name
+    local escaped_export_id
+
+    escaped_keyspace_name="$(json_escape "${keyspace_name}")"
+    escaped_export_id="$(json_escape "${export_id}")"
 
     if [[ -n "${metadata_json}" ]]; then
         activate_body="$(printf '{"keyspace_name":"%s","export_id":"%s","max_idle_seconds":%s,"metadata":%s,"tidb_enable_ddl":true,"run_auto_analyze":true}' \
-            "${keyspace_name}" "${export_id}" "${max_idle_seconds}" "${metadata_json}")"
+            "${escaped_keyspace_name}" "${escaped_export_id}" "${max_idle_seconds}" "${metadata_json}")"
     else
         activate_body="$(printf '{"keyspace_name":"%s","export_id":"%s","max_idle_seconds":%s,"tidb_enable_ddl":true,"run_auto_analyze":true}' \
-            "${keyspace_name}" "${export_id}" "${max_idle_seconds}")"
+            "${escaped_keyspace_name}" "${escaped_export_id}" "${max_idle_seconds}")"
     fi
 
     echo "Activating external starter tidb-server for keyspace ${keyspace_name}, export ID ${export_id}"
@@ -221,12 +311,39 @@ function run_under_cluster() {
         pd_status_url="http://${pd_status_url}"
     fi
     local tikv_worker_url="${STARTER_TIKV_WORKER_URL:-localhost:19000}"
+    local txn_chunk_writer_addr="${STARTER_TXN_CHUNK_WRITER_ADDR:-$tikv_worker_url}"
+    local txn_chunk_writer_concurrency="${STARTER_TXN_CHUNK_WRITER_CONCURRENCY:-2}"
+    local txn_chunk_max_size="${STARTER_TXN_CHUNK_MAX_SIZE:-262144}"
+    local txn_file_min_mutation_size="${STARTER_TXN_FILE_MIN_MUTATION_SIZE:-1048576}"
+
+    prepare_starter_keyspace "${keyspace_name}" "${pd_status_url}" "${tidb_server_bin}" "${self_dir}"
 
     cat > "${config_file}" <<EOF
 deploy-mode = "starter"
 max-allowed-packet = ${max_allowed_packet}
 tikv-worker-url = "${tikv_worker_url}"
 EOF
+
+    if is_true "${STARTER_COLUMNAR_AP:-}"; then
+        cat >> "${config_file}" <<EOF
+disaggregated-tiflash = true
+EOF
+    fi
+
+    cat >> "${config_file}" <<EOF
+[tikv-client]
+txn-chunk-writer-addr = "${txn_chunk_writer_addr}"
+txn-chunk-writer-concurrency = ${txn_chunk_writer_concurrency}
+txn-chunk-max-size = ${txn_chunk_max_size}
+txn-file-min-mutation-size = ${txn_file_min_mutation_size}
+EOF
+
+    if is_true "${STARTER_COLUMNAR_AP:-}"; then
+        cat >> "${config_file}" <<EOF
+[cse]
+columnar-store-type = "columnar"
+EOF
+    fi
 
     local activate_metadata_json=""
     if is_true "${keyspace_observability}"; then
@@ -246,7 +363,8 @@ slow-log-field = "Keyspace_meta_project"
 stmt-log-field = "project"
 required = true
 EOF
-        activate_metadata_json="$(printf '{"tenant":"%s","project":"%s"}' "${keyspace_meta_tenant}" "${keyspace_meta_project}")"
+        activate_metadata_json="$(printf '{"tenant":"%s","project":"%s"}' \
+            "$(json_escape "${keyspace_meta_tenant}")" "$(json_escape "${keyspace_meta_project}")")"
     fi
 
     local tidb_server_args=(
@@ -296,14 +414,27 @@ EOF
     export TIDB_STARTER_KEYSPACE_NAME="${keyspace_name}"
     export TIDB_STARTER_ACTIVATED_FROM_STANDBY="${starter_activated_from_standby}"
     export TIDB_STARTER_ACTIVATE_EXPORT_ID="${activate_export_id}"
+    if is_true "${STARTER_COLUMNAR_AP:-}"; then
+        export TIDB_STARTER_COLUMNAR_AP=1
+    else
+        unset TIDB_STARTER_COLUMNAR_AP
+    fi
+    unset TIDB_STARTER_RUN_EXIT_WAIT_TEST
     if is_true "${keyspace_observability}"; then
         export TIDB_STARTER_KEYSPACE_OBSERVABILITY=1
         export TIDB_STARTER_KEYSPACE_META_TENANT="${keyspace_meta_tenant}"
         export TIDB_STARTER_KEYSPACE_META_PROJECT="${keyspace_meta_project}"
+    else
+        unset TIDB_STARTER_KEYSPACE_OBSERVABILITY
+        unset TIDB_STARTER_KEYSPACE_META_TENANT
+        unset TIDB_STARTER_KEYSPACE_META_PROJECT
     fi
 
     echo "Running external starter tests: ./tests/realtikvtest/${test_suite}"
-    go test "./tests/realtikvtest/${test_suite}" -v --tags=intest,nextgen -timeout "${suite_timeout}" "${extra_go_test_args[@]}"
+    if ! go test "./tests/realtikvtest/${test_suite}" -v --tags=intest,nextgen -timeout "${suite_timeout}" "${extra_go_test_args[@]}"; then
+        preserve_starter_diagnostics "${log_file}" "${stdout_log_file}" "${config_file}" "${activate_response_file}"
+        return 1
+    fi
 
     if [[ -z "${run_exit_wait_test}" ]]; then
         if [[ "${test_suite}" == "startertest" && "${#extra_go_test_args[@]}" -eq 0 ]]; then
@@ -315,10 +446,13 @@ EOF
     if is_true "${run_exit_wait_test}" && [[ "${test_suite}" == "startertest" ]]; then
         export TIDB_STARTER_RUN_EXIT_WAIT_TEST=1
         echo "Running destructive external starter exit-wait test"
-        go test "./tests/realtikvtest/${test_suite}" -v --tags=intest,nextgen \
+        if ! go test "./tests/realtikvtest/${test_suite}" -v --tags=intest,nextgen \
             -timeout "${STARTER_EXIT_WAIT_TEST_TIMEOUT:-2m}" \
             -run '^TestExternalStarterExitWaitAndManagerNotifierContracts/graceful_exit_waits_for_open_connection$' \
-            -count=1
+            -count=1; then
+            preserve_starter_diagnostics "${log_file}" "${stdout_log_file}" "${config_file}" "${activate_response_file}"
+            return 1
+        fi
         if [[ -n "${starter_tidb_pid:-}" ]] && kill -0 "${starter_tidb_pid}" >/dev/null 2>&1; then
             wait "${starter_tidb_pid}" >/dev/null 2>&1 || true
         fi

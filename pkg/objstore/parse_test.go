@@ -51,9 +51,12 @@ func TestCreateStorage(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "hdfs://127.0.0.1:1231/backup", s.GetHdfs().GetRemote())
 
-	_, err = ParseBackend("s3:///bucket/more/prefix/", &BackendOptions{})
+	_, err = ParseBackend("s3:///bucket/more/prefix/?access-key=secret-id&secret-access-key=secret-key&session-token=secret-token", &BackendOptions{})
 	require.Error(t, err)
-	require.Regexp(t, `please specify the bucket for s3 in s3:///bucket/more/prefix/.*`, err.Error())
+	require.Contains(t, err.Error(), "please specify the bucket for s3 in s3:///bucket/more/prefix/?access-key=xxxxxx&secret-access-key=xxxxxx&session-token=xxxxxx")
+	require.NotContains(t, err.Error(), "secret-id")
+	require.NotContains(t, err.Error(), "secret-key")
+	require.NotContains(t, err.Error(), "secret-token")
 
 	s3opt := &BackendOptions{
 		S3: s3like.S3BackendOptions{

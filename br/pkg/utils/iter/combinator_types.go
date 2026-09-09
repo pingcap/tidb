@@ -4,60 +4,108 @@ package iter
 
 import (
 	"context"
+	"sync"
 
 	"github.com/pingcap/tidb/pkg/util"
-	"golang.org/x/sync/errgroup"
 )
 
-type chunkMappingCfg struct {
-	chunkSize uint
-	quota     *util.WorkerPool
+type bufferedMappingCfg struct {
+	bufferSize uint
+	quota      *util.WorkerPool
 }
 
-type chunkMapping[T, R any] struct {
-	chunkMappingCfg
+type bufferedMapping[T, R any] struct {
+	bufferedMappingCfg
 	inner  TryNextor[T]
 	mapper func(context.Context, T) (R, error)
 
-	buffer fromSlice[R]
+	started     bool
+	finished    bool
+	cancel      context.CancelFunc
+	outstanding chan struct{}
+	results     chan IterResult[R]
 }
 
-func (m *chunkMapping[T, R]) fillChunk(ctx context.Context) IterResult[fromSlice[R]] {
-	eg, cx := errgroup.WithContext(ctx)
-	s := CollectMany(ctx, m.inner, m.chunkSize)
-	if s.FinishedOrError() {
-		return DoneBy[fromSlice[R]](s)
+func (m *bufferedMapping[T, R]) TryNext(ctx context.Context) IterResult[R] {
+	if !m.started {
+		m.start(ctx)
 	}
-	r := make([]R, len(s.Item))
-	for i := range s.Item {
-		m.quota.ApplyOnErrorGroup(eg, func() error {
-			var err error
-			r[i], err = m.mapper(cx, s.Item[i])
-			return err
-		})
+	for {
+		if m.finished {
+			return Done[R]()
+		}
+
+		select {
+		case <-ctx.Done():
+			m.cancel()
+			m.finished = true
+			return Throw[R](ctx.Err())
+		case r, ok := <-m.results:
+			if !ok {
+				m.finished = true
+				return Done[R]()
+			}
+			<-m.outstanding
+			if r.Err != nil {
+				m.cancel()
+				m.finished = true
+			}
+			return r
+		}
 	}
-	if err := eg.Wait(); err != nil {
-		return Throw[fromSlice[R]](err)
-	}
-	if len(r) > 0 {
-		return Emit(fromSlice[R](r))
-	}
-	return Done[fromSlice[R]]()
 }
 
-func (m *chunkMapping[T, R]) TryNext(ctx context.Context) IterResult[R] {
-	r := m.buffer.TryNext(ctx)
-	if !r.FinishedOrError() {
-		return Emit(r.Item)
-	}
+func (m *bufferedMapping[T, R]) start(ctx context.Context) {
+	m.started = true
+	m.outstanding = make(chan struct{}, m.bufferSize)
+	m.results = make(chan IterResult[R], m.bufferSize)
+	ctx, m.cancel = context.WithCancel(ctx)
 
-	r2 := m.fillChunk(ctx)
-	if !r2.FinishedOrError() {
-		m.buffer = r2.Item
-		return m.TryNext(ctx)
-	}
+	go func() {
+		var wg sync.WaitGroup
+		defer func() {
+			wg.Wait()
+			close(m.results)
+		}()
 
-	return DoneBy[R](r2)
+		for {
+			select {
+			case m.outstanding <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+
+			r := m.inner.TryNext(ctx)
+			if r.FinishedOrError() {
+				if r.Err != nil {
+					m.results <- DoneBy[R](r)
+					m.cancel()
+				} else {
+					<-m.outstanding
+				}
+				return
+			}
+
+			item := r.Item
+			wg.Add(1)
+			m.quota.Apply(func() {
+				defer wg.Done()
+
+				result, err := m.mapper(ctx, item)
+				r := Emit(result)
+				if err != nil {
+					r = Throw[R](err)
+				}
+				select {
+				case m.results <- r:
+				case <-ctx.Done():
+				}
+				if err != nil {
+					m.cancel()
+				}
+			})
+		}
+	}()
 }
 
 type filter[T any] struct {

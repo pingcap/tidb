@@ -20,6 +20,7 @@ go_library(
         "//pkg/lightning/config",
         "//pkg/lightning/log",
         "//pkg/objstore",
+        "//pkg/objstore/s3like",
         "//pkg/parser/ast",
         "//pkg/util/mathutil",
         "@com_github_docker_go_units//:go-units",

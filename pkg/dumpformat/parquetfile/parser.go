@@ -51,21 +51,26 @@ const (
 )
 
 var (
-	unsupportedParquetTypes = map[schema.ConvertedType]struct{}{
-		// TODO(joechenrh): support read list type as vector
-		schema.ConvertedTypes.List: {},
-		// The below types are not used for data exported from aurora/snowflake,
-		// so we don't support them for now.
-		schema.ConvertedTypes.Map:         {},
-		schema.ConvertedTypes.MapKeyValue: {},
-		schema.ConvertedTypes.Interval:    {},
-		schema.ConvertedTypes.NA:          {},
-	}
-
 	// readBatchSize is the number of rows to read in a single batch
 	// from parquet column reader. Modified in test.
 	readBatchSize = 128
 )
+
+func validateParquetLogicalType(logicalType schema.LogicalType, physicalType parquet.Type, typeLength int) error {
+	switch logicalType.(type) {
+	case schema.ListLogicalType, schema.MapLogicalType, schema.IntervalLogicalType,
+		schema.UnknownLogicalType, schema.Float16LogicalType, schema.VariantLogicalType:
+		// These types are not used by Aurora or Snowflake exports, so they remain
+		// outside the row-oriented import parser's supported scalar scope.
+		return errors.Errorf("unsupported parquet logical type %s", logicalType.String())
+	}
+	// Keep the physical encoding limits enforced by Parquet logical types. For
+	// example, INT32 DECIMAL values cannot represent precision greater than 9.
+	if !logicalType.IsApplicable(physicalType, int32(typeLength)) {
+		return errors.Errorf("logical type %s is not applicable to physical type %s", logicalType.String(), physicalType)
+	}
+	return nil
+}
 
 // FileMeta contains some analyzed metadata for a parquet file.
 type FileMeta struct {
@@ -132,6 +137,18 @@ func newColumnIterator[T parquet.ColumnTypes, R innerReader[T]](
 	}
 }
 
+func newColumnIteratorForLogicalType[T parquet.ColumnTypes, R innerReader[T]](
+	batchSize int,
+	colType *parquetColumnType,
+	valueSetter setter[T],
+) *columnIterator[T, R] {
+	switch colType.logicalType.(type) {
+	case schema.NullLogicalType, schema.UnknownLogicalType:
+		valueSetter = unsupportedParquetValueSetter[T](colType.logicalType)
+	}
+	return newColumnIterator[T, R](batchSize, valueSetter)
+}
+
 // SetReader sets the column reader for the iterator.
 // Remember to call Close() before setting a new reader.
 func (it *columnIterator[T, R]) SetReader(colReader file.ColumnChunkReader) {
@@ -191,42 +208,41 @@ func (it *columnIterator[T, R]) Next(d *types.Datum) error {
 	return it.setter(value, d)
 }
 
-func createColumnIterator(tp parquet.Type, converted *convertedType, loc *time.Location, batchSize int) iterator {
+func createColumnIterator(tp parquet.Type, colType *parquetColumnType, loc *time.Location, batchSize int) iterator {
 	switch tp {
 	case parquet.Types.Boolean:
-		return newColumnIterator[bool, *file.BooleanColumnChunkReader](batchSize, getBoolDataSetter)
+		return newColumnIteratorForLogicalType[bool, *file.BooleanColumnChunkReader](
+			batchSize, colType, getBoolDataSetter)
 	case parquet.Types.Int32:
-		return newColumnIterator[int32, *file.Int32ColumnChunkReader](batchSize, getInt32Setter(converted, loc))
+		return newColumnIteratorForLogicalType[int32, *file.Int32ColumnChunkReader](
+			batchSize, colType, getInt32Setter(colType, loc))
 	case parquet.Types.Int64:
-		return newColumnIterator[int64, *file.Int64ColumnChunkReader](batchSize, getInt64Setter(converted, loc))
+		return newColumnIteratorForLogicalType[int64, *file.Int64ColumnChunkReader](
+			batchSize, colType, getInt64Setter(colType, loc))
 	case parquet.Types.Float:
-		return newColumnIterator[float32, *file.Float32ColumnChunkReader](batchSize, setFloat32Data)
+		return newColumnIteratorForLogicalType[float32, *file.Float32ColumnChunkReader](
+			batchSize, colType, setFloat32Data)
 	case parquet.Types.Double:
-		return newColumnIterator[float64, *file.Float64ColumnChunkReader](batchSize, setFloat64Data)
+		return newColumnIteratorForLogicalType[float64, *file.Float64ColumnChunkReader](
+			batchSize, colType, setFloat64Data)
 	case parquet.Types.Int96:
-		return newColumnIterator[parquet.Int96, *file.Int96ColumnChunkReader](batchSize, getInt96Setter(converted, loc))
+		return newColumnIteratorForLogicalType[parquet.Int96, *file.Int96ColumnChunkReader](
+			batchSize, colType, getInt96Setter(colType, loc))
 	case parquet.Types.ByteArray:
-		return newColumnIterator[parquet.ByteArray, *file.ByteArrayColumnChunkReader](batchSize, getByteArraySetter(converted))
+		return newColumnIteratorForLogicalType[parquet.ByteArray, *file.ByteArrayColumnChunkReader](
+			batchSize, colType, getByteArraySetter(colType))
 	case parquet.Types.FixedLenByteArray:
-		return newColumnIterator[parquet.FixedLenByteArray, *file.FixedLenByteArrayColumnChunkReader](batchSize, getFixedLenByteArraySetter(converted))
+		return newColumnIteratorForLogicalType[parquet.FixedLenByteArray, *file.FixedLenByteArrayColumnChunkReader](
+			batchSize, colType, getFixedLenByteArraySetter(colType))
 	default:
 		return nil
 	}
 }
 
-// convertedType is older representation of the logical type in parquet
+// parquetColumnType contains the normalized logical type and reader-only conversion context.
 // ref: https://github.com/apache/parquet-format/blob/master/LogicalTypes.md
-type convertedType struct {
-	converted   schema.ConvertedType
-	decimalMeta schema.DecimalMetadata
-
-	// See https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#temporal-types.
-	//
-	// true  => epoch value has instant semantics (normalized to UTC), so convert to parser location first.
-	// false => epoch value has local semantics, so keep the "as-if UTC" wall clock unchanged.
-	//
-	// NOTE: types.FromGoTime stores only wall-clock fields and drops location metadata.
-	IsAdjustedToUTC bool
+type parquetColumnType struct {
+	logicalType schema.LogicalType
 
 	// sparkRebaseMicros is non-empty when the file footer says the column was
 	// written by a Spark release that used the legacy hybrid Julian/Gregorian
@@ -246,7 +262,7 @@ type rowGroupParser struct {
 }
 
 // init creates column iterators for each column.
-func (rgp *rowGroupParser) init(colTypes []convertedType, loc *time.Location) (err error) {
+func (rgp *rowGroupParser) init(colTypes []parquetColumnType, loc *time.Location) (err error) {
 	meta := rgp.readers[0].MetaData()
 	numCols := meta.Schema.NumColumns()
 	rgp.iterators = make([]iterator, numCols)
@@ -314,7 +330,7 @@ func (rgp *rowGroupParser) Close() error {
 // Parser parses a parquet file for import
 type Parser struct {
 	fileMeta *metadata.FileMetaData
-	colTypes []convertedType
+	colTypes []parquetColumnType
 	colNames []string
 
 	ctx   context.Context
@@ -327,14 +343,16 @@ type Parser struct {
 
 	rowGroup *rowGroupParser
 
+	// preloadBase holds the whole-file preload buffer.
+	preloadBase *inMemoryReaderBase
+
 	rowPool *zeropool.Pool[[]types.Datum]
 
 	curRowGroup   int
 	totalRowGroup int
 
-	totalRows      int64 // total rows in this file
-	totalReadRows  int64 // total rows read
-	totalReadBytes int   // total bytes read, estimated by all the read datum.
+	totalRows     int64 // total rows in this file
+	totalReadRows int64 // total rows read
 
 	lastRow parsedef.Row
 	logger  log.Logger
@@ -420,18 +438,28 @@ func (pp *Parser) buildRowGroupParser() (err error) {
 	return nil
 }
 
+// getBuilder picks a column-reader strategy for the current row group:
+//   - whole-file preload, when prepareReader has already loaded the file;
+//   - per-row-group preload, when the row group fits rowGroupInMemoryThreshold;
+//   - per-column streaming, otherwise.
 func (pp *Parser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) {
 	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	if ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold) {
-		base, err := newInMemoryReaderBase(pp.ctx, pp.store, pp.path, ranges)
+	base := pp.preloadBase
+	if base == nil && ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold) {
+		base, err = newInMemoryReaderBase(pp.ctx, pp.store, pp.path, ranges)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		pp.logger.Debug("use in memory reader for parquet file", zap.String("path", pp.path))
+		pp.logger.Debug("preload parquet row group into memory",
+			zap.String("path", pp.path),
+			zap.Int("rowGroup", pp.curRowGroup),
+			zap.Int64("size", ranges.end-ranges.start))
+	}
+	if base != nil {
 		return func(c int) (readerAtSeekerCloser, error) {
 			return &inMemoryReaderWrapper{
 				base:     base,
@@ -482,7 +510,6 @@ func (pp *Parser) readSingleRow(row []types.Datum) error {
 		return err
 	}
 
-	pp.totalReadBytes += estimateRowSize(row)
 	pp.totalReadRows++
 	return nil
 }
@@ -513,9 +540,20 @@ func (pp *Parser) SetPos(pos int64, rowID int64) error {
 }
 
 // ScannedPos implements the Parser interface.
-// For parquet we use the size of all read datum to estimate the scanned position.
+// Parquet readers may preload or read ahead, so estimate source-byte progress
+// from the proportion of rows consumed by the parser.
 func (pp *Parser) ScannedPos() (int64, error) {
-	return int64(pp.totalReadBytes), nil
+	fileSize := pp.fileMeta.GetSourceFileSize()
+	if pp.totalRows <= 0 {
+		return fileSize, nil
+	}
+
+	if pp.totalReadRows == pp.totalRows {
+		return fileSize, nil
+	}
+
+	progress := float64(pp.totalReadRows) / float64(pp.totalRows)
+	return int64(progress * float64(fileSize)), nil
 }
 
 // Close closes the parquet file of the parser.
@@ -612,18 +650,26 @@ func ReadRowCount(
 	return reader.MetaData().NumRows, nil
 }
 
-// NewParser generates a parquet parser.
+// NewParser creates a Parquet parser. A positive fileSize must be exact and may
+// enable whole-file preloading without calling openReader; pass 0 to disable it.
 func NewParser(
 	ctx context.Context,
 	store storeapi.Storage,
-	r storeapi.ReadSeekCloser,
+	openReader func(context.Context) (io.ReadSeekCloser, error),
 	path string,
+	fileSize int64,
 	meta FileMeta,
 ) (*Parser, error) {
 	logger := log.Wrap(logutil.Logger(ctx))
-	wrapper := &readerWrapper{ReadSeekCloser: r}
+	wrapper, preloadBase, r, err := prepareReader(ctx, store, openReader, path, fileSize)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	defer func() {
-		_ = r.Close()
+		if r != nil {
+			_ = r.Close()
+		}
 	}()
 
 	allocator := meta.allocator
@@ -632,6 +678,10 @@ func NewParser(
 	}
 	prop := parquet.NewReaderProperties(allocator)
 	prop.BufferedStreamEnabled = true
+	// Newer arrow-go rejects pages larger than MaxUncompressedPageSize
+	// (default 256 MiB) even though streaming keeps memory bounded; raise
+	// the limit when bumping.
+	prop.PageStreamingEnabled = true
 	prop.BufferSize = 1024
 
 	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
@@ -641,7 +691,10 @@ func NewParser(
 
 	fileMeta := reader.MetaData()
 	fileSchema := fileMeta.Schema
-	colTypes := make([]convertedType, fileSchema.NumColumns())
+	if fileSchema.HasRepeatedFields() {
+		return nil, errors.New("nested or repeated Parquet fields are unsupported")
+	}
+	colTypes := make([]parquetColumnType, fileSchema.NumColumns())
 	colNames := make([]string, 0, fileSchema.NumColumns())
 	effectiveLoc := meta.Loc
 	if effectiveLoc == nil {
@@ -653,48 +706,20 @@ func NewParser(
 		colNames = append(colNames, strings.ToLower(desc.Name()))
 
 		logicalType := desc.LogicalType()
-		if logicalType.IsValid() {
-			colTypes[i].converted, colTypes[i].decimalMeta = logicalType.ToConvertedType()
-			if t, ok := logicalType.(schema.TimestampLogicalType); ok {
-				// TimestampLogicalType.ToConvertedType() might return none when
-				// IsAdjustedToUTC=false, and not from force convert, so we have
-				// to check again here.
-				switch t.TimeUnit() {
-				case schema.TimeUnitMillis:
-					colTypes[i].converted = schema.ConvertedTypes.TimestampMillis
-				case schema.TimeUnitMicros:
-					colTypes[i].converted = schema.ConvertedTypes.TimestampMicros
-				default:
-					return nil, errors.Errorf("unsupported timestamp time unit %d", t.TimeUnit())
-				}
-				colTypes[i].IsAdjustedToUTC = t.IsAdjustedToUTC()
-			} else if t, ok := logicalType.(schema.TimeLogicalType); ok {
-				// TimeLogicalType.ToConvertedType() returns none when
-				// IsAdjustedToUTC=false, so preserve the logical time unit here.
-				switch t.TimeUnit() {
-				case schema.TimeUnitMillis:
-					colTypes[i].converted = schema.ConvertedTypes.TimeMillis
-				case schema.TimeUnitMicros:
-					colTypes[i].converted = schema.ConvertedTypes.TimeMicros
-				}
-				colTypes[i].IsAdjustedToUTC = t.IsAdjustedToUTC()
-			} else {
-				colTypes[i].IsAdjustedToUTC = true
+		if logicalType == nil || !logicalType.IsValid() || logicalType.IsNone() {
+			var decimalMeta schema.DecimalMetadata
+			if pnode, _ := desc.SchemaNode().(*schema.PrimitiveNode); pnode != nil {
+				decimalMeta = pnode.DecimalMetadata()
 			}
-		} else {
-			colTypes[i].converted = desc.ConvertedType()
-			colTypes[i].IsAdjustedToUTC = true
-			pnode, _ := desc.SchemaNode().(*schema.PrimitiveNode)
-			colTypes[i].decimalMeta = pnode.DecimalMetadata()
+			logicalType = desc.ConvertedType().ToLogicalType(decimalMeta)
 		}
-
-		if _, ok := unsupportedParquetTypes[colTypes[i].converted]; ok {
-			return nil, errors.Errorf("unsupported parquet logical type %s", colTypes[i].converted.String())
+		colTypes[i].logicalType = logicalType
+		if err := validateParquetLogicalType(logicalType, desc.PhysicalType(), desc.TypeLength()); err != nil {
+			return nil, errors.Annotatef(err, "column %q", desc.Name())
 		}
-
 		switch desc.PhysicalType() {
 		case parquet.Types.Int32:
-			if colTypes[i].converted == schema.ConvertedTypes.Date {
+			if _, ok := logicalType.(schema.DateLogicalType); ok {
 				colTypes[i].sparkRebaseMicros, err = sparkRebaseMicrosFromMetadata(
 					fileMeta, sparkDatetimeRebaseCutoff, sparkLegacyDateTimeMetadataKey, effectiveLoc)
 				if err != nil {
@@ -702,8 +727,8 @@ func NewParser(
 				}
 			}
 		case parquet.Types.Int64:
-			if colTypes[i].converted == schema.ConvertedTypes.TimestampMillis ||
-				colTypes[i].converted == schema.ConvertedTypes.TimestampMicros {
+			if timestamp, ok := logicalType.(schema.TimestampLogicalType); ok &&
+				timestamp.TimeUnit() != schema.TimeUnitNanos {
 				colTypes[i].sparkRebaseMicros, err = sparkRebaseMicrosFromMetadata(
 					fileMeta, sparkDatetimeRebaseCutoff, sparkLegacyDateTimeMetadataKey, effectiveLoc)
 				if err != nil {
@@ -725,16 +750,17 @@ func NewParser(
 	})
 
 	parser := &Parser{
-		fileMeta: fileMeta,
-		colTypes: colTypes,
-		colNames: colNames,
-		ctx:      ctx,
-		store:    store,
-		path:     path,
-		prop:     prop,
-		alloc:    allocator,
-		logger:   logger,
-		rowPool:  &pool,
+		fileMeta:    fileMeta,
+		colTypes:    colTypes,
+		colNames:    colNames,
+		ctx:         ctx,
+		store:       store,
+		path:        path,
+		prop:        prop,
+		alloc:       allocator,
+		logger:      logger,
+		rowPool:     &pool,
+		preloadBase: preloadBase,
 	}
 	if err := parser.Init(effectiveLoc); err != nil {
 		return nil, errors.Trace(err)
@@ -753,12 +779,9 @@ func SampleStatisticsFromParquet(
 	avgRowSize float64,
 	err error,
 ) {
-	r, err := store.Open(ctx, path, nil)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	parser, err := NewParser(ctx, store, r, path, FileMeta{})
+	parser, err := NewParser(ctx, store, func(ctx context.Context) (io.ReadSeekCloser, error) {
+		return store.Open(ctx, path, nil)
+	}, path, 0, FileMeta{})
 	if err != nil {
 		return 0, 0, err
 	}
@@ -875,12 +898,16 @@ func (a *trackingAllocator) Reallocate(size int, b []byte) []byte {
 	return nb
 }
 
-func estimateInMemoryRowGroupBufferBytes(fileMeta *metadata.FileMetaData) (int64, error) {
-	if fileMeta == nil || fileMeta.NumRowGroups() == 0 {
+// preloadBufferBytes returns buffer size allocated outside the allocator.
+func (pp *Parser) preloadBufferBytes() (int64, error) {
+	if pp.preloadBase != nil {
+		return int64(len(pp.preloadBase.buffer)), nil
+	}
+	if pp.fileMeta == nil || pp.fileMeta.NumRowGroups() == 0 {
 		return 0, nil
 	}
 
-	rgRange, err := rowGroupRangeFromMeta(fileMeta, 0)
+	rgRange, err := rowGroupRangeFromMeta(pp.fileMeta, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -898,16 +925,13 @@ func EstimateParquetReaderMemory(
 	ctx context.Context,
 	store storeapi.Storage,
 	path string,
+	fileSize int64,
 ) (int64, error) {
-	r, err := store.Open(ctx, path, nil)
-	if err != nil {
-		return 0, err
-	}
-
 	allocator := &trackingAllocator{}
-	parser, err := NewParser(ctx, store, r, path, FileMeta{allocator: allocator})
+	parser, err := NewParser(ctx, store, func(ctx context.Context) (io.ReadSeekCloser, error) {
+		return store.Open(ctx, path, nil)
+	}, path, fileSize, FileMeta{allocator: allocator})
 	if err != nil {
-		_ = r.Close()
 		return 0, err
 	}
 
@@ -919,7 +943,7 @@ func EstimateParquetReaderMemory(
 		return 0, nil
 	}
 
-	preloadBufferBytes, err := estimateInMemoryRowGroupBufferBytes(meta)
+	preloadBufferBytes, err := parser.preloadBufferBytes()
 	if err != nil {
 		return 0, err
 	}

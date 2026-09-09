@@ -114,7 +114,7 @@ type dest struct {
 }
 
 func checkCurrValue(t *testing.T, cli autoid.AutoIDAllocClient, to dest, minv, maxv int64, keyspaceID uint32) {
-	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, N: 0, KeyspaceID: keyspaceID}
+	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, N: 0, Keyspace: &autoid.AutoIDRequest_KeyspaceID{KeyspaceID: keyspaceID}}
 	ctx := context.Background()
 	resp, err := cli.AllocAutoID(ctx, req)
 	require.NoError(t, err)
@@ -130,7 +130,7 @@ func autoIDRequest(t *testing.T, cli autoid.AutoIDAllocClient, to dest, unsigned
 	if len(more) >= 2 {
 		offset = more[1]
 	}
-	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, IsUnsigned: unsigned, N: n, Increment: increment, Offset: offset, KeyspaceID: keyspaceID}
+	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, IsUnsigned: unsigned, N: n, Increment: increment, Offset: offset, Keyspace: &autoid.AutoIDRequest_KeyspaceID{KeyspaceID: keyspaceID}}
 	resp, err := cli.AllocAutoID(context.Background(), req)
 	return autoIDResp{resp, err, t}
 }
@@ -156,8 +156,8 @@ func TestAPI(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		// Testing scenarios with keyspace.
 		keyspaceMeta := keyspacepb.KeyspaceMeta{
-			Id:   uint32(0xFFFFFF) - 1,
-			Name: keyspace.System,
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: uint32(0xFFFFFF) - 1},
+			Name:     keyspace.System,
 		}
 		testAPIWithKeyspace(t, &keyspaceMeta)
 	}
@@ -168,7 +168,7 @@ func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
 	if keyspaceMeta == nil {
 		reqKeyspaceID = uint32(tikv.NullspaceID)
 	} else {
-		reqKeyspaceID = keyspaceMeta.Id
+		reqKeyspaceID = keyspaceMeta.GetId()
 	}
 
 	opts := mockstore.WithCurrentKeyspaceMeta(keyspaceMeta)
@@ -281,7 +281,7 @@ func TestGRPC(t *testing.T) {
 		Increment:  1,
 		Offset:     1,
 		IsUnsigned: false,
-		KeyspaceID: keyspaceID,
+		Keyspace:   &autoid.AutoIDRequest_KeyspaceID{KeyspaceID: keyspaceID},
 	})
 	require.NoError(t, err)
 }

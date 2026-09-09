@@ -54,29 +54,45 @@ func (mbbc *MockBackupBackupClient) Recv() (*backuppb.BackupResponse, error) {
 
 func TestTimeoutRecv(t *testing.T) {
 	ctx := context.Background()
+	originTimeout := TimeoutOneResponse
 	TimeoutOneResponse = time.Millisecond * 800
+	t.Cleanup(func() {
+		TimeoutOneResponse = originTimeout
+	})
+	recordTimeoutErr := func(ctx context.Context, timeoutObserved chan<- bool) error {
+		err := ctx.Err()
+		timeoutObserved <- err != nil
+		if err != nil {
+			return err
+		}
+		return context.Canceled
+	}
 	// Just Timeout Once
 	{
+		timeoutObserved := make(chan bool, 1)
 		err := startBackup(ctx, 0, NewResourceMemoryLimiter(100), backuppb.BackupRequest{}, &MockBackupClient{
 			recvFunc: func(ctx context.Context) (*backuppb.BackupResponse, error) {
 				time.Sleep(time.Second)
-				require.Error(t, ctx.Err())
-				return nil, ctx.Err()
+				return nil, recordTimeoutErr(ctx, timeoutObserved)
 			},
 		}, 1, nil)
 		require.Error(t, err)
+		require.True(t, <-timeoutObserved)
 	}
 
 	// Timeout Not At First
 	{
 		count := 0
+		timeoutObserved := make(chan bool, 1)
 		err := startBackup(ctx, 0, NewResourceMemoryLimiter(100), backuppb.BackupRequest{}, &MockBackupClient{
 			recvFunc: func(ctx context.Context) (*backuppb.BackupResponse, error) {
-				require.NoError(t, ctx.Err())
+				if err := ctx.Err(); err != nil {
+					timeoutObserved <- true
+					return nil, err
+				}
 				if count == 15 {
 					time.Sleep(time.Second)
-					require.Error(t, ctx.Err())
-					return nil, ctx.Err()
+					return nil, recordTimeoutErr(ctx, timeoutObserved)
 				}
 				count += 1
 				time.Sleep(time.Millisecond * 80)
@@ -85,6 +101,7 @@ func TestTimeoutRecv(t *testing.T) {
 		}, 1, make(chan *ResponseAndStore, 15))
 		require.Error(t, err)
 		require.Equal(t, count, 15)
+		require.True(t, <-timeoutObserved)
 	}
 }
 

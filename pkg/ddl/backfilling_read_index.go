@@ -64,6 +64,8 @@ type readIndexStepExecutor struct {
 
 	avgRowSize      int
 	cloudStorageURI string
+	execID          string
+	runtimeSlots    int
 
 	summary *execute.SubtaskSummary
 
@@ -91,6 +93,8 @@ func newReadIndexExecutor(
 	jc *ReorgContext,
 	cloudStorageURI string,
 	avgRowSize int,
+	execID string,
+	runtimeSlots int,
 ) (*readIndexStepExecutor, error) {
 	return &readIndexStepExecutor{
 		store:           store,
@@ -102,6 +106,8 @@ func newReadIndexExecutor(
 		jc:              jc,
 		cloudStorageURI: cloudStorageURI,
 		avgRowSize:      avgRowSize,
+		execID:          execID,
+		runtimeSlots:    runtimeSlots,
 		summary:         &execute.SubtaskSummary{},
 	}, nil
 }
@@ -113,6 +119,16 @@ func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 		// before the framework starts detectAndHandleParamModifyLoop, which
 		// reads the flag concurrently via ResourceModified.
 		r.job.ReorgMeta.UseCloudStorage = true
+	} else {
+		// This point-in-time, best-effort precheck accounts for the current local-sort
+		// DXF backfill's disk headroom to reduce the risk of frequent small SST imports.
+		// It does not reserve disk or account for the future growth of concurrent jobs.
+		// It does not recheck disk after a concurrency increase with ADMIN ALTER DDL JOB.
+		// After a normal upgrade, TiDB pauses user DDL; applying this check to tasks
+		// created before the upgrade is an accepted behavior change.
+		if err := ingest.CheckLocalSortDiskSpace(r.execID, r.runtimeSlots); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	cfg := config.GetGlobalConfig()
 	if cfg.Store == config.StoreTypeTiKV {

@@ -213,13 +213,13 @@ func TestGrantTableScopeCaseInsensitiveWithNewCollationDisabled(t *testing.T) {
 		tk.MustExec(`CREATE TABLE test.issue68406_grant(id int, name int)`)
 
 		tk.MustExec(`GRANT SELECT ON TEST.issue68406_grant TO 'testTblCaseSchema'@'%'`)
-		tk.MustExec(`GRANT SELECT,INSERT,UPDATE,DELETE ON test.issue68406_grant TO 'testTblCaseSchema'@'%'`)
+		tk.MustExec(`GRANT SELECT,INSERT,UPDATE,DELETE,OPERATE VIEW ON test.issue68406_grant TO 'testTblCaseSchema'@'%'`)
 		tk.MustQuery(`SELECT DB, Table_name, Table_priv FROM mysql.tables_priv WHERE User='testTblCaseSchema' AND Host='%' ORDER BY DB, Table_name`).
-			Check(testkit.Rows("test issue68406_grant Select,Insert,Update,Delete"))
+			Check(testkit.Rows("test issue68406_grant Select,Insert,Update,Delete,Operate View"))
 		tk.MustQuery(`SHOW GRANTS FOR 'testTblCaseSchema'@'%'`).
 			Check(testkit.Rows(
 				"GRANT USAGE ON *.* TO 'testTblCaseSchema'@'%'",
-				"GRANT SELECT,INSERT,UPDATE,DELETE ON `test`.`issue68406_grant` TO 'testTblCaseSchema'@'%'",
+				"GRANT SELECT,INSERT,UPDATE,DELETE,OPERATE VIEW ON `test`.`issue68406_grant` TO 'testTblCaseSchema'@'%'",
 			))
 
 		tkUser := testkit.NewTestKit(t, tk.Session().GetStore())

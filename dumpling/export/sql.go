@@ -601,16 +601,19 @@ func GetSuitableRows(avgRowLength uint64) uint64 {
 func GetColumnTypes(tctx *tcontext.Context, db *BaseConn, fields, database, table string) ([]*sql.ColumnType, error) {
 	query := fmt.Sprintf("SELECT %s FROM `%s`.`%s` LIMIT 1", fields, escapeString(database), escapeString(table))
 	var colTypes []*sql.ColumnType
-	err := db.QuerySQL(tctx, func(rows *sql.Rows) error {
+	err := db.queryRows(tctx, func(rows *sql.Rows) error {
 		var err error
 		colTypes, err = rows.ColumnTypes()
-		if err == nil {
-			err = rows.Close()
-		}
 		failpoint.Inject("ChaosBrokenMetaConn", func(_ failpoint.Value) {
 			failpoint.Return(errors.New("connection is closed"))
 		})
-		return errors.Annotatef(err, "sql: %s", query)
+		if err != nil {
+			return err
+		}
+		if err = rows.Close(); err != nil {
+			return err
+		}
+		return rows.Err()
 	}, func() {
 		colTypes = nil
 	}, query)
@@ -626,7 +629,7 @@ func GetPrimaryKeyAndColumnTypes(tctx *tcontext.Context, conn *BaseConn, meta Ta
 	if err != nil {
 		return nil, nil, err
 	}
-	colName2Type := string2Map(meta.ColumnNames(), meta.ColumnTypes())
+	colName2Type := string2Map(tableSourceColumnNames(meta), tableSourceColumnTypes(meta))
 	colTypes = make([]string, len(colNames))
 	for i, colName := range colNames {
 		colTypes[i] = colName2Type[colName]
@@ -657,7 +660,7 @@ func GetPrimaryKeyColumns(tctx *tcontext.Context, db *BaseConn, database, table 
 // primary key with multi cols is before unique key with single col because we will sort result by primary keys
 func getNumericIndex(tctx *tcontext.Context, db *BaseConn, meta TableMeta) (string, error) {
 	database, table := meta.DatabaseName(), meta.TableName()
-	colName2Type := string2Map(meta.ColumnNames(), meta.ColumnTypes())
+	colName2Type := string2Map(tableSourceColumnNames(meta), tableSourceColumnTypes(meta))
 	keyQuery := fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", escapeString(database), escapeString(table))
 	results, err := db.QuerySQLWithColumns(tctx, []string{"NON_UNIQUE", "SEQ_IN_INDEX", "KEY_NAME", "COLUMN_NAME", "CARDINALITY"}, keyQuery)
 	if err != nil {
@@ -1058,29 +1061,35 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead b
 	return conn, nil
 }
 
-// buildSelectField returns the selecting fields' string(joined by comma(`,`)),
-// and the number of writable fields.
-func buildSelectField(tctx *tcontext.Context, db *BaseConn, dbName, tableName string, completeInsert bool) (string, int, error) { // revive:disable-line:flag-parameter
+type columnProjection struct {
+	sourceTypes   []*sql.ColumnType
+	selectedTypes []*sql.ColumnType
+	selectField   string
+}
+
+type tableName struct {
+	db    string
+	table string
+}
+
+func getWritableColumnNames(tctx *tcontext.Context, db *BaseConn, dbName, tableName string) ([]string, bool, error) {
 	query := fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", escapeString(dbName), escapeString(tableName))
 	results, err := db.QuerySQLWithColumns(tctx, []string{"FIELD", "EXTRA"}, query)
 	if err != nil {
-		return "", 0, err
+		return nil, false, err
 	}
-	availableFields := make([]string, 0)
-	hasGenerateColumn := false
+	sourceColumns := make([]string, 0)
+	hasGeneratedColumn := false
 	for _, oneRow := range results {
 		fieldName, extra := oneRow[0], oneRow[1]
 		switch extra {
 		case "STORED GENERATED", "VIRTUAL GENERATED":
-			hasGenerateColumn = true
+			hasGeneratedColumn = true
 			continue
 		}
-		availableFields = append(availableFields, wrapBackTicks(escapeString(fieldName)))
+		sourceColumns = append(sourceColumns, fieldName)
 	}
-	if completeInsert || hasGenerateColumn {
-		return strings.Join(availableFields, ","), len(availableFields), nil
-	}
-	return "*", len(availableFields), nil
+	return sourceColumns, hasGeneratedColumn, nil
 }
 
 func buildWhereClauses(handleColNames []string, handleVals [][]string) []string {
