@@ -275,3 +275,51 @@ func TestCreateSSTWriterDefaultBlockSize(t *testing.T) {
 	err = sstWriter.writer.Close()
 	require.NoError(t, err)
 }
+
+// TestSSTWriterWriteKVsReusedKeyBuffer verifies that writeKVs does not alias
+// sw.lastKey into a reusable key buffer. In the sorted path (appendRowsSorted)
+// all encoded keys of a batch are slices into one shared sortedKeyBuf which is
+// reset to offset 0 on every batch. If sw.lastKey keeps a reference into that
+// buffer, the next batch's first key can be written to the exact region
+// sw.lastKey points to, so bytes.Equal compares the key against itself and the
+// KV is silently skipped (data loss + checksum mismatch on IMPORT INTO).
+//
+// Reproduces the 3 + 1 + 3 equal-length-key pattern from issue #70716.
+func TestSSTWriterWriteKVsReusedKeyBuffer(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.sst")
+	writer, err := newSSTWriter(path, 16*1024)
+	require.NoError(t, err)
+	sw := &sstWriter{sstMeta: &sstMeta{path: path}, writer: writer, logger: log.L()}
+
+	// Simulate appendRowsSorted's reusable sortedKeyBuf: every key of a batch
+	// is a slice into one shared buffer, and the buffer is reset to offset 0
+	// between batches (exactly what `buf := w.sortedKeyBuf[:0]` does).
+	keyBuf := make([]byte, 0, 64)
+	encode := func(keys ...string) []common.KvPair {
+		keyBuf = keyBuf[:0]
+		kvs := make([]common.KvPair, 0, len(keys))
+		for _, k := range keys {
+			start := len(keyBuf)
+			keyBuf = append(keyBuf, k...)
+			kvs = append(kvs, common.KvPair{Key: keyBuf[start:], Val: []byte("v")})
+		}
+		return kvs
+	}
+
+	// Batch 1: three equal-length sorted KVs.
+	require.NoError(t, sw.writeKVs(encode("aaa", "bbb", "ccc")))
+	// Batch 2: a single KV leaves sw.lastKey pointing at buffer offset 0.
+	require.NoError(t, sw.writeKVs(encode("ddd")))
+	// Batch 3: three more sorted KVs. With the aliasing bug the first key
+	// ("eee") is written to the same region sw.lastKey references and is
+	// wrongly treated as a duplicate and skipped.
+	require.NoError(t, sw.writeKVs(encode("eee", "fff", "ggg")))
+
+	// totalSize only accumulates for actually-written keys (it is updated after
+	// the duplicate-skip `continue`), so it is the precise discriminator.
+	// 7 keys x (3-byte key + 1-byte val) = 28; the buggy code writes only 6 => 24.
+	require.Equal(t, int64(28), sw.totalSize)
+	require.Equal(t, int64(7), sw.totalCount)
+	require.NoError(t, sw.writer.Close())
+}
