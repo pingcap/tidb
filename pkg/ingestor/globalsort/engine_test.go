@@ -661,6 +661,7 @@ func TestChangeEngineConcurrency(t *testing.T) {
 		})
 
 		data := resizeEngine.buildIngestData(nil, []*membuf.Buffer{buf})
+		require.False(t, data.released.Load())
 		data.IncRef()
 		resizeEngine.activeIngestDataFlags = append(resizeEngine.activeIngestDataFlags, data.released)
 		onRelease := data.onRelease
@@ -691,6 +692,7 @@ func TestChangeEngineConcurrency(t *testing.T) {
 			data.DecRef()
 		}()
 		<-allocator.firstFreeStarted
+		require.False(t, data.released.Load())
 
 		resizeDoneCh := make(chan int, 1)
 		resizeStartedAt := time.Now()
@@ -710,6 +712,7 @@ func TestChangeEngineConcurrency(t *testing.T) {
 			"engine treated data as released before its release callback completed")
 		close(continueReleaseCallbackCh)
 		releasePanic := <-releaseResultCh
+		require.True(t, data.released.Load())
 
 		continueAfterCheckCh <- struct{}{}
 		<-flagsCheckedCh
@@ -718,7 +721,6 @@ func TestChangeEngineConcurrency(t *testing.T) {
 		continueAfterCheckCh <- struct{}{}
 		newBatchSize := <-resizeDoneCh
 
-		data.release()
 		require.Less(t, time.Since(resizeStartedAt), time.Second,
 			"test should not wait for the production resize ticker")
 		require.Equal(t, 2, newBatchSize)

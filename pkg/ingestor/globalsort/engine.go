@@ -783,8 +783,7 @@ type MemoryIngestData struct {
 	kvs []simplesst.KVPair
 	ts  uint64
 
-	memBuf         []*membuf.Buffer
-	releaseStarted atomic.Bool
+	memBuf []*membuf.Buffer
 	// released is published after all release work has completed.
 	released        *atomic.Bool
 	refCnt          *atomic.Int64
@@ -906,8 +905,8 @@ func (m *MemoryIngestData) GetTS() uint64 {
 // IncRef implements IngestData.IncRef.
 func (m *MemoryIngestData) IncRef() {
 	m.refCnt.Inc()
-	// Make sure data release has not started.
-	intest.Assert(!m.releaseStarted.Load(), "data release shouldn't have started when IncRef")
+	// Make sure data is not released.
+	intest.Assert(!m.released.Load(), "data shouldn't be released when IncRef")
 }
 
 // DecRef implements IngestData.DecRef.
@@ -918,9 +917,6 @@ func (m *MemoryIngestData) DecRef() {
 }
 
 func (m *MemoryIngestData) release() {
-	if !m.releaseStarted.CAS(false, true) {
-		return
-	}
 	m.kvs = nil
 	for _, b := range m.memBuf {
 		b.Destroy()
