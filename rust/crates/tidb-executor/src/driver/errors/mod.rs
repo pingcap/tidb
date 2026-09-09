@@ -148,7 +148,18 @@ impl DriverError {
             MysqlError::new(errno, message)
         }
         DriverError::DdlCoded { errno, message } => MysqlError::coded(errno, message),
-        DriverError::Unsupported(message) => MysqlError::unknown(message),
+        DriverError::Unsupported(message) => {
+            const PREFIX: &str = "__TIDB_ERRNO:";
+            if let Some(start) = message.find(PREFIX) {
+                let rest = &message[start + PREFIX.len()..];
+                if let Some((code, text)) = rest.split_once(':') {
+                    if let Ok(code) = code.parse::<u16>() {
+                        return MysqlError::coded(code, text.trim_end_matches(['"', ')']));
+                    }
+                }
+            }
+            MysqlError::unknown(message)
+        }
         DriverError::NotSupportedWithSem(statement) => MysqlError::coded(
             tidb_error::tidb::errcode::ErrNotSupportedWithSem,
             format!(
