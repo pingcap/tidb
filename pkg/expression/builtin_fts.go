@@ -15,10 +15,15 @@
 package expression
 
 import (
+	"slices"
+	"sync"
+
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -58,7 +63,39 @@ type ftsMysqlMatchAgainstFunctionClass struct {
 
 type builtinFtsMysqlMatchAgainstSig struct {
 	baseBuiltinFunc
-	modifier ast.FulltextSearchModifier
+	modifier      ast.FulltextSearchModifier
+	localEvalInfo *FTSLocalEvalInfo
+
+	// A prepared statement can reuse this signature with different search
+	// strings. Key the compiled plan by the actual string and protect it when
+	// executor workers share the signature.
+	localPlanMu sync.Mutex
+	localPlan   *ftsLocalEvalPlan
+}
+
+// FTSLocalEvalInfo is planner-validated metadata authorising local no-score
+// MATCH ... AGAINST evaluation. The planner only attaches it in direct boolean
+// predicate positions, so relevance-score positions never receive a 0/1 value.
+type FTSLocalEvalInfo struct {
+	AnalyzerConfig  fulltext.AnalyzerConfig
+	SelectivityTerm string
+	MatchNothing    bool
+}
+
+// Clone returns an independent copy of the local evaluation metadata.
+func (info *FTSLocalEvalInfo) Clone() *FTSLocalEvalInfo {
+	if info == nil {
+		return nil
+	}
+	cloned := *info
+	cloned.AnalyzerConfig.Stopwords = slices.Clone(info.AnalyzerConfig.Stopwords)
+	return &cloned
+}
+
+type ftsLocalEvalPlan struct {
+	search   string
+	query    *fulltext.Query
+	analyzer fulltext.Analyzer
 }
 
 func (b *builtinFtsMatchWordSig) Clone() builtinFunc {
@@ -77,7 +114,54 @@ func (b *builtinFtsMysqlMatchAgainstSig) Clone() builtinFunc {
 	newSig := &builtinFtsMysqlMatchAgainstSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	newSig.modifier = b.modifier
+	newSig.localEvalInfo = b.localEvalInfo.Clone()
 	return newSig
+}
+
+// sameFTSState compares semantic state that is not represented by SQL arguments.
+func (b *builtinFtsMysqlMatchAgainstSig) sameFTSState(other *builtinFtsMysqlMatchAgainstSig) bool {
+	if b.localEvalInfo == nil || other.localEvalInfo == nil {
+		return b.localEvalInfo == other.localEvalInfo
+	}
+	return b.modifier == other.modifier && b.localEvalInfo.AnalyzerConfig.Equal(other.localEvalInfo.AnalyzerConfig) &&
+		b.localEvalInfo.MatchNothing == other.localEvalInfo.MatchNothing &&
+		b.localEvalInfo.SelectivityTerm == other.localEvalInfo.SelectivityTerm
+}
+
+func (b *builtinFtsMysqlMatchAgainstSig) equal(ctx EvalContext, other builtinFunc) bool {
+	o, ok := other.(*builtinFtsMysqlMatchAgainstSig)
+	return ok && b.sameFTSState(o) && b.baseBuiltinFunc.equal(ctx, other)
+}
+
+// appendFTSStateHash keeps native/local execution and analyzer configurations
+// distinct during expression deduplication. The compiled query cache is excluded.
+func (b *builtinFtsMysqlMatchAgainstSig) appendFTSStateHash(dst []byte) []byte {
+	if b.localEvalInfo == nil {
+		return dst
+	}
+	dst = codec.EncodeInt(dst, int64(b.modifier))
+	dst = append(dst, 1)
+	info := b.localEvalInfo
+	config := info.AnalyzerConfig
+	dst = codec.EncodeCompactBytes(dst, []byte(config.ParserType))
+	dst = codec.EncodeInt(dst, int64(config.InnodbFtMinTokenSize))
+	dst = codec.EncodeInt(dst, int64(config.InnodbFtMaxTokenSize))
+	dst = codec.EncodeInt(dst, int64(config.NgramTokenSize))
+	if config.InnodbFtEnableStopword {
+		dst = append(dst, 1)
+	} else {
+		dst = append(dst, 0)
+	}
+	dst = codec.EncodeInt(dst, int64(len(config.Stopwords)))
+	for _, word := range config.Stopwords {
+		dst = codec.EncodeCompactBytes(dst, []byte(word))
+	}
+	if info.MatchNothing {
+		dst = append(dst, 1)
+	} else {
+		dst = append(dst, 0)
+	}
+	return codec.EncodeCompactBytes(dst, []byte(info.SelectivityTerm))
 }
 
 func (c *ftsMatchWordFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -149,7 +233,52 @@ func SetFTSMysqlMatchAgainstModifier(sf *ScalarFunction, modifier ast.FulltextSe
 		return errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, sf.Function)
 	}
 	sig.SetModifier(modifier)
+	sf.CleanHashCode()
 	return nil
+}
+
+// SetFTSMysqlMatchAgainstLocalEvalInfo authorises local no-score evaluation.
+func SetFTSMysqlMatchAgainstLocalEvalInfo(sf *ScalarFunction, info *FTSLocalEvalInfo) error {
+	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
+	if !ok {
+		return errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, sf.Function)
+	}
+	sig.localEvalInfo = info.Clone()
+	sf.CleanHashCode()
+	return nil
+}
+
+// FTSMysqlMatchAgainstLocalEvalInfo returns attached local-evaluation metadata.
+func FTSMysqlMatchAgainstLocalEvalInfo(sf *ScalarFunction) (*FTSLocalEvalInfo, bool) {
+	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
+	if !ok || sig.localEvalInfo == nil {
+		return nil, false
+	}
+	return sig.localEvalInfo, true
+}
+
+// FTSModifierSupportedByLocalNoScore reports whether local boolean matching can
+// preserve the SQL modifier semantics. Natural-language relevance and query
+// expansion are deliberately excluded.
+func FTSModifierSupportedByLocalNoScore(modifier ast.FulltextSearchModifier) bool {
+	return modifier.IsBooleanMode() && !modifier.WithQueryExpansion()
+}
+
+// CompileFTSMysqlMatchAgainstLocalQuery compiles a stable search argument at
+// plan time, surfacing syntax errors even for empty inputs or short-circuits.
+func CompileFTSMysqlMatchAgainstLocalQuery(ctx EvalContext, sf *ScalarFunction, config fulltext.AnalyzerConfig) (*fulltext.Query, error) {
+	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
+	if !ok {
+		return nil, errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, sf.Function)
+	}
+	if !FTSModifierSupportedByLocalNoScore(sig.modifier) {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("local MATCH ... AGAINST outside of IN BOOLEAN MODE")
+	}
+	search, isNull, err := sig.args[0].EvalString(ctx, chunk.Row{})
+	if err != nil || isNull {
+		return nil, err
+	}
+	return fulltext.CompileBooleanQuery(search, config)
 }
 
 func (c *ftsMysqlMatchAgainstFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
@@ -162,7 +291,7 @@ func (c *ftsMysqlMatchAgainstFunctionClass) getFunction(ctx BuildContext, args [
 	if !ok {
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("match against a non-constant string")
 	}
-	if argAgainstConstant.Value.Kind() != types.KindString && !argAgainstConstant.Value.IsNull() {
+	if argAgainstConstant.Value.Kind() != types.KindString && !argAgainstConstant.Value.IsNull() && argAgainstConstant.ParamMarker == nil {
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("match against a non-string constant")
 	}
 
@@ -194,12 +323,76 @@ func (c *ftsMysqlMatchAgainstFunctionClass) getFunction(ctx BuildContext, args [
 }
 
 func (b *builtinFtsMysqlMatchAgainstSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
-	// Matching NULL returns 0.
-	if b.args[0].(*Constant).Value.IsNull() {
+	if b.localEvalInfo == nil {
+		if constArg, ok := b.args[0].(*Constant); ok && constArg.Value.IsNull() {
+			return 0, false, nil
+		}
+		return 0, false, errors.Errorf("cannot use 'MATCH ... AGAINST' outside of fulltext index")
+	}
+	if !FTSModifierSupportedByLocalNoScore(b.modifier) {
+		return 0, false, errors.Errorf("local 'MATCH ... AGAINST' only supports IN BOOLEAN MODE")
+	}
+
+	search, isNull, err := b.args[0].EvalString(ctx, row)
+	if err != nil || isNull {
+		return 0, isNull, err
+	}
+	if b.localEvalInfo.MatchNothing {
 		return 0, false, nil
 	}
-	// Reject executing match against in TiDB side
-	return 0, false, errors.Errorf("cannot use 'MATCH ... AGAINST' outside of fulltext index")
+	plan, err := b.getOrBuildLocalNoScorePlan(search)
+	if err != nil {
+		return 0, false, err
+	}
+	if plan.query.MatchesNothing() {
+		return 0, false, nil
+	}
+	columns, err := b.evalLocalMatchColumns(ctx, row)
+	if err != nil {
+		return 0, false, err
+	}
+	doc, err := fulltext.BuildDocument(columns, plan.analyzer)
+	if err != nil {
+		return 0, false, err
+	}
+	if plan.query.Match(doc) {
+		return 1, false, nil
+	}
+	return 0, false, nil
+}
+
+func (b *builtinFtsMysqlMatchAgainstSig) getOrBuildLocalNoScorePlan(search string) (*ftsLocalEvalPlan, error) {
+	b.localPlanMu.Lock()
+	defer b.localPlanMu.Unlock()
+	if b.localPlan != nil && b.localPlan.search == search {
+		return b.localPlan, nil
+	}
+	analyzer, err := fulltext.GetAnalyzer(b.localEvalInfo.AnalyzerConfig)
+	if err != nil {
+		return nil, err
+	}
+	query, err := fulltext.CompileBooleanQuery(search, b.localEvalInfo.AnalyzerConfig)
+	if err != nil {
+		return nil, err
+	}
+	b.localPlan = &ftsLocalEvalPlan{search: search, query: query, analyzer: analyzer}
+	return b.localPlan, nil
+}
+
+func (b *builtinFtsMysqlMatchAgainstSig) evalLocalMatchColumns(ctx EvalContext, row chunk.Row) ([]fulltext.ColumnInput, error) {
+	columns := make([]fulltext.ColumnInput, 0, len(b.args)-1)
+	for _, arg := range b.args[1:] {
+		text, isNull, err := arg.EvalString(ctx, row)
+		if err != nil {
+			return nil, err
+		}
+		if isNull {
+			columns = append(columns, fulltext.ColumnInput{IsNull: true})
+			continue
+		}
+		columns = append(columns, fulltext.ColumnInput{Text: text})
+	}
+	return columns, nil
 }
 
 type ftsMatchPrefixFunctionClass struct {

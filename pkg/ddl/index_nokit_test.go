@@ -273,3 +273,35 @@ func TestBuildFullTextInfoWithCheckParser(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, model.FullTextParserTypeNgramV1, idx.FullTextInfo.ParserType)
 }
+
+func TestFullTextParserConfigFromJob(t *testing.T) {
+	job := &model.Job{SessionVars: make(map[string]string)}
+	job.AddSessionVars("innodb_ft_min_token_size", "4")
+	job.AddSessionVars("innodb_ft_max_token_size", "80")
+	job.AddSessionVars("ngram_token_size", "3")
+	job.AddSessionVars("innodb_ft_enable_stopword", "OFF")
+	config, err := fullTextParserConfigFromJob(job)
+	require.NoError(t, err)
+	require.Equal(t, &model.FullTextParserConfig{
+		InnodbFtMinTokenSize: 4, InnodbFtMaxTokenSize: 80,
+		NgramTokenSize: 3, InnodbFtEnableStopword: false,
+	}, config)
+	// The TiCI request must continue to use the job, even if index metadata
+	// carries a different snapshot (for example, from CREATE TABLE LIKE).
+	index := &model.IndexInfo{FullTextInfo: &model.FullTextIndexInfo{
+		ParserType:   model.FullTextParserTypeStandardV1,
+		ParserConfig: &model.FullTextParserConfig{InnodbFtMinTokenSize: 9},
+	}}
+	info, err := (&worker{}).buildTiCIFulltextParserInfo(nil, job, index)
+	require.NoError(t, err)
+	require.Equal(t, "4", info.ParserParams["innodb_ft_min_token_size"])
+	require.Equal(t, "80", info.ParserParams["innodb_ft_max_token_size"])
+	require.Equal(t, "OFF", info.ParserParams["innodb_ft_enable_stopword"])
+	require.Equal(t, 9, index.FullTextInfo.ParserConfig.InnodbFtMinTokenSize)
+	defaults, err := fullTextParserConfigFromJob(&model.Job{})
+	require.NoError(t, err)
+	require.Equal(t, &model.FullTextParserConfig{
+		InnodbFtMinTokenSize: 3, InnodbFtMaxTokenSize: 84,
+		NgramTokenSize: 2, InnodbFtEnableStopword: true,
+	}, defaults)
+}

@@ -93,6 +93,17 @@ func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args 
 	}
 	switch tbInfo.State {
 	case model.StateNone:
+		// Persist the same job variables used to create the TiCI indexes.
+		for _, index := range tbInfo.Indices {
+			if index.FullTextInfo == nil {
+				continue
+			}
+			config, err := fullTextParserConfigFromJob(job)
+			if err != nil {
+				return tbInfo, errors.Trace(err)
+			}
+			index.FullTextInfo.ParserConfig = config
+		}
 		// none -> public
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = metaMut.StartTS
@@ -297,6 +308,11 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	if err := w.createTiCIIndexes(jobCtx, job, job.SchemaName, tbInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
+	failpoint.Inject("mockErrorAfterCreateTiCIIndexes", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("mock error after creating TiCI indexes"))
+		}
+	})
 
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {

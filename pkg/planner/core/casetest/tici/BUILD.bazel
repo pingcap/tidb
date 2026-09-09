@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "local_match_test.go",
         "stats_test.go",
         "tici_test.go",
     ],
@@ -17,8 +18,10 @@ go_test(
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/sessionctx/variable",
+        "//pkg/planner/core",
         "//pkg/store/mockstore",
         "//pkg/testkit",
+        "//pkg/testkit/external",
         "//pkg/testkit/testdata",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",

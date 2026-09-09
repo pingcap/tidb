@@ -890,7 +890,7 @@ func (ds *DataSource) checkTiCIDirtyWrite(hasFTSFuncLocal bool) (shouldSkip bool
 func (ds *DataSource) collectPushedDownCondsHasFTSFuncSet() intset.FastIntSet {
 	condHasFTSFunc := intset.NewFastIntSet()
 	for i, cond := range ds.PushedDownConds {
-		if expression.ContainsFullTextSearchFn(cond) {
+		if expression.ContainsTiCIFullTextSearchFn(cond) {
 			condHasFTSFunc.Insert(i)
 		}
 	}

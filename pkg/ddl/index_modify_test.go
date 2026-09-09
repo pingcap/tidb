@@ -1747,6 +1747,13 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	raw = tici.GetMockTiCICreateIndexRequest()
 	require.NotEmpty(t, raw)
 	assertTiCIFulltextParserInfo(t, raw)
+	for _, name := range []string{"t_create", "t"} {
+		index := external.GetTableByName(t, tk, "test", name).Meta().FindIndexByName("fts_idx")
+		require.Equal(t, &model.FullTextParserConfig{
+			InnodbFtMinTokenSize: 1, InnodbFtMaxTokenSize: 10,
+			NgramTokenSize: 2, InnodbFtEnableStopword: true,
+		}, index.FullTextInfo.ParserConfig)
+	}
 
 	rows := tk.MustQuery("admin show ddl jobs 1").Rows()
 	require.Len(t, rows, 1)
@@ -1761,6 +1768,75 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	var finishReq tici.FinishImportIndexUploadRequest
 	require.NoError(t, json.Unmarshal(raw, &finishReq))
 	require.Equal(t, expectedTaskID, finishReq.TidbTaskId)
+}
+
+// A retried CREATE must publish the settings captured by its job, even when
+// global variables change after the first metadata-write attempt.
+func TestFullTextParserConfigCreateRetry(t *testing.T) {
+	for _, failurePoint := range []string{"checkOwnerCheckAllVersionsWaitTime", "mockErrorAfterCreateTiCIIndexes"} {
+		t.Run(failurePoint, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table parent (id int primary key)")
+			tk.MustExec("set @@global.innodb_ft_min_token_size=4")
+			tk.MustExec("set @@global.innodb_ft_max_token_size=80")
+			tk.MustExec("set @@global.ngram_token_size=3")
+			tk.MustExec("set @@innodb_ft_enable_stopword=off")
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexRequest", `return(1)`)
+			originalWT := ddl.GetWaitTimeWhenErrorOccurred()
+			ddl.SetWaitTimeWhenErrorOccurred(time.Millisecond)
+			t.Cleanup(func() { ddl.SetWaitTimeWhenErrorOccurred(originalWT) })
+
+			tici.ResetMockTiCICreateIndexRequest()
+			var retried atomic.Bool
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+				if job.Type != model.ActionCreateTable || job.ErrorCount == 0 || retried.Swap(true) {
+					return
+				}
+				if failurePoint == "mockErrorAfterCreateTiCIIndexes" {
+					// TiCI has already accepted the first request, but table metadata
+					// has not committed. Check both this request and the retry below.
+					var first tici.CreateIndexRequest
+					require.NoError(t, first.Unmarshal(tici.GetMockTiCICreateIndexRequest()))
+					require.Equal(t, "4", first.ParserInfo.ParserParams["innodb_ft_min_token_size"])
+					require.Equal(t, "80", first.ParserInfo.ParserParams["innodb_ft_max_token_size"])
+					require.Equal(t, "OFF", first.ParserInfo.ParserParams["innodb_ft_enable_stopword"])
+				}
+				other := testkit.NewTestKit(t, store)
+				other.MustExec("set @@global.innodb_ft_min_token_size=5")
+				other.MustExec("set @@global.innodb_ft_max_token_size=81")
+				other.MustExec("set @@global.ngram_token_size=4")
+			})
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/"+failurePoint, `1*return(true)->return(false)`)
+			tk.MustExec("create table fts_retry (id int, c text, fulltext index ft(c))")
+			require.True(t, retried.Load())
+			config := external.GetTableByName(t, tk, "test", "fts_retry").Meta().FindIndexByName("ft").FullTextInfo.ParserConfig
+			require.Equal(t, &model.FullTextParserConfig{
+				InnodbFtMinTokenSize: 4, InnodbFtMaxTokenSize: 80,
+				NgramTokenSize: 3, InnodbFtEnableStopword: false,
+			}, config)
+			var req tici.CreateIndexRequest
+			require.NoError(t, req.Unmarshal(tici.GetMockTiCICreateIndexRequest()))
+			require.Equal(t, "4", req.ParserInfo.ParserParams["innodb_ft_min_token_size"])
+			require.Equal(t, "80", req.ParserInfo.ParserParams["innodb_ft_max_token_size"])
+			require.Equal(t, "OFF", req.ParserInfo.ParserParams["innodb_ft_enable_stopword"])
+
+			// LIKE creates a new physical index with the new job's settings, rather
+			// than copying the old index's analyzer snapshot.
+			tk.MustExec("create table fts_like like fts_retry")
+			tk.MustExec("create table fts_fk (id int, c text, fulltext index ft(c), foreign key (id) references parent(id))")
+			for _, name := range []string{"fts_like", "fts_fk"} {
+				index := external.GetTableByName(t, tk, "test", name).Meta().FindIndexByName("ft")
+				require.Equal(t, model.StatePublic, index.State)
+				require.Equal(t, &model.FullTextParserConfig{
+					InnodbFtMinTokenSize: 5, InnodbFtMaxTokenSize: 81,
+					NgramTokenSize: 4, InnodbFtEnableStopword: false,
+				}, index.FullTextInfo.ParserConfig)
+			}
+		})
+	}
 }
 
 func TestFulltextIndexRequiresGlobalSortForBackfill(t *testing.T) {

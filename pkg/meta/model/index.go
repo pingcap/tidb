@@ -151,6 +151,31 @@ func GetFullTextParserTypeBySQLName(name string) FullTextParserType {
 // FullTextIndexInfo is the information of a FULLTEXT index.
 type FullTextIndexInfo struct {
 	ParserType FullTextParserType `json:"parser_type"`
+	// ParserConfig records the creation-time tokenization variables. Nil denotes a legacy index
+	// whose creation-time analyzer settings are unknown.
+	ParserConfig *FullTextParserConfig `json:"parser_config,omitempty"`
+}
+
+// FullTextParserConfig preserves the creation-time tokenization variables.
+// Custom stopword table names and contents are deliberately not persisted.
+type FullTextParserConfig struct {
+	InnodbFtMinTokenSize   int  `json:"innodb_ft_min_token_size"`
+	InnodbFtMaxTokenSize   int  `json:"innodb_ft_max_token_size"`
+	NgramTokenSize         int  `json:"ngram_token_size"`
+	InnodbFtEnableStopword bool `json:"innodb_ft_enable_stopword"`
+}
+
+// Clone returns an independent copy of the fulltext index metadata.
+func (info *FullTextIndexInfo) Clone() *FullTextIndexInfo {
+	if info == nil {
+		return nil
+	}
+	cloned := *info
+	if info.ParserConfig != nil {
+		config := *info.ParserConfig
+		cloned.ParserConfig = &config
+	}
+	return &cloned
 }
 
 // HybridIndexInfo is the information of HYBRID index of a column.
@@ -474,6 +499,7 @@ func (index *IndexInfo) Clone() *IndexInfo {
 	for i := range index.Columns {
 		ni.Columns[i] = index.Columns[i].Clone()
 	}
+	ni.FullTextInfo = index.FullTextInfo.Clone()
 	if index.HybridInfo != nil {
 		ni.HybridInfo = index.HybridInfo.Clone()
 	}

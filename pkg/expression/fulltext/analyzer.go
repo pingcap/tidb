@@ -47,8 +47,8 @@ type AnalyzerConfig struct {
 }
 
 // Equal reports whether two analyzer configurations produce the same token
-// stream. Stopword order does not affect analysis; DDL stores it sorted, so an
-// order-sensitive comparison also catches malformed or non-canonical metadata.
+// stream. Stopword comparison is conservative: different list order is treated
+// as different configuration even when analysis would produce the same tokens.
 func (c AnalyzerConfig) Equal(other AnalyzerConfig) bool {
 	return c.ParserType == other.ParserType &&
 		c.InnodbFtMinTokenSize == other.InnodbFtMinTokenSize &&

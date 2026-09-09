@@ -410,6 +410,8 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, bool2Byte(config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()))
 	hash = append(hash, bool2Byte(vars.StmtCtx.ForShareLockEnabledByNoop))
 	hash = append(hash, bool2Byte(vars.SharedLockPromotion))
+	// Native TiCI and local MATCH plans must not share a cache entry.
+	hash = append(hash, bool2Byte(vars.EnableLocalMatchAgainst))
 
 	return string(hash), binding, true, "", nil
 }

@@ -57,6 +57,26 @@ func ContainsFullTextSearchFn(exprs ...Expression) bool {
 	return false
 }
 
+// ContainsTiCIFullTextSearchFn reports whether an expression requires TiCI fulltext
+// evaluation. Planner-authorized local MATCH expressions do not require TiCI.
+func ContainsTiCIFullTextSearchFn(exprs ...Expression) bool {
+	for _, expr := range exprs {
+		sf, ok := expr.(*ScalarFunction)
+		if !ok {
+			continue
+		}
+		if _, isFTS := FTSFuncMap[sf.FuncName.L]; isFTS {
+			if _, local := FTSMysqlMatchAgainstLocalEvalInfo(sf); !local {
+				return true
+			}
+		}
+		if ContainsTiCIFullTextSearchFn(sf.GetArgs()...) {
+			return true
+		}
+	}
+	return false
+}
+
 // ExprCoveredByOneTiCIIndex checks whether the given expression is fully covered by one TiCI index.
 // Single-column FTS helper functions (`fts_match_xxx`) only require their matched column to
 // belong to the helper-eligible FTS column set, while multi-column FTS expressions must match
@@ -69,6 +89,9 @@ func ExprCoveredByOneTiCIIndex(
 ) bool {
 	switch x := expr.(type) {
 	case *ScalarFunction:
+		if _, local := FTSMysqlMatchAgainstLocalEvalInfo(x); local {
+			return false
+		}
 		if _, ok := FTSFuncMap[x.FuncName.L]; ok {
 			// For single-column `fts_match_xxx`, the covered check is based on helper-eligible
 			// FTS columns; for multi-column forms (and MATCH ... AGAINST), the matched column set
@@ -255,6 +278,9 @@ func RewriteMySQLMatchAgainstRecursively(
 ) (Expression, bool, error) {
 	scalarFunc, ok := expr.(*ScalarFunction)
 	if !ok {
+		return expr, false, nil
+	}
+	if _, local := FTSMysqlMatchAgainstLocalEvalInfo(scalarFunc); local {
 		return expr, false, nil
 	}
 	if scalarFunc.FuncName.L != ast.FTSMysqlMatchAgainst {

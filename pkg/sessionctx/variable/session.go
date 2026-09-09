@@ -1137,6 +1137,9 @@ type SessionVars struct {
 	// same-order index join candidate.
 	EnableAlternativeLogicalPlans bool
 
+	// EnableLocalMatchAgainst enables local no-score MATCH ... AGAINST evaluation.
+	EnableLocalMatchAgainst bool
+
 	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
 	EnableSemiJoinRewrite bool
 
@@ -2224,6 +2227,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableOuterJoinReorder:        DefTiDBEnableOuterJoinReorder,
 		EnableNoDecorrelateInSelect:   DefOptEnableNoDecorrelateInSelect,
 		EnableAlternativeLogicalPlans: DefOptEnableAlternativeLogicalPlans,
+		EnableLocalMatchAgainst:       DefTiDBEnableLocalMatchAgainst,
 		RetryLimit:                    DefTiDBRetryLimit,
 		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:              kv.PriorityLow,

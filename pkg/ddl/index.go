@@ -1796,6 +1796,13 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 				return ver, nil
 			}
 
+			// Publish the creation-time parser settings together with the public index.
+			config, err := fullTextParserConfigFromJob(job)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			indexInfo.FullTextInfo.ParserConfig = config
+
 			AddIndexColumnFlag(tblInfo, indexInfo)
 			indexInfo.State = model.StatePublic
 
@@ -2315,6 +2322,41 @@ const (
 	// maxFullTextStopwordBytes limits total stopword payload bytes per FULLTEXT index creation.
 	maxFullTextStopwordBytes = 1 << 20 // 1MiB
 )
+
+// fullTextParserConfigFromJob captures only scalar analyzer settings. TiCI still
+// resolves custom stopwords through the existing DDL path; local evaluation uses
+// its built-in stopwords and may therefore produce different results.
+func fullTextParserConfigFromJob(job *model.Job) (*model.FullTextParserConfig, error) {
+	config := &model.FullTextParserConfig{
+		InnodbFtMinTokenSize:   3,
+		InnodbFtMaxTokenSize:   84,
+		NgramTokenSize:         2,
+		InnodbFtEnableStopword: true,
+	}
+	var err error
+	if value, ok := job.GetSessionVars(variable.InnodbFtMinTokenSize); ok {
+		config.InnodbFtMinTokenSize, err = strconv.Atoi(value)
+		if err != nil {
+			return nil, errors.Annotate(err, "invalid innodb_ft_min_token_size")
+		}
+	}
+	if value, ok := job.GetSessionVars(variable.InnodbFtMaxTokenSize); ok {
+		config.InnodbFtMaxTokenSize, err = strconv.Atoi(value)
+		if err != nil {
+			return nil, errors.Annotate(err, "invalid innodb_ft_max_token_size")
+		}
+	}
+	if value, ok := job.GetSessionVars(variable.NgramTokenSize); ok {
+		config.NgramTokenSize, err = strconv.Atoi(value)
+		if err != nil {
+			return nil, errors.Annotate(err, "invalid ngram_token_size")
+		}
+	}
+	if value, ok := job.GetSessionVars(variable.InnodbFtEnableStopword); ok {
+		config.InnodbFtEnableStopword = variable.TiDBOptOn(value)
+	}
+	return config, nil
+}
 
 func (w *worker) buildTiCIFulltextParserInfo(jobCtx *jobContext, job *model.Job, indexInfo *model.IndexInfo) (*tici.ParserInfo, error) {
 	getJobSysVar := func(name, fallback string) string {

@@ -43,48 +43,48 @@ func (f *ftsFuncValidation) Optimize(ctx context.Context, p base.LogicalPlan, _ 
 func (f *ftsFuncValidation) doQuickValidation(ctx context.Context, p base.LogicalPlan) error {
 	switch x := p.(type) {
 	case *logicalop.LogicalProjection:
-		if expression.ContainsFullTextSearchFn(x.Exprs...) {
+		if expression.ContainsTiCIFullTextSearchFn(x.Exprs...) {
 			return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' cannot be used in SELECT fields. It can be used in WHERE only")
 		}
 	case *logicalop.LogicalSelection:
-		if expression.ContainsFullTextSearchFn(x.Conditions...) {
+		if expression.ContainsTiCIFullTextSearchFn(x.Conditions...) {
 			return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' must be used alone. It cannot be placed inside any other function or expression as a parameter, or used multiple times. A valid example: SELECT * FROM <TABLE> WHERE FTS_MATCH_WORD(...)")
 		}
 	case *logicalop.LogicalTopN:
 		for _, item := range x.ByItems {
-			if expression.ContainsFullTextSearchFn(item.Expr) {
+			if expression.ContainsTiCIFullTextSearchFn(item.Expr) {
 				return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' in ORDER BY is not supported")
 			}
 		}
 	case *logicalop.LogicalSort:
 		for _, item := range x.ByItems {
-			if expression.ContainsFullTextSearchFn(item.Expr) {
+			if expression.ContainsTiCIFullTextSearchFn(item.Expr) {
 				return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' in ORDER BY clause is not supported")
 			}
 		}
 	case *logicalop.LogicalJoin:
-		if expression.ContainsFullTextSearchFn(x.OtherConditions...) {
+		if expression.ContainsTiCIFullTextSearchFn(x.OtherConditions...) {
 			return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' cannot be used in JOIN ON conditions")
 		}
-		if expression.ContainsFullTextSearchFn(x.LeftConditions...) {
+		if expression.ContainsTiCIFullTextSearchFn(x.LeftConditions...) {
 			return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' cannot be used in JOIN ON conditions")
 		}
-		if expression.ContainsFullTextSearchFn(x.RightConditions...) {
+		if expression.ContainsTiCIFullTextSearchFn(x.RightConditions...) {
 			return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' cannot be used in JOIN ON conditions")
 		}
 	case *logicalop.LogicalWindow:
 		for _, item := range x.WindowFuncDescs {
-			if expression.ContainsFullTextSearchFn(item.Args...) {
+			if expression.ContainsTiCIFullTextSearchFn(item.Args...) {
 				return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' cannot be used in window function")
 			}
 		}
 	case *logicalop.LogicalAggregation:
 		for _, agg := range x.AggFuncs {
-			if expression.ContainsFullTextSearchFn(agg.Args...) {
+			if expression.ContainsTiCIFullTextSearchFn(agg.Args...) {
 				return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' cannot be used in GROUP BY or HAVING")
 			}
 		}
-		if expression.ContainsFullTextSearchFn(x.GroupByItems...) {
+		if expression.ContainsTiCIFullTextSearchFn(x.GroupByItems...) {
 			return plannererrors.ErrWrongUsage.FastGen("Currently 'FTS_MATCH_WORD()' cannot be used in GROUP BY or HAVING")
 		}
 	case *logicalop.DataSource:

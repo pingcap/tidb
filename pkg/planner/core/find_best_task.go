@@ -2558,7 +2558,7 @@ func isTiCISingleScan(ds *logicalop.DataSource, indexColumns []*expression.Colum
 	}
 	for _, cond := range path.AccessConds {
 		// TiCI executes FTS predicates through FtsQueryInfo, even when the text column is pruned.
-		if expression.ContainsFullTextSearchFn(cond) {
+		if expression.ContainsTiCIFullTextSearchFn(cond) {
 			continue
 		}
 		if !isIndexCoveringCondition(ds, cond, indexColumns, idxColLens) {
