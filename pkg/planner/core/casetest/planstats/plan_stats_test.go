@@ -207,6 +207,12 @@ func TestPlanStatsLoad(t *testing.T) {
 			nodeW := resolve.NewNodeW(stmt)
 			p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, is)
 			require.NoError(t, err)
+			// The stats cache can still drop a column that sync load just wrote
+			// back, because Ristretto rejects a Put for a key whose admission is
+			// pending. Then the plan misses that column without IsSyncStatsFailed
+			// being set, so this skip does not cover that case. The test can only
+			// be made fully stable by fixing the cache, see
+			// https://github.com/pingcap/tidb/issues/70964.
 			if ctx.GetSessionVars().StmtCtx.IsSyncStatsFailed {
 				t.Logf("skip stats assertions for %q because sync stats load failed: %v",
 					testCase.sql, ctx.GetSessionVars().StmtCtx.GetWarnings())
