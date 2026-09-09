@@ -47,6 +47,8 @@ const (
 
 // BackfillTaskSummary is the execution summary of a backfill task.
 type BackfillTaskSummary struct {
+	// IndexKVSize is currently collected only for global-sort backfills and is
+	// primarily used for NextGen resource accounting.
 	IndexKVSize uint64 `json:"index_kv_size"`
 }
 
