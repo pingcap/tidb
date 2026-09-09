@@ -18,12 +18,14 @@ import (
 	"math"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
 // These deliberately uncalibrated work weights keep the ResultOnly path
@@ -125,6 +127,7 @@ type statementRUFinalizedSnapshot struct {
 	result           statementRUResultOnly
 	calibrationState statementRUCalibrationState
 	writeSQL         bool
+	ttlJob           bool
 }
 
 func installStatementRUOwner(stmt *ExecStmt) {
@@ -148,7 +151,7 @@ func newStatementRUCalculationSetup(stmt *ExecStmt) (statementRUCalculationSetup
 	}
 	eligible := sessVars.StmtCtx.IsReadOnly || isAnalyze || statementRUIsWritePlan(stmt.Plan) || statementRUIsCommitPlan(stmt.Plan)
 	if !eligible ||
-		sessVars.InRestrictedSQL || sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) ||
+		(sessVars.InRestrictedSQL && !isStatementRUTTLJob(sessVars)) || sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) ||
 		sessVars.StmtCtx.GetFlatPlan() != nil {
 		return statementRUCalculationSetup{}, false
 	}
@@ -156,6 +159,10 @@ func newStatementRUCalculationSetup(stmt *ExecStmt) (statementRUCalculationSetup
 	return statementRUCalculationSetup{
 		frontendCompileBytes: statementRUFrontendCompileBytes(stmt),
 	}, true
+}
+
+func isStatementRUTTLJob(vars *variable.SessionVars) bool {
+	return vars.InRestrictedSQL && vars.RequestSourceType == kv.InternalTxnTTL && vars.TTLJobID != ""
 }
 
 // statementRUIsWritePlan classifies DML independently of affected rows.
@@ -357,6 +364,9 @@ func publishStatementRUMetricsSafely(finalized statementRUFinalizedSnapshot) {
 	}()
 	totalRU := finalized.result.TotalRU
 	metrics.RUV3Total.Add(totalRU)
+	if finalized.ttlJob {
+		metrics.RUV3TTLTotal.Add(totalRU)
+	}
 	sqlType := metrics.LblSQLTypeRead
 	if finalized.writeSQL {
 		sqlType = metrics.LblSQLTypeWrite

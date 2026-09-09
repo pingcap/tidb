@@ -20,11 +20,101 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSessionTTLJobRU(t *testing.T) {
+	original := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
+	t.Cleanup(func() { config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(original) })
+	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(true)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ttl_ru(id int primary key, v int)")
+	tk.MustExec("insert into ttl_ru values (1, 10), (2, 20)")
+	vars := tk.Session().GetSessionVars()
+	vars.InRestrictedSQL = true
+	se := session.NewSession(tk.Session(), func() {})
+	jobSe := session.WithJob(se, "job-1")
+	ctx := context.Background()
+
+	exec := func(se session.Session, sql string, counted bool) {
+		t.Helper()
+		before := testutil.ToFloat64(metrics.RUV3Total)
+		ttlBefore := testutil.ToFloat64(metrics.RUV3TTLTotal)
+		_, err := se.ExecuteSQL(ctx, sql)
+		require.NoError(t, err)
+		after := testutil.ToFloat64(metrics.RUV3Total)
+		ttlAfter := testutil.ToFloat64(metrics.RUV3TTLTotal)
+		if counted {
+			require.Greater(t, after, before, sql)
+			require.InDelta(t, after-before, ttlAfter-ttlBefore, 1e-9, sql)
+		} else {
+			require.Equal(t, before, after, sql)
+			require.Equal(t, ttlBefore, ttlAfter, sql)
+		}
+		require.Empty(t, vars.TTLJobID)
+		require.True(t, vars.InRestrictedSQL)
+	}
+	exec(se, "select * from ttl_ru", false)
+	exec(session.WithJob(se, ""), "select * from ttl_ru", false)
+	exec(jobSe, "select * from ttl_ru", true)
+	exec(jobSe, "delete from ttl_ru where id=1", true)
+
+	var statements, jobIDs []string
+	var committedKeys, committedBytes float64
+	var publications int
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/observeStatementRUCalibrationUnitsForTest", func(
+		connectionID uint64, _ string, _, _, _, _, _, _ float64,
+		_ float64, _ float64, keys, bytes float64,
+	) {
+		if connectionID == vars.ConnectionID {
+			publications++
+			committedKeys += keys
+			committedBytes += bytes
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/observeStatementRUOwnerInstallForTest", func(stmt *executor.ExecStmt) {
+		if stmt.Ctx == tk.Session() {
+			statements = append(statements, stmt.GetTextToLog(false))
+			jobIDs = append(jobIDs, vars.TTLJobID)
+		}
+	})
+	require.NoError(t, jobSe.RunInTxn(ctx, func() error {
+		exec(jobSe, "delete from ttl_ru where id=2", true)
+		// A global query in the same transaction must not inherit job attribution.
+		exec(se, "select count(*) from ttl_ru", false)
+		return nil
+	}, session.TxnModeOptimistic))
+	require.Equal(t, []string{"job-1", "job-1", "", "job-1"}, jobIDs, statements)
+	require.Equal(t, 2, publications, "DELETE and COMMIT each publish once")
+	require.Positive(t, committedKeys)
+	require.Positive(t, committedBytes)
+	require.Empty(t, vars.TTLJobID)
+
+	// A rewrapped session uses the new job, and cancellation/error cleanup does
+	// not retain either job on the pooled session.
+	jobIDs = nil
+	jobSe = session.WithJob(jobSe, "job-2")
+	require.ErrorContains(t, jobSe.RunInTxn(ctx, func() error {
+		return errors.New("abort job transaction")
+	}, session.TxnModeOptimistic), "abort job transaction")
+	require.Equal(t, []string{"job-2", "job-2"}, jobIDs)
+	require.Empty(t, vars.TTLJobID)
+
+	_, err := jobSe.ExecuteSQL(ctx, "select * from missing_ttl_ru_table")
+	require.Error(t, err)
+	require.Empty(t, vars.TTLJobID)
+	exec(se, "select * from ttl_ru", false)
+}
 
 func TestSessionRunInTxn(t *testing.T) {
 	store := testkit.CreateMockStore(t)

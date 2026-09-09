@@ -399,13 +399,14 @@ func (m *taskManager) peekWaitingScanTasks(se session.Session, now time.Time) ([
 
 func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now time.Time) (*runningScanTask, error) {
 	ctx := m.ctx
+	jobSe := session.WithJob(se, task.JobID)
 
 	table, ok := m.infoSchemaCache.Tables[task.TableID]
 	if !ok {
 		return nil, errors.Errorf("didn't find table with id: %d", task.TableID)
 	}
 
-	err := se.RunInTxn(ctx, func() error {
+	err := jobSe.RunInTxn(ctx, func() error {
 		var err error
 
 		// The `for update` here ensures two things:
@@ -449,7 +450,7 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 
 		intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
 		sql, args := setTTLTaskOwnerSQL(task.JobID, task.ScanID, m.id, now)
-		_, err = se.ExecuteSQL(ctx, sql, args...)
+		_, err = jobSe.ExecuteSQL(ctx, sql, args...)
 		if err != nil {
 			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
@@ -483,6 +484,7 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 }
 
 func (m *taskManager) syncTaskFromTable(se session.Session, jobID string, scanID int64, waitLock bool) (*cache.TTLTask, error) {
+	se = session.WithJob(se, jobID)
 	ctx := m.ctx
 
 	sql, args := cache.SelectFromTTLTaskWithID(jobID, scanID)
@@ -515,6 +517,7 @@ func (m *taskManager) updateHeartBeat(ctx context.Context, se session.Session, n
 }
 
 func (m *taskManager) taskHeartbeatOrResignOwner(ctx context.Context, se session.Session, now time.Time, task *runningScanTask, isResignOwner bool) error {
+	se = session.WithJob(se, task.JobID)
 	state := task.dumpNewTaskState()
 
 	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
@@ -631,6 +634,7 @@ func (m *taskManager) checkFinishedTask(se session.Session, now time.Time) {
 }
 
 func (m *taskManager) reportTaskFinished(se session.Session, now time.Time, task *runningScanTask) error {
+	se = session.WithJob(se, task.JobID)
 	state := task.dumpNewTaskState()
 
 	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
@@ -673,7 +677,7 @@ func (m *taskManager) checkInvalidTask(se session.Session) {
 		sql, args := cache.SelectFromTTLTaskWithID(task.JobID, task.ScanID)
 		l := logutil.Logger(m.ctx)
 		timeoutCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
-		rows, err := se.ExecuteSQL(timeoutCtx, sql, args...)
+		rows, err := session.WithJob(se, task.JobID).ExecuteSQL(timeoutCtx, sql, args...)
 		cancel()
 		if err != nil {
 			task.taskLogger(l).Warn("fail to execute sql", zap.String("sql", sql), zap.Any("args", args), zap.Error(err))

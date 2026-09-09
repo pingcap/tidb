@@ -587,6 +587,7 @@ func (m *JobManager) checkNotOwnJob() {
 }
 
 func (m *JobManager) findAllTasksForJob(se session.Session, jobID string) ([]*cache.TTLTask, error) {
+	se = session.WithJob(se, jobID)
 	timeoutJobCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
 	defer cancel()
 
@@ -674,7 +675,7 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 			zap.Int64("tableID", table.TableID),
 		)
 		logger.Info("try lock new job")
-		if _, err := m.lockHBTimeoutJob(m.ctx, se, table.TableID, table.ParentTableID, now); err != nil {
+		if _, err := m.lockHBTimeoutJob(m.ctx, session.WithJob(se, table.CurrentJobID), table.TableID, table.ParentTableID, now); err != nil {
 			logger.Warn("failed to lock heartbeat timeout job", zap.Error(err))
 		}
 	}
@@ -878,6 +879,7 @@ func (m *JobManager) lockHBTimeoutJob(ctx context.Context, se session.Session, t
 
 // lockNewJob locks a new job
 func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, jobID string, checkScheduleInterval bool) (*ttlJob, error) {
+	se = session.WithJob(se, jobID)
 	var expireTime time.Time
 	err := se.RunInTxn(ctx, func() error {
 		tableStatus, err := m.getTableStatusForUpdateNotWait(ctx, se, table.ID, table.TableInfo.ID, true)
@@ -1022,6 +1024,7 @@ func (m *JobManager) updateHeartBeat(ctx context.Context, se session.Session, no
 }
 
 func (m *JobManager) updateHeartBeatForJob(ctx context.Context, se session.Session, now time.Time, job *ttlJob) error {
+	se = session.WithJob(se, job.id)
 	if job.createTime.Add(ttlJobTimeout).Before(now) {
 		m.jobLogger(job).Info("job is timeout")
 		tasks, err := m.findAllTasksForJob(se, job.id)
@@ -1421,6 +1424,7 @@ func (a *managerJobAdapter) GetJob(ctx context.Context, tableID, physicalID int6
 }
 
 func (a *managerJobAdapter) getJobWithSession(ctx context.Context, se session.Session, tableID, physicalID int64, requestID string) (*TTLJobTrace, error) {
+	se = session.WithJob(se, requestID)
 	rows, err := se.ExecuteSQL(
 		ctx,
 		"select summary_text, status from mysql.tidb_ttl_job_history where table_id=%? AND parent_table_id=%? AND job_id=%?",

@@ -366,6 +366,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(RUV2TiKVStorageProcessedKeysGet)
 	prometheus.MustRegister(RUV2TiKVCoprocessorWorkTotal)
 	prometheus.MustRegister(RUV3Total)
+	prometheus.MustRegister(RUV3TTLTotal)
 	prometheus.MustRegister(RUV3BySQLType)
 	prometheus.MustRegister(RUV3ByEngine)
 	prometheus.MustRegister(RUV3Unit)

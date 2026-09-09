@@ -74,6 +74,30 @@ type session struct {
 	avoidReuse func()
 }
 
+type jobContextKey struct{}
+
+type jobSession struct {
+	Session
+	jobID string
+}
+
+// WithJob attributes SQL and transaction completion to a concrete TTL job.
+// Use the original session for global maintenance, even inside a job transaction.
+func WithJob(se Session, jobID string) Session {
+	if previous, ok := se.(*jobSession); ok {
+		se = previous.Session
+	}
+	return &jobSession{Session: se, jobID: jobID}
+}
+
+func (s *jobSession) ExecuteSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
+	return s.Session.ExecuteSQL(context.WithValue(ctx, jobContextKey{}, s.jobID), sql, args...)
+}
+
+func (s *jobSession) RunInTxn(ctx context.Context, fn func() error, mode TxnMode) error {
+	return s.Session.RunInTxn(context.WithValue(ctx, jobContextKey{}, s.jobID), fn, mode)
+}
+
 // NewSession creates a new Session
 func NewSession(sctx sessionctx.Context, avoidReuse func()) Session {
 	intest.AssertNotNil(sctx)
@@ -111,6 +135,10 @@ func (s *session) GetSQLExecutor() sqlexec.SQLExecutor {
 
 // ExecuteSQL executes the sql
 func (s *session) ExecuteSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
+	vars := s.GetSessionVars()
+	previousJobID := vars.TTLJobID
+	vars.TTLJobID, _ = ctx.Value(jobContextKey{}).(string)
+	defer func() { vars.TTLJobID = previousJobID }()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnTTL)
 	rs, err := s.sqlExec.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
@@ -137,8 +165,9 @@ func (s *session) RunInTxn(ctx context.Context, fn func() error, txnMode TxnMode
 		if !success {
 			// For now, the "ROLLBACK" can execute successfully even when the context has already been cancelled.
 			// Using another timeout context to avoid that this behavior will be changed in the future.
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			_, rollbackErr := s.ExecuteSQL(ctx, "ROLLBACK")
+			jobID, _ := ctx.Value(jobContextKey{}).(string)
+			rollbackCtx, cancel := context.WithTimeout(context.WithValue(context.Background(), jobContextKey{}, jobID), time.Second)
+			_, rollbackErr := s.ExecuteSQL(rollbackCtx, "ROLLBACK")
 			terror.Log(rollbackErr)
 			cancel()
 		}
