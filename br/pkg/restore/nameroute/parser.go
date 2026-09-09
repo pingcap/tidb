@@ -185,6 +185,9 @@ func validateIdentifier(identifier string, maxLength int) error {
 			return fmt.Errorf("identifier must not contain NUL")
 		}
 	}
+	if last, _ := utf8.DecodeLastRuneInString(identifier); unicode.IsSpace(last) {
+		return fmt.Errorf("identifier must not end with whitespace")
+	}
 	if utf8.RuneCountInString(identifier) > maxLength {
 		return fmt.Errorf("identifier %q exceeds the maximum length of %d characters", identifier, maxLength)
 	}

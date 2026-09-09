@@ -159,6 +159,13 @@ func buildRestoreNamePlan(
 	for _, object := range objects {
 		markMatched(object.Schema, object.Table)
 	}
+	rules := router.Rules()
+	for i, matched := range matchedRules {
+		if !matched {
+			return nil, errors.Annotatef(berrors.ErrInvalidArgument,
+				"restore rename rule for source %s does not match any selected object", formatRouteObject(rules[i].Source))
+		}
+	}
 
 	plan := &restoreNamePlan{
 		databases:    make([]*restoreutils.DatabaseRestorePlan, 0, len(dbs)),
@@ -241,13 +248,6 @@ func buildRestoreNamePlan(
 		}
 	}
 
-	rules := router.Rules()
-	for i, matched := range matchedRules {
-		if !matched {
-			return nil, errors.Annotatef(berrors.ErrInvalidArgument,
-				"restore rename rule for source %s does not match any selected object", formatRouteObject(rules[i].Source))
-		}
-	}
 	return plan, nil
 }
 
@@ -326,6 +326,13 @@ func buildPiTRRestoreNameSources(
 			if dbName, exists := history.GetDBNameByID(latest.DbID); exists {
 				sources.tables[tableID] = nameroute.ObjectName{
 					Schema: ast.NewCIStr(dbName),
+					Table:  ast.NewCIStr(latest.TableName),
+				}
+				continue
+			}
+			if db, exists := snapshotDBs[latest.DbID]; exists && db.Info != nil {
+				sources.tables[tableID] = nameroute.ObjectName{
+					Schema: db.Info.Name,
 					Table:  ast.NewCIStr(latest.TableName),
 				}
 				continue

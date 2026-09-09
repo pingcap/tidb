@@ -292,7 +292,7 @@ func hasRestoreRegistryRouteSchema(tableInfo *model.TableInfo) bool {
 		}
 	}
 
-	// During v284 both indexes coexist briefly. The legacy index does not
+	// During v287 both indexes coexist briefly. The legacy index does not
 	// include route_hash and would reject independent routes with the same
 	// source filter, so keep rename disabled until it is fully removed.
 	if tableInfo.FindIndexByName(restoreRegistryLegacyIndexName) != nil {
@@ -770,6 +770,11 @@ func (r *Registry) CheckTablesWithRegisteredTasksAndRoutes(
 		return nil
 	}
 
+	currentRouter, err := nameroute.Parse(currentRoutes)
+	if err != nil {
+		return errors.Annotate(err, "invalid current restore routes")
+	}
+
 	for _, regInfo := range registrations {
 		f, err := filter.Parse(regInfo.FilterStrings)
 		if err != nil {
@@ -779,16 +784,12 @@ func (r *Registry) CheckTablesWithRegisteredTasksAndRoutes(
 			continue
 		}
 
-		f = filter.CaseInsensitive(f)
-		currentRouter, err := nameroute.Parse(currentRoutes)
-		if err != nil {
-			return errors.Annotate(err, "invalid current restore routes")
-		}
 		registeredRouter, err := nameroute.Parse(regInfo.RouteStrings)
 		if err != nil {
 			return errors.Annotatef(err, "invalid routes in restore registration %d", regInfo.restoreID)
 		}
 
+		f = filter.CaseInsensitive(f)
 		// check if a table is already being restored
 		if err := r.checkForTableConflicts(tracker, dbs, tables, regInfo, f,
 			currentRouter, registeredRouter, restoreID); err != nil {

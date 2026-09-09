@@ -92,6 +92,7 @@ func TestParseRejectsInvalidRules(t *testing.T) {
 		{name: "unterminated quote", spec: "`a:b", message: "unterminated"},
 		{name: "empty quoted identifier", spec: "``:b", message: "must not be empty"},
 		{name: "unquoted punctuation", spec: "a-b:c", message: "inside backticks"},
+		{name: "quoted trailing space", spec: "`a`.`t1 `:b.t2", message: "end with whitespace"},
 		{name: "schema too long", spec: strings.Repeat("a", 65) + ":b", message: "maximum length"},
 		{name: "table too long", spec: "a." + strings.Repeat("t", 65) + ":b.c", message: "maximum length"},
 	}

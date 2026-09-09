@@ -46,8 +46,8 @@ type TableReplace struct {
 	TargetDBID     DownstreamID
 	HasForeignKeys bool
 	// ForeignKeyReferences contains source names observed while scanning log
-	// metadata. It is intentionally runtime-only for the first-stage rename
-	// support; old persisted ID maps therefore fall back to HasForeignKeys.
+	// metadata. It is persisted in the PiTR ID map so checkpoint retries retain
+	// the same routed-dependency validation information.
 	ForeignKeyReferences []ForeignKeyReference
 	IsView               bool
 	PartitionMap         map[UpstreamID]DownstreamID

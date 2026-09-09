@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -97,6 +98,7 @@ func TestToProto(t *testing.T) {
 	tr.TargetDBName = "db2"
 	tr.TargetDBID = 300
 	tr.HasForeignKeys = true
+	tr.ForeignKeyReferences = []ForeignKeyReference{{Schema: "db1", Table: "parent"}}
 	tr.IsView = true
 	tr.PartitionMap[oldPID1] = newPID1
 	tr.PartitionMap[oldPID2] = newPID2
@@ -129,6 +131,7 @@ func TestToProto(t *testing.T) {
 	require.Equal(t, tableMap[0].DownstreamDbName, tr.TargetDBName)
 	require.Equal(t, tableMap[0].DownstreamDbId, tr.TargetDBID)
 	require.Equal(t, tableMap[0].HasForeignKeys, tr.HasForeignKeys)
+	require.Equal(t, []*backuppb.PitrForeignKeyReference{{Schema: "db1", Table: "parent"}}, tableMap[0].ForeignKeyReferences)
 	require.Equal(t, tableMap[0].IsView, tr.IsView)
 	require.Equal(t, tableMap[0].FilteredOut, true)
 
@@ -1778,6 +1781,24 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 		require.Contains(t, tc.DBReplaceMap, autoRandomDBID)
 		require.Contains(t, tc.DBReplaceMap[autoRandomDBID].TableMap, autoRandomTableID)
 	})
+}
+
+func TestParseDBValueNormalizesForeignKeyReferences(t *testing.T) {
+	tm := NewTableMappingManager()
+	collector := NewMockMetaInfoCollector()
+	dbReplace := NewDBReplace("", 200)
+	tableReplace := NewTableReplace("child", 201)
+	tableReplace.ForeignKeyReferences = []ForeignKeyReference{
+		{Schema: "", Table: "parent"},
+		{Schema: "source", Table: "parent"},
+		{Schema: "SOURCE", Table: "PARENT"},
+	}
+	dbReplace.TableMap[100] = tableReplace
+	tm.DBReplaceMap[40] = dbReplace
+
+	require.NoError(t, tm.parseDBValueAndUpdateIdMapping(40, "source", 1, collector))
+	require.Equal(t, "source", dbReplace.Name)
+	require.Equal(t, []ForeignKeyReference{{Schema: "source", Table: "parent"}}, tableReplace.ForeignKeyReferences)
 }
 
 func TestTableHistoryManagerOutOfOrderTS(t *testing.T) {

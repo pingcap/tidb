@@ -359,9 +359,33 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(
 	}
 	if dbName != "" {
 		dbReplace.Name = dbName
+		normalizeForeignKeyReferences(dbReplace)
 	}
 	collector.OnDatabaseInfo(dbId, dbName, commitTs)
 	return nil
+}
+
+// normalizeForeignKeyReferences fills same-schema FK references after the
+// database metadata becomes available. Table metadata can be observed before
+// its DBInfo in the log stream, so references initially collected without a
+// schema must not remain unroutable.
+func normalizeForeignKeyReferences(dbReplace *DBReplace) {
+	for _, tableReplace := range dbReplace.TableMap {
+		seen := make(map[string]struct{}, len(tableReplace.ForeignKeyReferences))
+		references := tableReplace.ForeignKeyReferences[:0]
+		for _, ref := range tableReplace.ForeignKeyReferences {
+			if ref.Schema == "" {
+				ref.Schema = dbReplace.Name
+			}
+			key := strings.ToLower(ref.Schema) + "\x00" + strings.ToLower(ref.Table)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			references = append(references, ref)
+		}
+		tableReplace.ForeignKeyReferences = references
+	}
 }
 
 // getOrCreateDBReplace gets an existing DBReplace or creates a new one if not found
@@ -1216,6 +1240,13 @@ func (tm *TableMappingManager) ToProto() []*backuppb.PitrDBMap {
 				DownstreamDbName: tr.TargetDBName,
 				HasForeignKeys:   tr.HasForeignKeys,
 				IsView:           tr.IsView,
+				ForeignKeyReferences: func() []*backuppb.PitrForeignKeyReference {
+					refs := make([]*backuppb.PitrForeignKeyReference, 0, len(tr.ForeignKeyReferences))
+					for _, ref := range tr.ForeignKeyReferences {
+						refs = append(refs, &backuppb.PitrForeignKeyReference{Schema: ref.Schema, Table: ref.Table})
+					}
+					return refs
+				}(),
 				IdMap: &backuppb.IDMap{
 					UpstreamId:   tblID,
 					DownstreamId: tr.TableID,
@@ -1252,6 +1283,11 @@ func FromDBMapProto(dbMaps []*backuppb.PitrDBMap) map[UpstreamID]*DBReplace {
 			tr.TargetDBName = tbl.DownstreamDbName
 			tr.HasForeignKeys = tbl.HasForeignKeys
 			tr.IsView = tbl.IsView
+			for _, ref := range tbl.ForeignKeyReferences {
+				if ref != nil {
+					tr.ForeignKeyReferences = append(tr.ForeignKeyReferences, ForeignKeyReference{Schema: ref.Schema, Table: ref.Table})
+				}
+			}
 			tr.FilteredOut = tbl.FilteredOut
 			dr.TableMap[tbl.IdMap.UpstreamId] = tr
 			for _, p := range tbl.Partitions {

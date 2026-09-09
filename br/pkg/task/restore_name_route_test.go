@@ -64,6 +64,25 @@ func TestBuildRestoreNamePlanUsesPiTRLatestSourceName(t *testing.T) {
 	require.Equal(t, "snapshot_table", snapshotTable.Info.Name.O)
 }
 
+func TestBuildPiTRRestoreNameSourcesFallsBackToSnapshotDB(t *testing.T) {
+	snapshotDB := &metautil.Database{Info: &model.DBInfo{ID: 1, Name: ast.NewCIStr("snapshot_db")}}
+	snapshotTable := &metautil.Table{
+		DB:   snapshotDB.Info,
+		Info: &model.TableInfo{ID: 10, Name: ast.NewCIStr("snapshot_table")},
+	}
+	history := stream.NewTableHistoryManager()
+	history.AddTableHistory(10, "latest_table", 1, 100)
+	tracker := brutils.NewPiTRIdTracker()
+	tracker.TrackTableId(1, 10)
+
+	sources := buildPiTRRestoreNameSources(
+		history, tracker, []*metautil.Database{snapshotDB}, []*metautil.Table{snapshotTable})
+	require.Equal(t, nameroute.ObjectName{
+		Schema: ast.NewCIStr("snapshot_db"),
+		Table:  ast.NewCIStr("latest_table"),
+	}, sources.tables[10])
+}
+
 func TestApplyNameRoutesDistinguishesSchemaAndExactTableRules(t *testing.T) {
 	router, err := nameroute.Parse([]string{
 		"schema_source:schema_target",
