@@ -499,9 +499,13 @@ fn build_table_scan(
         // supplied all predicate column dependencies. The scan plan's
         // projection alone does not encode those dependencies, and pruning
         // here can leave a residual expression addressing a missing slot.
-        // Residual selections are built outside this source and their column
-        // offsets are expressed in the complete table schema. Do not invoke
-        // the mutating prune hook here; it cannot see those dependencies.
+        // Keep the complete scan row for residual selections, then project
+        // the final output after filtering.
+        if !source.accept_post_filter_projection(&keep) {
+            return Err(DriverError::unsupported(
+                "the physical table scan cannot apply its post-filter projection",
+            ));
+        }
     }
     if let Some(slot) = extra_handle_slot {
         if !source.accept_extra_handle(slot) {
