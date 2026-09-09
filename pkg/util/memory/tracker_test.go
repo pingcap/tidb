@@ -798,7 +798,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			tx.InitMemArbitrator(m, tx.Killer, buildDigestIDForTest("test sql x"), ArbitrationPriorityHigh, false, 0, false))
 		require.False(t, tx.MemArbitrator.useBigBudget())
 		require.True(t, tx.MemArbitrator.reserveSize == 0)
-		require.True(t, tx.MemArbitrator.prevMaxMem == 0)
+		require.True(t, tx.MemArbitrator.preMaxMem == 0)
 		require.True(t, m.awaitFreePoolUsed() == memPoolQuotaUsage{})
 		require.True(t, m.awaitFreePoolCap() == 0)
 		tx.Consume(13)
@@ -824,7 +824,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			tx.InitMemArbitrator(m, tx.Killer, buildDigestIDForTest("test sql x"), ArbitrationPriorityHigh, false, 0, false))
 		require.False(t, tx.MemArbitrator.useBigBudget())
 		require.True(t, tx.MemArbitrator.reserveSize == 0)
-		require.True(t, tx.MemArbitrator.prevMaxMem == oriMaxMem)
+		require.True(t, tx.MemArbitrator.preMaxMem == oriMaxMem)
 		tx.Consume(7)
 		require.True(t, tx.MemArbitrator.smallBudgetUsed() == 7)
 		tx.Consume(newLimit/1000 + 1)
@@ -839,7 +839,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			tx.InitMemArbitrator(m, tx.Killer, buildDigestIDForTest("test sql 1"), ArbitrationPriorityHigh, false, 0, false))
 		require.True(t, tx.MemArbitrator.useBigBudget())
 		require.True(t, tx.MemArbitrator.reserveSize == 0)
-		require.Equal(t, profile, tx.MemArbitrator.prevMaxMem)
+		require.Equal(t, profile, tx.MemArbitrator.preMaxMem)
 		tx.Detach()
 		require.True(t, RemovePoolFromGlobalMemArbitrator(tx.MemArbitrator.uid))
 		require.True(t, m.digestProfileCache.num.Load() == 2)
@@ -1078,7 +1078,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			t1.InitMemArbitrator(m, t1.Killer, InvalidDigestID, ArbitrationPriorityMedium, false, 0, true))
 		require.True(t, globalArbitrator.metrics.pools.internal.Load() == 1)
 
-		t1.MemArbitrator.prevMaxMem = 1 // mock set prev max mem to trigger reserve big budget
+		t1.MemArbitrator.preMaxMem = 1 // mock set prev max mem to trigger reserve big budget
 		require.True(t, t1.MemArbitrator.state.Load() == memArbitratorStateSmallBudget)
 		t1.Consume(1e5)
 		require.True(t, t1.bytesConsumed == 1e5)

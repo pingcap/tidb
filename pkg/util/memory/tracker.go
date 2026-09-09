@@ -987,7 +987,7 @@ type memArbitrator struct {
 		atomic.Int32 // states: the current state of memArbitrator
 		reset        func()
 	}
-	prevMaxMem int64
+	preMaxMem int64
 
 	AwaitAlloc struct {
 		TotalDur   atomic.Int64 // total time spent waiting for memory allocation in nanoseconds
@@ -1092,7 +1092,7 @@ func (m *memArbitrator) growBigBudget() {
 			if err := upper.Pool.allocate(extra); err == nil {
 				capacity += extra
 				m.doSetBigBudgetCap(capacity)
-				m.setBigBudgetGrowThreshold(max(capacity*95/100, used))
+				m.setBigBudgetGrowThreshold(max(capacity*90/100, used))
 			}
 			duration = time.Now().UnixNano() - m.AwaitAlloc.StartUtime
 			m.AwaitAlloc.StartUtime = 0
@@ -1136,7 +1136,7 @@ func (m *memArbitrator) intoBigBudget() bool {
 
 	m.state.Store(memArbitratorStateIntoBigBudget)
 
-	if maxMemHint := max(m.prevMaxMem, smallUsed); maxMemHint > 0 {
+	if maxMemHint := max(m.preMaxMem, smallUsed); maxMemHint > 0 {
 		m.updateBuffer(maxMemHint)
 	}
 
@@ -1158,9 +1158,9 @@ func (m *memArbitrator) intoBigBudget() bool {
 	if m.reserveSize > 0 {
 		m.reserveBigBudget(m.reserveSize)
 		metrics.GlobalMemArbitratorSubEvents.PoolInitReserve.Inc()
-	} else if m.prevMaxMem > 0 {
+	} else if m.preMaxMem > 0 {
 		metrics.GlobalMemArbitratorSubEvents.PoolInitHitDigest.Inc()
-		m.reserveBigBudget(m.prevMaxMem)
+		m.reserveBigBudget(m.preMaxMem)
 	} else if m.bigBudgetUsed() > m.poolAllocStats.SmallPoolLimit {
 		if initCap := m.SuggestPoolInitCap(); initCap != 0 {
 			m.reserveBigBudget(initCap)
@@ -1193,13 +1193,13 @@ func (m *memArbitrator) reserveBigBudget(newCap int64) {
 		upper.Lock()
 
 		capacity := m.bigBudgetCap()
-		extra := max(newCap*1053/1000, m.bigBudgetGrowThreshold(), capacity, m.bigBudgetUsed()*1053/1000) - capacity
+		extra := max(newCap*1100/1000, m.bigBudgetGrowThreshold(), capacity, m.bigBudgetUsed()*1100/1000) - capacity
 		m.AwaitAlloc.StartUtime = time.Now().UnixNano()
 		m.AwaitAlloc.Size = extra
 		if err := upper.Pool.allocate(extra); err == nil {
 			capacity += extra
 			m.doSetBigBudgetCap(capacity)
-			m.setBigBudgetGrowThreshold(capacity * 95 / 100)
+			m.setBigBudgetGrowThreshold(capacity * 90 / 100)
 		}
 		duration = time.Now().UnixNano() - m.AwaitAlloc.StartUtime
 		m.AwaitAlloc.StartUtime = 0
@@ -1318,7 +1318,7 @@ func (t *Tracker) InitMemArbitrator(
 
 	if explicitReserveSize == 0 && digestID != InvalidDigestID {
 		if maxMem, found := g.GetDigestProfileCache(digestID, g.approxUnixTimeSec()); found {
-			m.prevMaxMem = maxMem
+			m.preMaxMem = maxMem
 		}
 	}
 
@@ -1327,7 +1327,7 @@ func (t *Tracker) InitMemArbitrator(
 		globalArbitrator.metrics.pools.internal.Add(1)
 	}
 
-	if explicitReserveSize > 0 || m.prevMaxMem > g.poolAllocStats.SmallPoolLimit {
+	if explicitReserveSize > 0 || m.preMaxMem > g.poolAllocStats.SmallPoolLimit {
 		m.intoBigBudget()
 	} else {
 		m.budget.smallB = g.GetAwaitFreeBudgets(uid)
@@ -1357,11 +1357,11 @@ func (m *memArbitrator) MemUsage() (res MemUsage) {
 		return MemUsage{
 			RootPoolUsed: used,
 			HeapInuse:    used,
-			MaxHeapUsed:  max(m.maxUsed.Load(), m.prevMaxMem),
+			MaxHeapUsed:  max(m.maxUsed.Load(), m.preMaxMem),
 		}
 	}
 	return MemUsage{
 		HeapInuse:   max(m.smallBudgetUsed(), m.bigBudgetUsed()),
-		MaxHeapUsed: max(m.maxUsed.Load(), m.prevMaxMem),
+		MaxHeapUsed: max(m.maxUsed.Load(), m.preMaxMem),
 	}
 }

@@ -19,7 +19,6 @@ import (
 	"hash"
 	"hash/fnv"
 	"math"
-	"runtime"
 	"strconv"
 	"unsafe"
 
@@ -27,10 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/serialization"
-	"go.uber.org/zap"
 )
 
 type preAllocHelper struct {
@@ -486,7 +482,7 @@ func calculateFakeLength(rowLength int64) int64 {
 	return (8 - rowLength%8) % 8
 }
 
-func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2) error {
+func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2) {
 	for i := range b.helpers {
 		b.helpers[i].reset()
 	}
@@ -523,48 +519,12 @@ func (b *rowTableBuilder) preAllocForSegments(segs []*rowTableSegment, chk *chun
 
 	hashJoinCtx.hashTableContext.memoryTracker.Consume(totalMemUsage)
 
-	check := func() error {
-		return nil
-	}
-	if memory.UsingGlobalMemArbitration() && totalMemUsage > int64(memory.ServerMemoryLimit.Load())/20 {
-		logutil.BgLogger().Info("row table build memory usage exceeds 5% of server memory limit, trigger memory arbitrator", zap.Int64("memoryUsage", totalMemUsage), zap.Int64("memoryLimit", int64(memory.ServerMemoryLimit.Load())))
-		check = func() error {
-			memory.Run2()
-			if killer := &hashJoinCtx.SessCtx.GetSessionVars().SQLKiller; killer.GetKillSignal() != 0 {
-				logutil.BgLogger().Warn("SQL killed during row table build due to memory limit", zap.Uint64("sessionID", hashJoinCtx.SessCtx.GetSessionVars().ConnectionID), zap.Int64("memoryUsage", totalMemUsage), zap.Int64("memoryLimit", int64(memory.ServerMemoryLimit.Load())))
-				for _, seg := range segs {
-					seg.rawData = nil
-					seg.hashValues = nil
-					seg.rowStartOffset = nil
-					seg.validJoinKeyPos = nil
-				}
-				runtime.GC()
-				hashJoinCtx.hashTableContext.memoryTracker.Consume(-totalMemUsage)
-				return killer.HandleSignal()
-			}
-			return nil
-		}
-	}
-
 	for partIdx, seg := range segs {
 		seg.rawData = make([]byte, 0, b.helpers[partIdx].rawDataLen)
-		if err := check(); err != nil {
-			return err
-		}
 		seg.hashValues = make([]uint64, 0, b.helpers[partIdx].totalRowNum)
-		if err := check(); err != nil {
-			return err
-		}
 		seg.rowStartOffset = make([]uint64, 0, b.helpers[partIdx].totalRowNum)
-		if err := check(); err != nil {
-			return err
-		}
 		seg.validJoinKeyPos = make([]int, 0, b.helpers[partIdx].validRowNum)
-		if err := check(); err != nil {
-			return err
-		}
 	}
-	return nil
 }
 
 func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJoinCtxV2, workerID int) (err error) {
@@ -581,10 +541,7 @@ func (b *rowTableBuilder) appendToRowTable(chk *chunk.Chunk, hashJoinCtx *HashJo
 		}
 	}()
 
-	err = b.preAllocForSegments(segs, chk, hashJoinCtx)
-	if err != nil {
-		return err
-	}
+	b.preAllocForSegments(segs, chk, hashJoinCtx)
 
 	rowTableMeta := hashJoinCtx.hashTableMeta
 	for logicalRowIndex, physicalRowIndex := range b.usedRows {
