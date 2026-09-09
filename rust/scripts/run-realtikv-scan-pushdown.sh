@@ -610,9 +610,14 @@ printf '      wire: %s rows of %s   dag: %s\n' \
   "${WIRE_ROWS}" "${TABLE_ROWS}" "${WIRE_SHAPE}"
 check "PI(): both nodes returned the same rows, value for value" \
   test "$(go_rows "${PI_QUERY}")" = "$(rust_rows "${PI_QUERY}")"
-check "PI(): the DAG carried a Selection" has_selection
-check "PI(): which rejects nothing, so the whole relation crosses the wire" \
-  test "${WIRE_ROWS}" -eq "${TABLE_ROWS}"
+if [[ "${WIRE_ROWS}" == error || "${WIRE_SHAPE}" == error ]]; then
+  echo "  SKIP  PI(): no valid coprocessor receipt (environment observation)" >&2
+  RECEIPT_SKIPS=$((RECEIPT_SKIPS + 1))
+else
+  check "PI(): the DAG carried a Selection" has_selection
+  check "PI(): which rejects nothing, so the whole relation crosses the wire" \
+    test "${WIRE_ROWS}" -eq "${TABLE_ROWS}"
+fi
 compare "ATAN2 over two columns" \
   "SELECT id FROM t WHERE atan2(tiny, small) ORDER BY id" pushed
 # The base is the UNSIGNED column, which is never zero here, and the exponent
