@@ -564,6 +564,15 @@ func TestAuditLogNormal(t *testing.T) {
 			rows:     2,
 		},
 		{
+			// An INSERT ... RETURNING is executed without delay but still returns a
+			// record set, so it must be reported exactly once, not once per path.
+			sql:      "INSERT INTO t1 VALUES (5) RETURNING a",
+			stmtType: "Insert",
+			dbs:      "test",
+			tables:   "t1",
+			rows:     1,
+		},
+		{
 			sql:      "DELETE FROM t1 WHERE a = 2",
 			stmtType: "Delete",
 			dbs:      "test",

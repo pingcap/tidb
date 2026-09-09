@@ -409,11 +409,11 @@ type ExecStmt struct {
 	isSelectForUpdate bool
 	retryCount        uint
 	retryStartTime    time.Time
-	// auditLogged guards against reporting the same statement twice, which would otherwise
-	// happen for a statement executed without delay that still returns a record set, such
-	// as INSERT ... RETURNING: it is reported once when it finishes executing and once when
-	// the record set is closed.
-	auditLogged bool
+	// auditReported records that the statement has already been reported to the audit
+	// plugins while it was executed, so closing its record set must not report it a
+	// second time. Only a statement that both runs on the no-delay path and returns rows
+	// takes both routes, which today means INSERT ... RETURNING.
+	auditReported bool
 
 	// Phase durations are splited into two parts: 1. trying to lock keys (but
 	// failed); 2. the final iteration of the retry loop. Here we use
@@ -1128,6 +1128,9 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e exec.Executor, isPessimi
 		if cteErr := resetCTEStorageMap(a.Ctx); cteErr != nil {
 			return handled, nil, cteErr
 		}
+		// The statement has been reported to the audit plugins by the execution above;
+		// closing the record set must not report it again.
+		a.auditReported = true
 		return handled, &chunkRowRecordSet{rows: rows, e: toCheck, execStmt: a}, nil
 	} else if proj, ok := toCheck.(*ProjectionExec); ok && proj.calculateNoDelay {
 		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
@@ -1270,6 +1273,8 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e exec.Exe
 	return nil, err
 }
 
+// handleNoDelayExecutor runs a statement that returns no result to the client, plus an
+// INSERT ... RETURNING, whose rows the caller collects once this returns.
 func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (sqlexec.RecordSet, error) {
 	sctx := a.Ctx
 	r, ctx := tracing.StartRegionEx(ctx, "executor.handleNoDelayExecutor")
@@ -1706,10 +1711,6 @@ func (a *ExecStmt) logAudit() {
 	if sessVars.InRestrictedSQL {
 		return
 	}
-	if a.auditLogged {
-		return
-	}
-	a.auditLogged = true
 
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
@@ -2049,7 +2050,9 @@ func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	failpoint.InjectCall("observeCloseRecordSetForTest", a, &lastErr)
 	a.FinishExecuteStmt(txnStartTS, lastErr, false)
-	a.logAudit()
+	if !a.auditReported {
+		a.logAudit()
+	}
 	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
 }
 
