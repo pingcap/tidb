@@ -1666,14 +1666,15 @@ TiDBResourceControlDash
   ,
   gridPos=rowPos
 ).addPanel(
+  // Distinct row positions preserve panel pairs when Grafana expands the row.
   clientRow/* Client */
   .addPanel(ActiveResourceGroupPanel, gridPos=fullPanelPos)
-  .addPanel(TotalKVRequestCountPanel, gridPos=leftPanelPos)
-  .addPanel(FailedKVRequestCountPanel, gridPos=rightPanelPos)
-  .addPanel(SuccessfulKVRequestWaitDurationPanel, gridPos=leftPanelPos)
-  .addPanel(SuccessfulKVRequestCountPanel, gridPos=rightPanelPos)
-  .addPanel(TokenRequestHandleDurationPanel, gridPos=leftPanelPos)
-  .addPanel(TokenRequestCountPanel, gridPos=rightPanelPos)
+  .addPanel(TotalKVRequestCountPanel, gridPos=leftPanelPos { y: 1 * panelH })
+  .addPanel(FailedKVRequestCountPanel, gridPos=rightPanelPos { y: 1 * panelH })
+  .addPanel(SuccessfulKVRequestWaitDurationPanel, gridPos=leftPanelPos { y: 2 * panelH })
+  .addPanel(SuccessfulKVRequestCountPanel, gridPos=rightPanelPos { y: 2 * panelH })
+  .addPanel(TokenRequestHandleDurationPanel, gridPos=leftPanelPos { y: 3 * panelH })
+  .addPanel(TokenRequestCountPanel, gridPos=rightPanelPos { y: 3 * panelH })
   ,
   gridPos=rowPos
 ){
@@ -1682,7 +1683,7 @@ TiDBResourceControlDash
   // Append Client RU with a new ID to preserve links to existing panels.
   panels: [
     if panel.title == "Client" then
-      panel { panels+: [ClientRUPanel { id: 65, gridPos: fullPanelPos }] }
+      panel { panels+: [ClientRUPanel { id: 65, gridPos: fullPanelPos { y: 4 * panelH } }] }
     else panel
     for panel in super.panels
   ] + [
