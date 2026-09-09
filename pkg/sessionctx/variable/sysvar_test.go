@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
+	tikvclient "github.com/tikv/client-go/v2/tikv"
 )
 
 func TestSQLSelectLimit(t *testing.T) {
@@ -1858,4 +1859,26 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTiDBEnableClientSideSlowScore(t *testing.T) {
+	sv := GetSysVar(TiDBEnableClientSideSlowScore)
+	vars := NewSessionVars(nil)
+
+	// The switch is process-wide, so put it back however this test found it.
+	defer tikvclient.SetClientSideSlowScoreDisabled(tikvclient.IsClientSideSlowScoreDisabled())
+
+	require.Equal(t, BoolToOnOff(DefTiDBEnableClientSideSlowScore), sv.Value)
+
+	require.NoError(t, sv.SetGlobalFromHook(context.Background(), vars, "OFF", true))
+	require.True(t, tikvclient.IsClientSideSlowScoreDisabled())
+	val, err := sv.GetGlobalFromHook(context.Background(), vars)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+
+	require.NoError(t, sv.SetGlobalFromHook(context.Background(), vars, "ON", true))
+	require.False(t, tikvclient.IsClientSideSlowScoreDisabled())
+	val, err = sv.GetGlobalFromHook(context.Background(), vars)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
 }
