@@ -345,6 +345,8 @@ func TestStoreWriteLimiter(t *testing.T) {
 	}
 	wg.Wait()
 
+	// Regression test for getLimiter's double-check: disabling the limit while it waits
+	// for the write lock must not return or register a limiter.
 	t.Run("disable while creating limiter", func(t *testing.T) {
 		limiter := newStoreWriteLimiter(100)
 		beforeLock := make(chan struct{})

@@ -227,13 +227,13 @@ func (s *storeWriteLimiter) getLimiter(storeID uint64) *rate.Limiter {
 	if s.limit.Load() == 0 {
 		return nil
 	}
-	failpoint.InjectCall("beforeStoreWriteLimiterLock")
 	s.rwm.RLock()
 	limiter, ok := s.limiters[storeID]
 	s.rwm.RUnlock()
 	if ok {
 		return limiter
 	}
+	failpoint.InjectCall("beforeStoreWriteLimiterLock")
 	s.rwm.Lock()
 	defer s.rwm.Unlock()
 	// The limit may have been disabled while getLimiter was waiting for the write lock.
