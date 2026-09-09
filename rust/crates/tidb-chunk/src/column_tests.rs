@@ -1688,3 +1688,9 @@ fn go_test_column_resize_int64() {
     col.append_uint64(32);
     assert_eq!(col.null_bitmap, vec![0b1000_0000, 0b1]);
 }
+
+#[test]
+fn zero_value_variable_column_reads_as_empty_bytes() {
+    let column = Column::default();
+    assert!(column.get_bytes(0).is_empty());
+}

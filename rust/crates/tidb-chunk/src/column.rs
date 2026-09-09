@@ -612,8 +612,14 @@ impl Column {
     /// TiDB strings are arbitrary byte sequences. The returned guard behaves
     /// like a byte slice while keeping shared storage stable for its borrow.
     pub fn get_bytes(&self, row_id: usize) -> ColumnBytes<'_> {
-        let start = self.offsets[row_id] as usize;
-        let end = self.offsets[row_id + 1] as usize;
+        // Go's zero-value variable column represents an empty cell with an
+        // empty data slice. Treat an uninitialized offsets vector the same
+        // way so a reused zero-row column cannot panic while reading row 0.
+        let (start, end) = if self.offsets.is_empty() {
+            (0, 0)
+        } else {
+            (self.offsets[row_id] as usize, self.offsets[row_id + 1] as usize)
+        };
         ColumnBytes {
             storage: ColumnBytesStorage::Borrowed(self.data.read()),
             start,
