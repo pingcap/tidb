@@ -105,9 +105,12 @@ if [[ -z "${TIDB_SERVER}" ]] || [[ ! -x "${TIDB_SERVER}" ]]; then
   exit 1
 fi
 TIDB_SERVER_WRAPPER="${TMPDIR:-/tmp}/lock-recovery-tidb-server-${$}"
+TIDB_AUTH_FILE="${TMPDIR:-/tmp}/lock-recovery-auth-${$}.tsv"
+printf 'root\t\n' >"${TIDB_AUTH_FILE}"
+chmod 600 "${TIDB_AUTH_FILE}"
 cat >"${TIDB_SERVER_WRAPPER}" <<EOF
 #!/bin/sh
-exec "${TIDB_SERVER}" "\$@" --read-table test lock_recovery 1 1 id:1:clustered-pk 0
+exec "${TIDB_SERVER}" "\$@" --auth-file "${TIDB_AUTH_FILE}" --read-table test lock_recovery 1 1 id:1:clustered-pk 0
 EOF
 chmod +x "${TIDB_SERVER_WRAPPER}"
 TIDB_SERVER="${TIDB_SERVER_WRAPPER}"
