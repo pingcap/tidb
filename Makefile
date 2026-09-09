@@ -14,6 +14,9 @@
 
 include Makefile.common
 
+# Define this before SERVER_BUILD_CMD captures its linker flags with :=.
+# Homebrew C linker search paths are not Go linker directives.
+GO_LDFLAGS = $(filter-out -L%, $(LDFLAGS))
 
 .DEFAULT_GOAL := default
 
@@ -578,11 +581,6 @@ gen_mock: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/domain/sqlsvrapi Server > pkg/domain/sqlsvrapi/mock/server_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/domain/sqlsvrapi Runtime > pkg/domain/sqlsvrapi/mock/runtime_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/domain/sqlsvrapi KSRuntimeHandle > pkg/domain/sqlsvrapi/mock/ksruntime_mock.go
-
-# Go's external linker flags are distinct from CGO's C linker flags.  In local
-# macOS builds LDFLAGS commonly contains ICU `-L` paths, which Go rejects when
-# passed through `-ldflags`; retain only Go linker directives here.
-GO_LDFLAGS = $(filter-out -L%, $(LDFLAGS))
 
 # There is no FreeBSD environment for GitHub actions. So cross-compile on Linux
 # but that doesn't work with CGO_ENABLED=1, so disable cgo. The reason to have
