@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -339,7 +338,7 @@ type builtinInStringSig struct {
 func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewStringSet()
-	collator := collate.GetCollator(b.collation)
+	collator := b.collator()
 
 	// Keep track of unique args count for in-place modification
 	uniqueArgCount := 1 // Start with 1 for the first arg (value to check)
@@ -407,7 +406,7 @@ func (b *builtinInStringSig) evalInt(ctx EvalContext, row chunk.Row) (int64, boo
 	}
 
 	args := b.args[1:]
-	collator := collate.GetCollator(b.collation)
+	collator := b.collator()
 	if len(b.hashSet) != 0 {
 		if b.hashSet.Exist(string(collator.Key(arg0))) {
 			return 1, false, nil
@@ -428,7 +427,7 @@ func (b *builtinInStringSig) evalInt(ctx EvalContext, row chunk.Row) (int64, boo
 			hasNull = true
 			continue
 		}
-		if types.CompareString(arg0, evaledArg, b.collation) == 0 {
+		if b.collator().Compare(arg0, evaledArg) == 0 {
 			return 1, false, nil
 		}
 	}

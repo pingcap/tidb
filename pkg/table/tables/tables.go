@@ -273,19 +273,10 @@ func (t *TableCommon) initTableIndices() error {
 		}
 
 		// Use partition ID for index, because TableCommon may be table or partition.
-		idx, err := NewIndexWithCollate(t.encoder.UseNewCollate(), t.physicalTableID, tblInfo, idxInfo)
+		idx, err := newIndex(t.physicalTableID, tblInfo, idxInfo, t.encoder.UseNewCollate())
 		if err != nil {
 			return err
 		}
-		intest.AssertFunc(func() bool {
-			// `TableCommon.indices` is type of `[]table.Index` to implement interface method `Table.Indices`.
-			// However, we have an assumption that the specific type of each element in it should always be `*index`.
-			// We have this assumption because some codes access the inner method of `*index`,
-			// and they use `asIndex` to cast `table.Index` to `*index`.
-			_, ok := idx.(*index)
-			intest.Assert(ok, "index should be type of `*index`")
-			return true
-		})
 		t.indices = append(t.indices, idx)
 	}
 	return nil
@@ -523,7 +514,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	key := t.RecordKey(h)
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
-	err = encodeRowBuffer.WriteMemBufferEncoded(t.encoder, sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, h)
+	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, h)
 	if err != nil {
 		return err
 	}
@@ -928,7 +919,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		}
 	}
 
-	err = encodeRowBuffer.WriteMemBufferEncoded(t.encoder, sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, recordID, flags...)
+	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, recordID, flags...)
 	if err != nil {
 		return nil, err
 	}
@@ -1529,19 +1520,15 @@ func (t *TableCommon) UseNewCollate() bool {
 	return t.encoder.UseNewCollate()
 }
 
+// canSkip reports whether a column can be omitted from the encoded row: it is
+// represented by the handle, has an absent NULL default, or is virtual generated.
 func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
-	return CanSkip(t.encoder.UseNewCollate(), t.Meta(), col, value)
-}
-
-// CanSkip is for these cases, we can skip the columns in encoded row:
-// 1. the column is included in primary key;
-// 2. the column's default value is null, and the value equals to that but has no origin default;
-// 3. the column is virtual generated.
-func CanSkip(useNewCollate bool, info *model.TableInfo, col *table.Column, value *types.Datum) bool {
+	info := t.Meta()
 	if col.IsPKHandleColumn(info) {
 		return true
 	}
 	if col.IsCommonHandleColumn(info) {
+		useNewCollate := t.encoder.UseNewCollate()
 		pkIdx := FindPrimaryIndex(info)
 		for _, idxCol := range pkIdx.Columns {
 			if info.Columns[idxCol.Offset].ID != col.ID {
