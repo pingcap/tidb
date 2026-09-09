@@ -141,7 +141,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "The metrics about request unit cost for all resource groups.",
+               "description": "The metrics about request unit consumption per second for all resource groups, using the last two samples within 30 seconds.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -178,32 +178,32 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
+                     "expr": "sum(irate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[30s])) by (resource_group) + sum(irate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[30s])) by (resource_group)",
                      "format": "time_series",
-                     "intervalFactor": 2,
+                     "intervalFactor": 1,
                      "legendFormat": "{{resource_group}}",
                      "refId": "A"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[1m]))",
+                     "expr": "sum(irate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[30s])) + sum(irate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[30s]))",
                      "format": "time_series",
-                     "intervalFactor": 2,
+                     "intervalFactor": 1,
                      "legendFormat": "total",
                      "refId": "B"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\", resource_group=~\"$resource_group\"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
+                     "expr": "sum(irate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\", resource_group=~\"$resource_group\"}[30s])) by (resource_group) + sum(irate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\", resource_group=~\"$resource_group\"}[30s])) by (resource_group)",
                      "format": "time_series",
                      "hide": true,
-                     "intervalFactor": 2,
+                     "intervalFactor": 1,
                      "legendFormat": "ap-{{resource_group}}",
                      "refId": "C"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\"}[1m]))",
+                     "expr": "sum(irate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\"}[30s])) + sum(irate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\"}[30s]))",
                      "format": "time_series",
                      "hide": true,
-                     "intervalFactor": 2,
+                     "intervalFactor": 1,
                      "legendFormat": "ap-total",
                      "refId": "D"
                   }
@@ -452,7 +452,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "The read request unit cost for all resource groups.",
+               "description": "The read request unit consumption per second for all resource groups, using the last two samples within 30 seconds.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -489,32 +489,32 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
+                     "expr": "sum(irate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[30s])) by (resource_group)",
                      "format": "time_series",
-                     "intervalFactor": 2,
+                     "intervalFactor": 1,
                      "legendFormat": "{{resource_group}}",
                      "refId": "A"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[1m]))",
+                     "expr": "sum(irate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[30s]))",
                      "format": "time_series",
-                     "intervalFactor": 2,
+                     "intervalFactor": 1,
                      "legendFormat": "total",
                      "refId": "B"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
+                     "expr": "sum(irate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\", resource_group=~\"$resource_group\"}[30s])) by (resource_group)",
                      "format": "time_series",
                      "hide": true,
-                     "intervalFactor": 2,
+                     "intervalFactor": 1,
                      "legendFormat": "ap-{{resource_group}}",
                      "refId": "C"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\"}[1m]))",
+                     "expr": "sum(irate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\"}[30s]))",
                      "format": "time_series",
                      "hide": true,
-                     "intervalFactor": 2,
+                     "intervalFactor": 1,
                      "legendFormat": "ap-total",
                      "refId": "D"
                   }
@@ -670,7 +670,7 @@
                "dashLength": 10,
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
-               "description": "The write request unit cost for all resource groups.",
+               "description": "The write request unit consumption per second for all resource groups, using the last two samples within 30 seconds.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
@@ -707,32 +707,32 @@
                "steppedLine": false,
                "targets": [
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
+                     "expr": "sum(irate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[30s])) by (resource_group)",
                      "format": "time_series",
-                     "intervalFactor": 2,
+                     "intervalFactor": 1,
                      "legendFormat": "{{resource_group}}",
                      "refId": "A"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[1m]))",
+                     "expr": "sum(irate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[30s]))",
                      "format": "time_series",
-                     "intervalFactor": 2,
+                     "intervalFactor": 1,
                      "legendFormat": "total",
                      "refId": "B"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
+                     "expr": "sum(irate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\", resource_group=~\"$resource_group\"}[30s])) by (resource_group)",
                      "format": "time_series",
                      "hide": true,
-                     "intervalFactor": 2,
+                     "intervalFactor": 1,
                      "legendFormat": "ap-{{resource_group}}",
                      "refId": "C"
                   },
                   {
-                     "expr": "sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\"}[1m]))",
+                     "expr": "sum(irate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\"}[30s]))",
                      "format": "time_series",
                      "hide": true,
-                     "intervalFactor": 2,
+                     "intervalFactor": 1,
                      "legendFormat": "ap-total",
                      "refId": "D"
                   }
@@ -2324,6 +2324,92 @@
                   {
                      "format": "short",
                      "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "short",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "Net client request RU consumption per second by TiDB instance, using the last two samples within 30 seconds. Refunds are subtracted and can make the net rate negative. Includes KV request accounting across request sources and resource groups selected above; it differs from server-reported RU and excludes SQL CPU RU. Requires at least two scrapes within 30 seconds.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 24,
+                  "x": 0,
+                  "y": 0
+               },
+               "id": 54,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": true,
+                  "current": true,
+                  "max": true,
+                  "min": true,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "sum(irate(resource_manager_client_request_ru_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", direction=\"consume\"}[30s]) or -irate(resource_manager_client_request_ru_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\", direction=\"refund\"}[30s])) by (instance)",
+                     "format": "time_series",
+                     "intervalFactor": 1,
+                     "legendFormat": "{{instance}}",
+                     "refId": "A"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Client RU",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "short",
+                     "label": "RU/s",
                      "logBase": 1,
                      "max": null,
                      "min": null,

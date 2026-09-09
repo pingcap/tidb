@@ -215,31 +215,36 @@ local RUPanel = graphPanel.new(
   legend_alignAsTable=true,
   legend_values=true,
   format="short",
-  description="The metrics about request unit cost for all resource groups.",
+  description="The metrics about request unit consumption per second for all resource groups, using the last two samples within 30 seconds.",
   logBase1Y=10,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    'sum(irate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[30s])) by (resource_group) + sum(irate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[30s])) by (resource_group)',
+    intervalFactor=1,
     legendFormat="tp-{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m]))',
+    'sum(irate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[30s])) + sum(irate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[30s]))',
+    intervalFactor=1,
     legendFormat="tp-total",
   )
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap", resource_group=~"$resource_group"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    'sum(irate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap", resource_group=~"$resource_group"}[30s])) by (resource_group) + sum(irate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap", resource_group=~"$resource_group"}[30s])) by (resource_group)',
+    intervalFactor=1,
     legendFormat="ap-{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap"}[1m]))',
+    'sum(irate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap"}[30s])) + sum(irate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap"}[30s]))',
+    intervalFactor=1,
     legendFormat="ap-total",
   )
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap|tp"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap|tp"}[1m]))',
+    'sum(irate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap|tp"}[30s])) + sum(irate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|ap|tp"}[30s]))',
+    intervalFactor=1,
     legendFormat="total",
   )
 );
@@ -302,16 +307,18 @@ local RRUPanel = graphPanel.new(
   legend_alignAsTable=true,
   legend_values=true,
   format="short",
-  description="The read request unit cost for all resource groups.",
+  description="The read request unit consumption per second for all resource groups, using the last two samples within 30 seconds.",
   logBase1Y=10,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    'sum(irate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[30s])) by (resource_group)',
+    intervalFactor=1,
     legendFormat="{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m]))',
+    'sum(irate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[30s]))',
+    intervalFactor=1,
     legendFormat="total",
   )
 );
@@ -352,16 +359,18 @@ local WRUPanel = graphPanel.new(
   legend_alignAsTable=true,
   legend_values=true,
   format="short",
-  description="The write request unit cost for all resource groups.",
+  description="The write request unit consumption per second for all resource groups, using the last two samples within 30 seconds.",
   logBase1Y=10,
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[1m])) by (resource_group)',
+    'sum(irate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp", resource_group=~"$resource_group"}[30s])) by (resource_group)',
+    intervalFactor=1,
     legendFormat="{{resource_group}}",
   )
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[1m]))',
+    'sum(irate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type=~"|tp"}[30s]))',
+    intervalFactor=1,
     legendFormat="total",
   )
 );
@@ -660,10 +669,36 @@ local CrossAZTrafficWrite = graphPanel.new(
 //*  ==============Panel (Client)==================
 //*  Row Title: Client
 //*  Description:  The metrics about resource control client
-//*  Panels: 7
+//*  Panels: 8
 //*  ==============Panel (Client)==================
 
 local clientRow = row.new(collapse=true, title="Client");
+
+// Union the disjoint direction series before aggregating: refunds are positive
+// counters, and either direction may be absent because counters are created lazily.
+local clientRUConsumed = 'irate(resource_manager_client_request_ru_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group", direction="consume"}[30s])';
+local clientRURefunded = 'irate(resource_manager_client_request_ru_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group", direction="refund"}[30s])';
+
+local ClientRUPanel = graphPanel.new(
+  title="Client RU",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=true,
+  legend_max=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="short",
+  labelY1="RU/s",
+  description="Net client request RU consumption per second by TiDB instance, using the last two samples within 30 seconds. Refunds are subtracted and can make the net rate negative. Includes KV request accounting across request sources and resource groups selected above; it differs from server-reported RU and excludes SQL CPU RU. Requires at least two scrapes within 30 seconds.",
+).addTarget(
+  prometheus.target(
+    'sum(' + clientRUConsumed + ' or -' + clientRURefunded + ') by (instance)',
+    intervalFactor=1,
+    legendFormat="{{instance}}",
+  )
+);
 
 local ActiveResourceGroupPanel = graphPanel.new(
   title="Active Resource Groups",
@@ -1638,7 +1673,13 @@ TiDBResourceControlDash
 ){
   // Keep the paging row IDs at 61-64 so generating the dashboard does not
   // renumber the existing Runaway and later panels.
-  panels+::: [
+  // Append Client RU with a new ID to preserve links to existing panels.
+  panels: [
+    if panel.title == "Client" then
+      panel { panels+: [ClientRUPanel { id: 65, gridPos: fullPanelPos }] }
+    else panel
+    for panel in super.panels
+  ] + [
     pagingPanelRow {
       gridPos: rowPos,
       id: 61,
