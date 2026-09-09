@@ -1017,7 +1017,7 @@ func TestLockNewJobIndexScanFallbacks(t *testing.T) {
 	require.Empty(t, taskArgs)
 }
 
-func TestHandleSubmitJobRequestIndexScanFallbacks(t *testing.T) {
+func TestHandleSubmitJobRequestIndexScanVersionGate(t *testing.T) {
 	oldEnableIndexScan := vardef.TTLEnableIndexScan.Load()
 	defer vardef.TTLEnableIndexScan.Store(oldEnableIndexScan)
 
@@ -1028,6 +1028,7 @@ func TestHandleSubmitJobRequestIndexScanFallbacks(t *testing.T) {
 		remoteVersion   serverinfo.VersionInfo
 		expectedScanID  any
 		expectedChecks  int
+		expectedError   bool
 	}{
 		{
 			name:            "same build enables index scan",
@@ -1037,13 +1038,14 @@ func TestHandleSubmitJobRequestIndexScanFallbacks(t *testing.T) {
 			expectedChecks:  2,
 		},
 		{
-			name:            "different build falls back to PK scan",
+			name:            "different build blocks until versions converge",
 			enableIndexScan: true,
 			remoteVersion: serverinfo.VersionInfo{
 				Version: localVersion.Version,
 				GitHash: "2222222",
 			},
 			expectedChecks: 2,
+			expectedError:  true,
 		},
 		{
 			name:            "disabled index scan uses PK scan",
@@ -1072,6 +1074,7 @@ func TestHandleSubmitJobRequestIndexScanFallbacks(t *testing.T) {
 			m.infoSchemaCache.Tables[ttlTbl.ID] = ttlTbl
 			m.ctx = cache.SetMockExpireTime(context.Background(), expireTime)
 			versionChecks := 0
+			remoteVersion := tt.remoteVersion
 			m.ctx = context.WithValue(m.ctx, getServerInfoForTestContextKey{}, func() (*serverinfo.ServerInfo, error) {
 				versionChecks++
 				return &serverinfo.ServerInfo{StaticInfo: serverinfo.StaticInfo{VersionInfo: localVersion}}, nil
@@ -1079,7 +1082,7 @@ func TestHandleSubmitJobRequestIndexScanFallbacks(t *testing.T) {
 			m.ctx = context.WithValue(m.ctx, getAllServerInfoForTestContextKey{}, func(context.Context) (map[string]*serverinfo.ServerInfo, error) {
 				versionChecks++
 				return map[string]*serverinfo.ServerInfo{
-					"remote": {StaticInfo: serverinfo.StaticInfo{VersionInfo: tt.remoteVersion}},
+					"remote": {StaticInfo: serverinfo.StaticInfo{VersionInfo: remoteVersion}},
 				}, nil
 			})
 
@@ -1102,11 +1105,37 @@ func TestHandleSubmitJobRequestIndexScanFallbacks(t *testing.T) {
 				return nil, nil
 			}
 
-			respCh := make(chan error, 1)
-			m.handleSubmitJobRequest(se, &SubmitTTLManagerJobRequest{
-				TableID: ttlTbl.TableInfo.ID, PhysicalID: ttlTbl.ID, RequestID: "new-job-id", RespCh: respCh,
-			})
-			require.NoError(t, <-respCh)
+			submitJob := func() error {
+				respCh := make(chan error, 1)
+				m.handleSubmitJobRequest(se, &SubmitTTLManagerJobRequest{
+					TableID: ttlTbl.TableInfo.ID, PhysicalID: ttlTbl.ID, RequestID: "new-job-id", RespCh: respCh,
+				})
+				return <-respCh
+			}
+
+			err = submitJob()
+			if tt.expectedError {
+				require.ErrorContains(t, err, "server build versions are inconsistent")
+				require.Equal(t, tt.expectedChecks, versionChecks)
+				require.Empty(t, taskArgs)
+
+				// The timer runtime retries a failed submission. Once the rolling
+				// upgrade converges and the mismatch cache expires, the next attempt
+				// creates the index scan task normally.
+				remoteVersion = localVersion
+				require.ErrorContains(t, submitJob(), "server build versions are inconsistent")
+				require.Equal(t, tt.expectedChecks, versionChecks)
+				require.Empty(t, taskArgs)
+
+				m.jobVersionChecker.lastCheckTime = time.Now().Add(-serverVersionMismatchCacheInterval)
+				require.NoError(t, submitJob())
+				require.Equal(t, tt.expectedChecks+2, versionChecks)
+				require.Len(t, taskArgs, 1)
+				require.Equal(t, int64(10), taskArgs[0][7])
+				return
+			}
+
+			require.NoError(t, err)
 			require.Equal(t, tt.expectedChecks, versionChecks)
 			require.Len(t, taskArgs, 1)
 			require.Equal(t, tt.expectedScanID, taskArgs[0][7])

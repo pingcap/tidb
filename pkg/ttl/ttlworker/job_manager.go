@@ -389,12 +389,16 @@ func (m *JobManager) handleSubmitJobRequest(se session.Session, jobReq *SubmitTT
 		return
 	}
 
-	allowIndexScan := vardef.TTLEnableIndexScan.Load() && tbl.FindTTLIndex() != nil
-	if allowIndexScan {
-		allowIndexScan = m.jobVersionChecker.check(m.ctx)
+	versionCheckResult := ttlJobVersionFallbackToPK
+	if vardef.TTLEnableIndexScan.Load() && tbl.FindTTLIndex() != nil {
+		versionCheckResult = m.jobVersionChecker.check(m.ctx)
+	}
+	if versionCheckResult == ttlJobVersionBlockJob {
+		jobReq.RespCh <- errors.New("cannot create TTL job while TiDB server build versions are inconsistent")
+		return
 	}
 	_, err := m.lockNewJob(m.ctx, se, tbl, se.Now(), jobReq.RequestID, false,
-		allowIndexScan)
+		versionCheckResult == ttlJobVersionAllowIndexScan)
 	jobReq.RespCh <- err
 }
 

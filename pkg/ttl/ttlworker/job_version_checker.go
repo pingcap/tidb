@@ -28,18 +28,30 @@ import (
 
 const (
 	serverVersionAllowCacheInterval    = 10 * time.Second
-	serverVersionFallbackCacheInterval = time.Minute
+	serverVersionMismatchCacheInterval = time.Minute
+)
+
+type ttlJobVersionCheckResult int
+
+const (
+	// Unknown version state falls back to the old primary-key scan path. This
+	// keeps TTL available without creating index scan tasks that an old worker
+	// may not understand.
+	ttlJobVersionFallbackToPK ttlJobVersionCheckResult = iota
+	ttlJobVersionAllowIndexScan
+	ttlJobVersionBlockJob
 )
 
 type getServerInfoForTestContextKey struct{}
 type getAllServerInfoForTestContextKey struct{}
 
 // ttlJobVersionChecker enables TTL index scans only when all TiDB servers have
-// the same build. Otherwise, TTL jobs fall back to the old PK scan path. It is
-// not safe for concurrent use.
+// the same build. A known build mismatch blocks the current TTL job submission;
+// an unknown version state falls back to the old PK scan path. It is not safe
+// for concurrent use.
 type ttlJobVersionChecker struct {
-	lastCheckTime            time.Time
-	lastCheckAllowsIndexScan bool
+	lastCheckTime   time.Time
+	lastCheckResult ttlJobVersionCheckResult
 }
 
 func getServerInfoForTTLJob(ctx context.Context) (*serverinfo.ServerInfo, error) {
@@ -60,33 +72,34 @@ func getAllServerInfoForTTLJob(ctx context.Context) (map[string]*serverinfo.Serv
 	return infosync.GetAllServerInfo(ctx)
 }
 
-func (c *ttlJobVersionChecker) cachedResult(now time.Time) (allowIndexScan bool, cached bool) {
+func (c *ttlJobVersionChecker) cachedResult(now time.Time) (ttlJobVersionCheckResult, bool) {
 	if c.lastCheckTime.IsZero() {
-		return false, false
+		return ttlJobVersionFallbackToPK, false
 	}
 
-	cacheInterval := serverVersionFallbackCacheInterval
-	if c.lastCheckAllowsIndexScan {
-		cacheInterval = serverVersionAllowCacheInterval
+	cacheInterval := serverVersionAllowCacheInterval
+	if c.lastCheckResult == ttlJobVersionBlockJob {
+		cacheInterval = serverVersionMismatchCacheInterval
 	}
 	if now.Sub(c.lastCheckTime) < cacheInterval {
-		return c.lastCheckAllowsIndexScan, true
+		return c.lastCheckResult, true
 	}
-	return false, false
+	return ttlJobVersionFallbackToPK, false
 }
 
-func (c *ttlJobVersionChecker) cacheResult(now time.Time, allowIndexScan bool) bool {
+func (c *ttlJobVersionChecker) cacheResult(now time.Time, result ttlJobVersionCheckResult) ttlJobVersionCheckResult {
 	c.lastCheckTime = now
-	c.lastCheckAllowsIndexScan = allowIndexScan
-	return allowIndexScan
+	c.lastCheckResult = result
+	return result
 }
 
 // check compares every real TiDB server's complete VersionInfo (the reported
 // version string and Git hash) with the current server. Index scan tasks use a
 // new range format that old workers cannot interpret, so they are enabled only
-// when every server has the same build. A mismatch or any failure falls back to
-// the old PK scan task format instead of preventing the TTL job from running.
-func (c *ttlJobVersionChecker) check(ctx context.Context) bool {
+// when every server has the same build. A known mismatch blocks the current job
+// submission so the timer can retry it after the rolling upgrade converges.
+// Lookup failures fall back to the old PK scan task format.
+func (c *ttlJobVersionChecker) check(ctx context.Context) ttlJobVersionCheckResult {
 	now := time.Now()
 	if result, ok := c.cachedResult(now); ok {
 		return result
@@ -95,31 +108,31 @@ func (c *ttlJobVersionChecker) check(ctx context.Context) bool {
 	localInfo, err := getServerInfoForTTLJob(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Warn("failed to get current TiDB server version, create TTL job with PK scan", zap.Error(err))
-		return c.cacheResult(now, false)
+		return c.cacheResult(now, ttlJobVersionFallbackToPK)
 	}
 	if localInfo == nil {
 		logutil.Logger(ctx).Warn("current TiDB server info is nil, create TTL job with PK scan")
-		return c.cacheResult(now, false)
+		return c.cacheResult(now, ttlJobVersionFallbackToPK)
 	}
 
 	serverInfos, err := getAllServerInfoForTTLJob(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Warn("failed to get TiDB server versions, create TTL job with PK scan", zap.Error(err))
-		return c.cacheResult(now, false)
+		return c.cacheResult(now, ttlJobVersionFallbackToPK)
 	}
 
 	consistent, err := tiDBServerVersionInfosConsistent(localInfo.VersionInfo, serverInfos)
 	if err != nil {
 		logutil.Logger(ctx).Warn("failed to check TiDB server build versions, create TTL job with PK scan", zap.Error(err))
-		return c.cacheResult(now, false)
+		return c.cacheResult(now, ttlJobVersionFallbackToPK)
 	}
 	if consistent {
-		return c.cacheResult(now, true)
+		return c.cacheResult(now, ttlJobVersionAllowIndexScan)
 	}
 
-	logutil.Logger(ctx).Warn("TiDB server build versions are inconsistent, create TTL job with PK scan",
+	logutil.Logger(ctx).Warn("skip creating TTL job because TiDB server build versions are inconsistent",
 		zap.String("currentVersion", localInfo.Version), zap.String("currentGitHash", localInfo.GitHash))
-	return c.cacheResult(now, false)
+	return c.cacheResult(now, ttlJobVersionBlockJob)
 }
 
 func tiDBServerVersionInfosConsistent(currentVersion serverinfo.VersionInfo, serverInfos map[string]*serverinfo.ServerInfo) (bool, error) {

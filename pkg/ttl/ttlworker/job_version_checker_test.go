@@ -153,22 +153,28 @@ func TestTiDBServerVersionInfosConsistent(t *testing.T) {
 			},
 		)
 
-		require.True(t, checker.check(ctx))
-		require.True(t, checker.check(ctx))
+		require.Equal(t, ttlJobVersionAllowIndexScan, checker.check(ctx))
+		require.Equal(t, ttlJobVersionAllowIndexScan, checker.check(ctx))
 		require.Equal(t, 1, calls)
 
 		checker.lastCheckTime = time.Now().Add(-serverVersionAllowCacheInterval)
-		require.True(t, checker.check(ctx))
+		require.Equal(t, ttlJobVersionAllowIndexScan, checker.check(ctx))
 		require.Equal(t, 2, calls)
 
 		remoteVersionInfo = version(differentVersion, "2222222")
 		checker.lastCheckTime = time.Now().Add(-serverVersionAllowCacheInterval)
-		require.False(t, checker.check(ctx))
-		require.False(t, checker.check(ctx))
+		require.Equal(t, ttlJobVersionBlockJob, checker.check(ctx))
+		require.Equal(t, ttlJobVersionBlockJob, checker.check(ctx))
 		require.Equal(t, 3, calls)
 
-		checker.lastCheckTime = time.Now().Add(-serverVersionFallbackCacheInterval)
-		require.False(t, checker.check(ctx))
+		// Even if the cluster has converged, the mismatch remains cached briefly
+		// to avoid repeated server-info requests during a rolling upgrade.
+		remoteVersionInfo = localVersionInfo
+		require.Equal(t, ttlJobVersionBlockJob, checker.check(ctx))
+		require.Equal(t, 3, calls)
+
+		checker.lastCheckTime = time.Now().Add(-serverVersionMismatchCacheInterval)
+		require.Equal(t, ttlJobVersionAllowIndexScan, checker.check(ctx))
 		require.Equal(t, 4, calls)
 	})
 
@@ -212,8 +218,8 @@ func TestTiDBServerVersionInfosConsistent(t *testing.T) {
 						return tt.allServerInfo, tt.allServerInfoErr
 					},
 				)
-				require.False(t, checker.check(ctx))
-				require.False(t, checker.check(ctx))
+				require.Equal(t, ttlJobVersionFallbackToPK, checker.check(ctx))
+				require.Equal(t, ttlJobVersionFallbackToPK, checker.check(ctx))
 				require.Equal(t, tt.expectedAllCalls, calls)
 			})
 		}
