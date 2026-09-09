@@ -642,11 +642,13 @@ func (m *JobManager) checkFinishedJob(se session.Session) {
 			logger.Info("job has finished", zap.String("summary", summary.SummaryText),
 				zap.Uint64("totalRows", summary.TotalRows), zap.Uint64("successRows", summary.SuccessRows), zap.Uint64("errorRows", summary.ErrorRows),
 				zap.String("scanTaskError", summary.ScanTaskErr))
-			err = job.finish(se, se.Now(), summary)
+			now := se.Now()
+			err = job.finish(se, now, summary)
 			if err != nil {
 				logger.Warn("fail to finish job", zap.Error(err))
 				continue
 			}
+			recordJobFinishedMetrics(metrics.JobResultSuccess)
 			m.removeJob(job)
 			totalFinishedJobs++
 			if createTime := uint64(job.createTime.Unix()); maxJobCreateTime < createTime {
@@ -706,11 +708,12 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 				if err != nil {
 					logger.Warn("fail to summarize job", zap.Error(err))
 				}
-				err = job.finish(se, now, summary)
+				err = job.finishWithStatus(se, now, summary, cache.JobStatusCancelled)
 				if err != nil {
 					logger.Warn("fail to finish job", zap.Error(err))
 					continue
 				}
+				recordJobFinishedMetrics(metrics.JobResultCancelled)
 				m.removeJob(job)
 			}
 		}
@@ -738,11 +741,12 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		if err != nil {
 			logger.Warn("fail to summarize job", zap.Error(err))
 		}
-		err = job.finish(se, now, summary)
+		err = job.finishWithStatus(se, now, summary, cache.JobStatusCancelled)
 		if err != nil {
 			logger.Warn("fail to finish job", zap.Error(err))
 			continue
 		}
+		recordJobFinishedMetrics(metrics.JobResultCancelled)
 		m.removeJob(job)
 	}
 }
@@ -1033,10 +1037,11 @@ func (m *JobManager) updateHeartBeatForJob(ctx context.Context, se session.Sessi
 		if err != nil {
 			return errors.Wrapf(err, "fail to summarize job")
 		}
-		err = job.finish(se, now, summary)
+		err = job.finishWithStatus(se, now, summary, cache.JobStatusTimeout)
 		if err != nil {
 			return errors.Wrapf(err, "fail to finish job")
 		}
+		recordJobFinishedMetrics(metrics.JobResultTimeout)
 		m.removeJob(job)
 		return nil
 	}
@@ -1083,6 +1088,10 @@ func (m *JobManager) removeJob(finishedJob *ttlJob) {
 
 func (m *JobManager) appendJob(job *ttlJob) {
 	m.runningJobs = append(m.runningJobs, job)
+}
+
+func recordJobFinishedMetrics(result string) {
+	metrics.RecordJobFinished(result)
 }
 
 // GetCommandCli returns the command client

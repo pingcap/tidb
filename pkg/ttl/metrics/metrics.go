@@ -36,6 +36,15 @@ var (
 	PhaseOther     = "other"
 )
 
+const (
+	// JobResultSuccess means a TTL job finished after all scan tasks finished.
+	JobResultSuccess = "success"
+	// JobResultTimeout means a TTL job was finished by the job timeout.
+	JobResultTimeout = "timeout"
+	// JobResultCancelled means a TTL job was finished by a cancellation path.
+	JobResultCancelled = "cancelled"
+)
+
 // TTL metrics
 var (
 	SelectSuccessDuration prometheus.Observer
@@ -91,6 +100,11 @@ var (
 		},
 	}
 )
+
+// RecordJobFinished records metrics when a TTL job reaches a terminal result.
+func RecordJobFinished(result string) {
+	metrics.TTLJobFinishCounter.With(prometheus.Labels{metrics.LblResult: result}).Inc()
+}
 
 func init() {
 	InitMetricsVars()
