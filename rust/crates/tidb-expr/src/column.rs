@@ -221,7 +221,12 @@ impl Column {
             .ret_type
             .as_ref()
             .ok_or(EvalError::Unsupported("column has no result type"))?;
-        Ok(row.get_datum(self.index as usize, ret_type))
+        let index = usize::try_from(self.index)
+            .map_err(|_| EvalError::Unsupported("column index is negative"))?;
+        if index >= row.len() {
+            return Err(EvalError::Unsupported("column index is outside the input row"));
+        }
+        Ok(row.get_datum(index, ret_type))
     }
 }
 
