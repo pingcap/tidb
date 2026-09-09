@@ -440,7 +440,10 @@ fn table_scan_schema(
     // A wider cost column set means a residual predicate still consumes the
     // physical row. Constant predicates such as PI() have no extra inputs and
     // must retain the plan's projected output shape.
-    let needs_full = scan.cost_columns.len() > output.columns.len();
+    let needs_full = scan
+        .tikv_pushdown
+        .as_ref()
+        .is_some_and(|spec| spec.columns.len() > output.columns.len());
     Ok((
         if needs_full { Schema::new(full.clone()) } else { output.clone() },
         if needs_full { (0..full.len()).collect() } else { keep },
